@@ -1,0 +1,56 @@
+# Merecat founding
+
+2026-07-08. Merecat is the promotion target for mere's `meerkat` app crate,
+and the other half of a role swap: **mere becomes a library** (the lake: a
+graph over semantically related content) and **merecat becomes its consumer**
+(the reference host app, in its own repo, like every other promoted crate's
+consumers).
+
+## Why the rename
+
+Too many apps, companies, and services already use "meerkat" (the dead
+livestreaming app, Compare-the-Market's finance app, meerkat-software.com,
+others). "Merecat" makes the pun explicit and load-bearing: meerkat is Dutch
+*meer* + *kat*, lake-cat, so merecat is the English calque, and *mere* (a
+lake) is the library it lives on. Known prior occupant: troglobit's `merecat`
+embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
+`merecat` was free on crates.io at founding.
+
+## Target shape
+
+- **mere** = the composition tier over the promoted families: kernel graph +
+  domain vocabulary (gloss, apparatus, card, roster), eidetic persistence
+  assembly over muniment/codicil, forme/platen, orrery, and the composition
+  seams where the host injects murm's endpoint and moot's store. Local-first
+  in the strict sense: fully functional offline, no p2p deps in core.
+- **merecat** = this repo. The app: windows, panes, input, render hosts,
+  chrome, settings, session. Its Cargo.toml should read like the ecosystem
+  map: mere, personae, murm, moot, serval. A direct dep on something mere
+  composes is the seam leaking.
+
+## Sequencing (seam first, split second)
+
+1. **G5 re-base defines mere-core as the library.** Done-condition: mere's
+   lib crates sit over the chartulary family and meerkat depends only on
+   their public APIs.
+2. **Enforce the seam in-workspace.** Library-weight code moves out of the
+   app bin down through the seam (graph_delta_log dissolves into
+   chartulary/codicil; wallet_pairing goes to personae; the agent-harness +
+   observability + a11y-projection cluster becomes promotable; scrying_host
+   folds toward verso-scry; fetch/cookies toward the crawl lane). No
+   `pub(crate)` reach-ins, no kernel hooks wired from the bin.
+3. **Port meerkat → merecat once the seam holds** through normal work
+   (observable signal: meerkat changes stop requiring same-day mere
+   changes). Strip MPL headers on the way; this repo is MIT/Apache,
+   edition 2024. Mere re-bases last, per standing doctrine.
+
+Until step 3 the crate is a name-reserving placeholder. Murm/moot promotion
+proceeds independently on its own purity gates (moot: no sockets; murm: no
+store-of-record) and neither waits on the other.
+
+## Done-conditions
+
+- merecat builds and runs from this repo against mere as a dependency
+  (branch dep, not a local path, per workspace convention).
+- mere's workspace no longer contains an app bin.
+- The meerkat name survives only in mere's git history.

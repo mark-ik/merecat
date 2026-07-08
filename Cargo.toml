@@ -1,0 +1,15 @@
+[package]
+name = "merecat"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The cat that lives on the mere: a graph-workspace browser and reference host for the mere library. Merecat is the English calque of meerkat (Dutch meer + kat, lake-cat); the app is named for the lake it works over."
+repository = "https://github.com/mark-ik/merecat"
+keywords = ["browser", "graph", "workspace", "canvas"]
+categories = ["gui"]
+
+[[bin]]
+name = "merecat"
+path = "src/main.rs"
+
+[dependencies]
