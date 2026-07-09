@@ -20,13 +20,22 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
 
 - **mere** = the composition tier over the promoted families: kernel graph +
   domain vocabulary (gloss, apparatus, card, roster), eidetic persistence
-  assembly over muniment/codicil, forme/platen, orrery, and the composition
-  seams where the host injects murm's endpoint and moot's store. Local-first
-  in the strict sense: fully functional offline, no p2p deps in core.
+  assembly over muniment/codicil, forme, and the composition seams where the
+  host injects murm's endpoint and moot's store. Local-first in the strict
+  sense: fully functional offline, no p2p deps in core. Mere has no window,
+  engine, GPU, fetch, or browser-lifecycle knowledge.
 - **merecat** = this repo. The app: windows, panes, input, render hosts,
-  chrome, settings, session. Its Cargo.toml should read like the ecosystem
-  map: mere, personae, murm, moot, serval. A direct dep on something mere
-  composes is the seam leaking.
+  chrome, settings, session, **and the presentation surfaces**: orrery
+  (graph canvas scene host), platen with its arrangements/cartography
+  satellites (composition/projection), and the verso family (verso,
+  verso-api, verso-scry, verso-serval, browser-worker: the engine
+  multiplexer, the heart of the web lane). Amended 2026-07-09 per the
+  [mere/merecat boundary pass plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-09_mere_merecat_boundary_pass_plan.md):
+  the earlier shape kept orrery/platen in mere; they are application
+  surfaces, and the `mere` facade's re-exports of them are compatibility
+  scaffolding for the in-workspace host, not the library boundary. Its
+  Cargo.toml should read like the ecosystem map: mere, personae, murm, moot,
+  serval. A direct dep on something mere composes is the seam leaking.
 
 ## Sequencing (seam first, split second)
 
@@ -47,6 +56,20 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
 Until step 3 the crate is a name-reserving placeholder. Murm/moot promotion
 proceeds independently on its own purity gates (moot: no sockets; murm: no
 store-of-record) and neither waits on the other.
+
+## Current extraction state
+
+The first in-workspace seam landed on 2026-07-09: mere now has a `mere`
+library façade for graph truth and the composition tier (`kernel`,
+`linked-data`, `graphlets`, `glossary`, `orrery`, `forme`, `platen`, and the
+graph-domain vocabulary). The still-in-workspace host reaches those through
+that façade rather than declaring the constituent crates directly. The façade
+keeps SPARQL query support opt-in and exposes kernel fixtures only for tests.
+
+This is deliberately not the port. The host still owns and directly depends on
+its app-local chrome, rendering, session, actor, and browser-runtime lanes; it
+must build from this repo against a branch dependency on `mere` before the
+application moves here.
 
 ## Done-conditions
 

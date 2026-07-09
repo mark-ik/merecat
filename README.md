@@ -15,8 +15,9 @@ Mere is the lake; merecat is the animal you meet at it.
 ## Status
 
 Founded 2026-07-08. The application currently lives in mere's `meerkat` crate
-and moves here as the mere library seam is proven. Until then this crate is a
-placeholder that reserves the name and holds the founding plan; see
+and moves here as the mere library seam is proven. Its graph-facing dependency
+now has an in-workspace `mere` façade; the browser host itself has not moved.
+Until then this crate is a placeholder that reserves the name and holds the founding plan; see
 `design_docs/2026-07-08_merecat_founding.md`.
 
 ## License
