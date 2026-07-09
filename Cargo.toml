@@ -21,9 +21,18 @@ path = "src/main.rs"
 # re-exports are compatibility scaffolding: those surfaces move INTO this
 # repo as the port proceeds (boundary pass plan, 2026-07-09).
 mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-# The actor-kernel runtime: the physics actor wakes this shell's event loop
-# through an `armillary::Wake`.
+# The fetch actor (armillary + netfetcher/errand + the cookie jar): merecat's
+# web lane, consumed as an individual crate from mere's workspace while it
+# still lives there — per the boundary pass, fetch is app-side material that
+# moves into this repo with the port.
+fetch = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# The actor-kernel runtime: the physics + fetch actors wake this shell's
+# event loop through an `armillary::Wake`.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+# Render-free static-parse page extraction: the fetched body's `<title>`
+# (and later description/OpenGraph) enriches the page's graph node.
+serval-extract = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+serval-static-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 # Rasterize + composite the orrery's Scene through the shared present stack.
 netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }

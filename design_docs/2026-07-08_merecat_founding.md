@@ -83,6 +83,22 @@ behind. Headed receipt: `testing/merecat/images/2026-07-09_first_vertical_slice.
 Done-condition 1 of three is met; the next slices are the verso-api browser
 lane (open address -> live content on the node) and session persistence.
 
+**Second slice, same day — the web lane's first breath**: the seed address now
+FETCHES. mere's `fetch` actor (armillary thread, netfetcher/errand + cookie
+jar) is consumed as an individual crate from mere's workspace (it is app-side
+material that moves here with the port); the page outcome stamps the response
+Content-Type as the node's MIME hint and, for HTML, the static-parse
+`<title>` (serval-extract) onto the node — the canvas caption flips from the
+host fallback to the real title (`example.com` -> `Example Domain`,
+receipt `testing/merecat/images/2026-07-09_fetch_title_enrichment.png`).
+Supporting seam work in mere: orrery gained `set_node_title` (rebuilds the
+caption pool) and `set_node_mime_hint` (metadata-only), mirroring its favicon
+stamp; and the founded-family sibling deps (chartulary/stemma/numen/codicil/
+muniment) converted from `../..` path deps to branch-tracked git deps, so
+mere.git is consumable per-crate by standalone hosts (mere 8f338ff — clean
+non-local resolution needs that commit pushed). Next: favicon-on-node, live
+content rendering (verso lane), session persistence.
+
 ## Done-conditions
 
 - merecat builds and runs from this repo against mere as a dependency

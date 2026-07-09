@@ -1,13 +1,16 @@
 //! Merecat: a graph-workspace browser and the reference host for the mere
 //! library.
 //!
-//! First vertical slice (boundary pass follow-on, 2026-07-09): open address ->
-//! mere graph node -> visible canvas. A thin winit shell hosts the
+//! First vertical slices (boundary pass follow-on, 2026-07-09): open address
+//! -> mere graph node -> visible canvas, then the first breath of the web
+//! lane: the address FETCHES (mere's fetch actor on armillary), the page's
+//! `<title>` and Content-Type enrich the node, and the canvas caption flips
+//! from the host fallback to the real title. A thin winit shell hosts the
 //! window-agnostic `mere::orrery::Orrery` content-root — the same content-root
 //! meerkat hosts in-workspace — proving the founding doc's first
 //! done-condition: merecat builds and runs from this repo against mere as a
-//! dependency. The browser runtime (verso lane), chrome, panes, and session
-//! land as later slices; nothing here is copied from meerkat's shell.
+//! dependency. The full browser runtime (verso lane), chrome, panes, and
+//! session land as later slices; nothing here is copied from meerkat's shell.
 //!
 //! Run with an address to seed the graph from it, or bare for the sample
 //! graph:
@@ -24,7 +27,9 @@
 //! height-by-degree.
 
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
+use fetch::{FetchCommand, FetchOutcome, FetchUpdate};
 use mere::orrery::{Orrery, PointerButton, WHEEL_PAN_SCALE};
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
@@ -40,8 +45,12 @@ use winit::window::{Window, WindowId};
 /// present stack that drive it.
 struct App {
     orrery: Orrery,
-    /// Wakes the loop when the physics actor has a fresh layout snapshot ready.
+    /// Wakes the loop when the physics or fetch actor has news.
     proxy: EventLoopProxy<()>,
+    /// The fetch actor's command handle; dropping it ends the actor.
+    fetch_handle: armillary::ActorHandle<FetchCommand>,
+    /// Completed fetches, drained in `user_event` on each wake.
+    fetch_rx: Receiver<FetchUpdate>,
     /// Last cursor position in physical px. winit's `MouseInput` carries no
     /// position, so the shell tracks it from `CursorMoved`.
     cursor: (f32, f32),
@@ -60,18 +69,65 @@ impl App {
             Some(_) => Orrery::new(),
             None => Orrery::with_sample_graph(),
         };
+        // The web lane's first breath: the fetch actor on its own armillary
+        // thread, waking this loop like the physics actor does. The seed
+        // address fetches immediately; its outcome enriches the node.
+        let fetch_proxy = proxy.clone();
+        let fetch_wake: armillary::Wake = Arc::new(move || {
+            let _ = fetch_proxy.send_event(());
+        });
+        let (fetch_handle, fetch_rx) = fetch::spawn_fetcher(fetch_wake);
         if let Some(url) = &address {
             orrery.visit(url);
+            if fetch::is_fetchable(url) {
+                fetch_handle.command(FetchCommand::Page(url.clone()));
+            }
         }
         Self {
             orrery,
             proxy,
+            fetch_handle,
+            fetch_rx,
             cursor: (0.0, 0.0),
             window: None,
             host: None,
             width: 1024,
             height: 600,
         }
+    }
+
+    /// Fold one completed page fetch into the graph: stamp the response's
+    /// Content-Type as the node's MIME hint, and for HTML extract the page
+    /// `<title>` (render-free static parse) so the canvas caption flips from
+    /// the host fallback to the real title.
+    fn apply_page_outcome(&mut self, outcome: FetchOutcome) {
+        let url = outcome.url;
+        match outcome.result {
+            Ok(fetched) => {
+                let media = fetched
+                    .content_type
+                    .as_deref()
+                    .and_then(|ct| ct.split(';').next())
+                    .map(|m| m.trim().to_ascii_lowercase());
+                tracing::info!(%url, content_type = ?media, bytes = fetched.body.len(), "page fetched");
+                self.orrery
+                    .set_node_mime_hint(&url, media.clone());
+                if media.as_deref() == Some("text/html") {
+                    let extract = serval_extract::extract(
+                        &serval_static_dom::StaticDocument::parse(&fetched.body),
+                    );
+                    if let Some(title) = extract.title {
+                        if self.orrery.set_node_title(&url, title.clone()) {
+                            tracing::info!(%url, %title, "node title enriched from the page");
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(%url, %err, "page fetch failed");
+            }
+        }
+        self.request_redraw();
     }
 
     /// Produce the orrery's frame at the current size, rasterize + composite
@@ -158,9 +214,18 @@ impl ApplicationHandler for App {
         self.window = Some(window);
     }
 
-    /// The physics actor woke us through the proxy: a fresh layout snapshot is
-    /// waiting. Redraw so `frame()` folds it in (and chains while settling).
+    /// An actor woke us through the proxy: a physics layout snapshot or a
+    /// completed fetch is waiting. Drain fetches into the graph, then redraw
+    /// so `frame()` folds everything in (and chains while settling).
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        while let Ok(update) = self.fetch_rx.try_recv() {
+            match update {
+                FetchUpdate::Page(outcome) => self.apply_page_outcome(outcome),
+                // Subresources and favicons arrive with the content lane in a
+                // later slice; today only page fetches are commanded.
+                FetchUpdate::Subresource(_) | FetchUpdate::Favicon { .. } => {}
+            }
+        }
         self.request_redraw();
     }
 
