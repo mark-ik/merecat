@@ -13,3 +13,36 @@ name = "merecat"
 path = "src/main.rs"
 
 [dependencies]
+# The library this app is the reference host for: graph truth + the
+# composition tier, consumed through the `mere` facade (kernel, orrery,
+# forme, platen, glossary, ...). Git sibling per workspace convention; a
+# local checkout is picked up via the gitignored `.cargo/config.toml`
+# patches (mirrors mere's own sibling handling). The facade's orrery/platen
+# re-exports are compatibility scaffolding: those surfaces move INTO this
+# repo as the port proceeds (boundary pass plan, 2026-07-09).
+mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# The actor-kernel runtime: the physics actor wakes this shell's event loop
+# through an `armillary::Wake`.
+armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+# Rasterize + composite the orrery's Scene through the shared present stack.
+netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+# Pins match mere's workspace so the shared subtrees unify.
+winit = "0.30.13"
+wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Registry patches mirrored from mere's workspace manifest: a `[patch]` lives
+# in the top-level manifest of whoever builds, so a standalone consumer of
+# mere must restate them. Branch-tracked owned forks, never revs; no local
+# paths in this committed manifest, so it compiles anywhere.
+[patch.crates-io]
+stylo = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
+stylo_atoms = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
+# serval-layout requires taffy =0.11.0-experimental-cache-fix.3 (serval's
+# vendored float-layout fork, not on crates.io).
+taffy = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+# ipc-channel: in-process fork vendored in serval (single-process default,
+# unifies gpu-allocator's windows pin with wgpu-hal's).
+ipc-channel = { git = "https://github.com/mark-ik/serval.git", branch = "main" }

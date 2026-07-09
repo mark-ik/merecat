@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+# Local-dev sibling patches (mirrors mere's convention): committed manifests
+# resolve owned sibling repos from GitHub; this file redirects them to the
+# working copies under repos/ for the cross-repo edit loop.
+/.cargo/

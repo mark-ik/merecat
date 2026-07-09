@@ -71,6 +71,18 @@ its app-local chrome, rendering, session, actor, and browser-runtime lanes; it
 must build from this repo against a branch dependency on `mere` before the
 application moves here.
 
+**First vertical slice landed 2026-07-09**: merecat builds and runs from this
+repo against `mere` as a branch dep (git sibling + gitignored local patches,
+plus the `[patch.crates-io]` entries restated from mere's workspace manifest —
+a standalone consumer must carry those itself). The bin is a thin winit shell
+hosting the window-agnostic `mere::orrery::Orrery` content-root: an address
+argument mints its node in a fresh mere graph (`Orrery::visit`) and the canvas
+renders it through serval-winit-host, with physics on an armillary actor.
+Nothing was copied from meerkat's shell; orrery's demo-scene catalog stayed
+behind. Headed receipt: `testing/merecat/images/2026-07-09_first_vertical_slice.png`.
+Done-condition 1 of three is met; the next slices are the verso-api browser
+lane (open address -> live content on the node) and session persistence.
+
 ## Done-conditions
 
 - merecat builds and runs from this repo against mere as a dependency
