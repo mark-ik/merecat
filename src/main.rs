@@ -99,7 +99,8 @@ impl App {
     /// Fold one completed page fetch into the graph: stamp the response's
     /// Content-Type as the node's MIME hint, and for HTML extract the page
     /// `<title>` (render-free static parse) so the canvas caption flips from
-    /// the host fallback to the real title.
+    /// the host fallback to the real title, then chase the page's favicon so
+    /// the node face wears a real icon.
     fn apply_page_outcome(&mut self, outcome: FetchOutcome) {
         let url = outcome.url;
         match outcome.result {
@@ -110,16 +111,21 @@ impl App {
                     .and_then(|ct| ct.split(';').next())
                     .map(|m| m.trim().to_ascii_lowercase());
                 tracing::info!(%url, content_type = ?media, bytes = fetched.body.len(), "page fetched");
-                self.orrery
-                    .set_node_mime_hint(&url, media.clone());
+                self.orrery.set_node_mime_hint(&url, media.clone());
                 if media.as_deref() == Some("text/html") {
-                    let extract = serval_extract::extract(
-                        &serval_static_dom::StaticDocument::parse(&fetched.body),
-                    );
-                    if let Some(title) = extract.title {
+                    let doc = serval_static_dom::StaticDocument::parse(&fetched.body);
+                    if let Some(title) = serval_extract::extract(&doc).title {
                         if self.orrery.set_node_title(&url, title.clone()) {
                             tracing::info!(%url, %title, "node title enriched from the page");
                         }
+                    }
+                    // Best-effort: fetch the page's favicon; the bytes route
+                    // back as FetchUpdate::Favicon keyed to this page url.
+                    if let Some(icon_url) = favicon_url_for(&url, &doc) {
+                        self.fetch_handle.command(FetchCommand::Favicon {
+                            owner_url: url.clone(),
+                            url: icon_url,
+                        });
                     }
                 }
             }
@@ -128,6 +134,21 @@ impl App {
             }
         }
         self.request_redraw();
+    }
+
+    /// A page's favicon arrived: decode it to RGBA and stamp it on the node
+    /// currently at the owner url; the orrery paints it on that node's face
+    /// on the next frame.
+    fn apply_favicon(&mut self, owner_url: &str, bytes: &[u8]) {
+        if let Some(decoded) = serval_layout::decode_image_bytes(bytes) {
+            if self
+                .orrery
+                .set_node_favicon(owner_url, decoded.rgba, decoded.width, decoded.height)
+            {
+                tracing::info!(url = %owner_url, "node favicon enriched from the page");
+                self.request_redraw();
+            }
+        }
     }
 
     /// Produce the orrery's frame at the current size, rasterize + composite
@@ -221,9 +242,11 @@ impl ApplicationHandler for App {
         while let Ok(update) = self.fetch_rx.try_recv() {
             match update {
                 FetchUpdate::Page(outcome) => self.apply_page_outcome(outcome),
-                // Subresources and favicons arrive with the content lane in a
-                // later slice; today only page fetches are commanded.
-                FetchUpdate::Subresource(_) | FetchUpdate::Favicon { .. } => {}
+                FetchUpdate::Favicon { owner_url, bytes } => {
+                    self.apply_favicon(&owner_url, &bytes)
+                }
+                // Subresources arrive with the content lane in a later slice.
+                FetchUpdate::Subresource(_) => {}
             }
         }
         self.request_redraw();
@@ -333,6 +356,24 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+}
+
+/// The favicon URL for a fetched page: the document's declared
+/// `<link rel=icon>` href resolved against the page URL, else the well-known
+/// `/favicon.ico` for web pages. `None` when neither applies.
+fn favicon_url_for(page_url: &str, doc: &serval_static_dom::StaticDocument) -> Option<String> {
+    let base = url::Url::parse(page_url).ok()?;
+    if let Some(href) = serval_layout::linked_icon_href(doc) {
+        if let Ok(resolved) = base.join(&href) {
+            return Some(resolved.to_string());
+        }
+    }
+    if matches!(base.scheme(), "http" | "https") {
+        if let Ok(fallback) = base.join("/favicon.ico") {
+            return Some(fallback.to_string());
+        }
+    }
+    None
 }
 
 fn main() {

@@ -33,6 +33,11 @@ armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" 
 # (and later description/OpenGraph) enriches the page's graph node.
 serval-extract = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 serval-static-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+# `linked_icon_href` (the page's declared `<link rel=icon>`) + image decode
+# for the fetched favicon bytes the orrery face paints.
+serval-layout = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+# Resolve a declared icon href (or the /favicon.ico fallback) against the page URL.
+url = "2.5"
 # Rasterize + composite the orrery's Scene through the shared present stack.
 netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
