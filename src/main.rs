@@ -6,7 +6,7 @@
 //! lane: the address FETCHES (mere's fetch actor on armillary), the page's
 //! `<title>` and Content-Type enrich the node, and the canvas caption flips
 //! from the host fallback to the real title. A thin winit shell hosts the
-//! window-agnostic `mere::orrery::Orrery` content-root — the same content-root
+//! window-agnostic `mere::canvas::Canvas` content-root — the same content-root
 //! meerkat hosts in-workspace — proving the founding doc's first
 //! done-condition: merecat builds and runs from this repo against mere as a
 //! dependency. The full browser runtime (verso lane), chrome, panes, and
@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchOutcome, FetchUpdate};
-use mere::orrery::{Orrery, PointerButton, WHEEL_PAN_SCALE};
+use mere::canvas::{Canvas, PointerButton, WHEEL_PAN_SCALE};
 use session_runtime::session_graph_store;
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
@@ -43,10 +43,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
-/// The merecat shell: the reusable orrery content-root plus the window and
+/// The merecat shell: the reusable canvas content-root plus the window and
 /// present stack that drive it.
 struct App {
-    orrery: Orrery,
+    canvas: Canvas,
     /// The per-user data root; the session graph persists at its flat
     /// `graph.json` (the single-session shape; sessions/<id>/ arrives with
     /// multi-session later).
@@ -83,18 +83,18 @@ impl App {
                 None
             }
         };
-        let mut orrery = match (restored, &address) {
+        let mut canvas = match (restored, &address) {
             (Some(graph), _) => {
                 tracing::info!(path = ?graph_file, "session graph restored");
-                Orrery::with_graph(graph)
+                Canvas::with_graph(graph)
             }
             (None, Some(url)) => {
                 tracing::info!(%url, "fresh graph seeded from the address");
-                Orrery::new()
+                Canvas::new()
             }
             (None, None) => {
                 tracing::info!("no session graph; starting on the sample graph");
-                Orrery::with_sample_graph()
+                Canvas::with_sample_graph()
             }
         };
         // The web lane's first breath: the fetch actor on its own armillary
@@ -106,13 +106,13 @@ impl App {
         });
         let (fetch_handle, fetch_rx) = fetch::spawn_fetcher(fetch_wake);
         if let Some(url) = &address {
-            orrery.visit(url);
+            canvas.visit(url);
             if fetch::is_fetchable(url) {
                 fetch_handle.command(FetchCommand::Page(url.clone()));
             }
         }
         Self {
-            orrery,
+            canvas,
             data_root,
             proxy,
             fetch_handle,
@@ -130,7 +130,7 @@ impl App {
     /// crash loses nothing) and on close.
     fn save_session(&self) {
         let graph_file = self.data_root.join(session_graph_store::GRAPH_FILE);
-        if let Err(err) = session_graph_store::save(&graph_file, self.orrery.graph()) {
+        if let Err(err) = session_graph_store::save(&graph_file, self.canvas.graph()) {
             tracing::warn!(%err, path = ?graph_file, "failed to persist the session graph");
         }
     }
@@ -150,11 +150,11 @@ impl App {
                     .and_then(|ct| ct.split(';').next())
                     .map(|m| m.trim().to_ascii_lowercase());
                 tracing::info!(%url, content_type = ?media, bytes = fetched.body.len(), "page fetched");
-                self.orrery.set_node_mime_hint(&url, media.clone());
+                self.canvas.set_node_mime_hint(&url, media.clone());
                 if media.as_deref() == Some("text/html") {
                     let doc = serval_static_dom::StaticDocument::parse(&fetched.body);
                     if let Some(title) = serval_extract::extract(&doc).title {
-                        if self.orrery.set_node_title(&url, title.clone()) {
+                        if self.canvas.set_node_title(&url, title.clone()) {
                             tracing::info!(%url, %title, "node title enriched from the page");
                         }
                     }
@@ -177,12 +177,12 @@ impl App {
     }
 
     /// A page's favicon arrived: decode it to RGBA and stamp it on the node
-    /// currently at the owner url; the orrery paints it on that node's face
+    /// currently at the owner url; the canvas paints it on that node's face
     /// on the next frame.
     fn apply_favicon(&mut self, owner_url: &str, bytes: &[u8]) {
         if let Some(decoded) = serval_layout::decode_image_bytes(bytes) {
             if self
-                .orrery
+                .canvas
                 .set_node_favicon(owner_url, decoded.rgba, decoded.width, decoded.height)
             {
                 tracing::info!(url = %owner_url, "node favicon enriched from the page");
@@ -192,15 +192,15 @@ impl App {
         }
     }
 
-    /// Produce the orrery's frame at the current size, rasterize + composite
-    /// it through the present stack, and chain another redraw while the orrery
+    /// Produce the canvas's frame at the current size, rasterize + composite
+    /// it through the present stack, and chain another redraw while the canvas
     /// is still animating (settling / gliding / dragging).
     fn render(&mut self) {
         if self.host.is_none() {
             return;
         }
         let (w, h) = (self.width.max(1), self.height.max(1));
-        let (scene, needs_redraw) = self.orrery.frame(w, h);
+        let (scene, needs_redraw) = self.canvas.frame(w, h);
 
         let host = self.host.as_ref().unwrap();
         let (_tex, view) = host.rasterize(&scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE));
@@ -246,8 +246,8 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
         self.width = size.width.max(1);
         self.height = size.height.max(1);
-        self.orrery.resize(self.width, self.height);
-        self.orrery.recenter();
+        self.canvas.resize(self.width, self.height);
+        self.canvas.recenter();
 
         let options = NetrenderOptions {
             tile_cache_size: Some(64),
@@ -270,7 +270,7 @@ impl ApplicationHandler for App {
         let physics_wake: armillary::Wake = Arc::new(move || {
             let _ = proxy.send_event(());
         });
-        self.orrery.offload_physics(physics_wake);
+        self.canvas.offload_physics(physics_wake);
 
         window.request_redraw();
         self.window = Some(window);
@@ -313,16 +313,16 @@ impl ApplicationHandler for App {
                 if let Some(host) = self.host.as_mut() {
                     host.resize(self.width, self.height);
                 }
-                self.orrery.resize(self.width, self.height);
+                self.canvas.resize(self.width, self.height);
                 self.request_redraw();
             }
             WindowEvent::ModifiersChanged(mods) => {
-                self.orrery.set_ctrl(mods.state().control_key());
-                self.orrery.set_alt(mods.state().alt_key());
+                self.canvas.set_ctrl(mods.state().control_key());
+                self.canvas.set_alt(mods.state().alt_key());
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
-                if self.orrery.cursor_moved(self.cursor.0, self.cursor.1) {
+                if self.canvas.cursor_moved(self.cursor.0, self.cursor.1) {
                     self.request_redraw();
                 }
             }
@@ -331,7 +331,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(x, y) => (x * WHEEL_PAN_SCALE, y * WHEEL_PAN_SCALE),
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
                 };
-                if self.orrery.wheel(dx, dy) {
+                if self.canvas.wheel(dx, dy) {
                     self.request_redraw();
                 }
             }
@@ -345,8 +345,8 @@ impl ApplicationHandler for App {
                 if let Some(button) = button {
                     let (x, y) = self.cursor;
                     let redraw = match state {
-                        ElementState::Pressed => self.orrery.pointer_down(button, x, y),
-                        ElementState::Released => self.orrery.pointer_up(button, x, y),
+                        ElementState::Pressed => self.canvas.pointer_down(button, x, y),
+                        ElementState::Released => self.canvas.pointer_up(button, x, y),
                     };
                     if redraw {
                         self.request_redraw();
@@ -358,38 +358,38 @@ impl ApplicationHandler for App {
                     match &event.logical_key {
                         // Space re-seeds the layout and replays the settle.
                         WinitKey::Named(WinitNamedKey::Space) => {
-                            if self.orrery.reseed() {
+                            if self.canvas.reseed() {
                                 self.request_redraw();
                             }
                         }
                         // `i` toggles the isometric (2.5D foreshortened) view.
                         WinitKey::Character(s) if s.as_str() == "i" => {
-                            let on = !self.orrery.is_isometric();
-                            self.orrery.set_isometric(on);
+                            let on = !self.canvas.is_isometric();
+                            self.canvas.set_isometric(on);
                             self.request_redraw();
                         }
                         // `q` / `e` orbit the view (yaw).
                         WinitKey::Character(s) if s.as_str() == "q" => {
-                            self.orrery.orbit_by(-0.15);
+                            self.canvas.orbit_by(-0.15);
                             self.request_redraw();
                         }
                         WinitKey::Character(s) if s.as_str() == "e" => {
-                            self.orrery.orbit_by(0.15);
+                            self.canvas.orbit_by(0.15);
                             self.request_redraw();
                         }
                         // `[` / `]` sweep the vertical foreshorten (tilt).
                         WinitKey::Character(s) if s.as_str() == "[" => {
-                            self.orrery.set_tilt(self.orrery.tilt() - 0.05);
+                            self.canvas.set_tilt(self.canvas.tilt() - 0.05);
                             self.request_redraw();
                         }
                         WinitKey::Character(s) if s.as_str() == "]" => {
-                            self.orrery.set_tilt(self.orrery.tilt() + 0.05);
+                            self.canvas.set_tilt(self.canvas.tilt() + 0.05);
                             self.request_redraw();
                         }
                         // `h` toggles height-by-degree (hubs float above ground).
                         WinitKey::Character(s) if s.as_str() == "h" => {
-                            let on = !self.orrery.height_by_degree();
-                            self.orrery.set_height_by_degree(on);
+                            let on = !self.canvas.height_by_degree();
+                            self.canvas.set_height_by_degree(on);
                             self.request_redraw();
                         }
                         _ => {}
