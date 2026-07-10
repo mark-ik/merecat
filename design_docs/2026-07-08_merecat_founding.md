@@ -99,6 +99,21 @@ mere.git is consumable per-crate by standalone hosts (mere 8f338ff — clean
 non-local resolution needs that commit pushed). Next: favicon-on-node, live
 content rendering (verso lane), session persistence.
 
+**Third + fourth slices, same day**: favicon-on-node (the page's declared
+`<link rel=icon>` or `/favicon.ico`, decoded and stamped through orrery's
+favicon stamp; the icon insets within the face so the node accent frames it
+— orrery `FAVICON_INSET`, design space in mere's node body/face model plan)
+and **session persistence**: the flat single-session `graph.json` under
+`<data_dir>/merecat` (`MERECAT_ROOT` override for scratch profiles), loaded
+at boot, saved after each enrichment and on close. The browser remembers:
+launch with an address, close, relaunch bare, and the node returns with its
+title and favicon off disk (receipts:
+`testing/merecat/images/2026-07-09_favicon_inset_frame.png`,
+`…_session_restore.png`). Remaining from the slice list: live content
+rendering (the verso lane) — the next big build; then multi-session
+(`sessions/<id>/` + manifests) and the BrowserNodeState sidecar once the
+shell holds per-node browser state worth persisting.
+
 ## Done-conditions
 
 - merecat builds and runs from this repo against mere as a dependency

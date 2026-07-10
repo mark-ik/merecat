@@ -26,9 +26,16 @@ mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # still lives there — per the boundary pass, fetch is app-side material that
 # moves into this repo with the port.
 fetch = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Session persistence: the flat single-session `graph.json` beside the data
+# root (session_graph_store's blessed single-session shape). App-side
+# material that moves here with the port, like fetch.
+session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The actor-kernel runtime: the physics + fetch actors wake this shell's
 # event loop through an `armillary::Wake`.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+# The per-user data root (`<data_dir>/merecat`), MERECAT_ROOT-overridable for
+# scratch profiles (the meerkat MERE_ROOT convention).
+dirs = "6"
 # Render-free static-parse page extraction: the fetched body's `<title>`
 # (and later description/OpenGraph) enriches the page's graph node.
 serval-extract = { git = "https://github.com/mark-ik/serval.git", branch = "main" }

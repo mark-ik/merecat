@@ -26,11 +26,13 @@
 //! `i` toggles the isometric view, `q`/`e` orbit, `[`/`]` tilt, `h` toggles
 //! height-by-degree.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchOutcome, FetchUpdate};
 use mere::orrery::{Orrery, PointerButton, WHEEL_PAN_SCALE};
+use session_runtime::session_graph_store;
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
 use serval_winit_host::SurfaceHost;
@@ -45,6 +47,10 @@ use winit::window::{Window, WindowId};
 /// present stack that drive it.
 struct App {
     orrery: Orrery,
+    /// The per-user data root; the session graph persists at its flat
+    /// `graph.json` (the single-session shape; sessions/<id>/ arrives with
+    /// multi-session later).
+    data_root: PathBuf,
     /// Wakes the loop when the physics or fetch actor has news.
     proxy: EventLoopProxy<()>,
     /// The fetch actor's command handle; dropping it ends the actor.
@@ -62,12 +68,34 @@ struct App {
 
 impl App {
     fn new(proxy: EventLoopProxy<()>, address: Option<String>) -> Self {
-        // Open-address is the seed: a URL argument mints its node in a fresh
-        // mere graph (the graph-rooted browse loop's first step); bare launch
-        // shows the sample graph so the canvas is never empty.
-        let mut orrery = match &address {
-            Some(_) => Orrery::new(),
-            None => Orrery::with_sample_graph(),
+        // The browser remembers: a persisted session graph (titles, favicons,
+        // relations) restores first. Failing that, open-address seeds a fresh
+        // graph; a bare first launch shows the sample graph so the canvas is
+        // never empty (it persists like anything else; delete graph.json for
+        // a clean profile, or point MERECAT_ROOT at a scratch one).
+        let data_root = default_merecat_root();
+        let _ = std::fs::create_dir_all(&data_root);
+        let graph_file = data_root.join(session_graph_store::GRAPH_FILE);
+        let restored = match session_graph_store::load(&graph_file) {
+            Ok(graph) => graph,
+            Err(err) => {
+                tracing::warn!(%err, path = ?graph_file, "failed to load the session graph; starting fresh");
+                None
+            }
+        };
+        let mut orrery = match (restored, &address) {
+            (Some(graph), _) => {
+                tracing::info!(path = ?graph_file, "session graph restored");
+                Orrery::with_graph(graph)
+            }
+            (None, Some(url)) => {
+                tracing::info!(%url, "fresh graph seeded from the address");
+                Orrery::new()
+            }
+            (None, None) => {
+                tracing::info!("no session graph; starting on the sample graph");
+                Orrery::with_sample_graph()
+            }
         };
         // The web lane's first breath: the fetch actor on its own armillary
         // thread, waking this loop like the physics actor does. The seed
@@ -85,6 +113,7 @@ impl App {
         }
         Self {
             orrery,
+            data_root,
             proxy,
             fetch_handle,
             fetch_rx,
@@ -93,6 +122,16 @@ impl App {
             host: None,
             width: 1024,
             height: 600,
+        }
+    }
+
+    /// Persist the session graph at the flat `graph.json`. Best-effort: a
+    /// write failure is logged, not fatal. Called after each enrichment (so a
+    /// crash loses nothing) and on close.
+    fn save_session(&self) {
+        let graph_file = self.data_root.join(session_graph_store::GRAPH_FILE);
+        if let Err(err) = session_graph_store::save(&graph_file, self.orrery.graph()) {
+            tracing::warn!(%err, path = ?graph_file, "failed to persist the session graph");
         }
     }
 
@@ -133,6 +172,7 @@ impl App {
                 tracing::warn!(%url, %err, "page fetch failed");
             }
         }
+        self.save_session();
         self.request_redraw();
     }
 
@@ -146,6 +186,7 @@ impl App {
                 .set_node_favicon(owner_url, decoded.rgba, decoded.width, decoded.height)
             {
                 tracing::info!(url = %owner_url, "node favicon enriched from the page");
+                self.save_session();
                 self.request_redraw();
             }
         }
@@ -262,7 +303,10 @@ impl ApplicationHandler for App {
             return;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.save_session();
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 self.width = size.width.max(1);
                 self.height = size.height.max(1);
@@ -358,6 +402,19 @@ impl ApplicationHandler for App {
     }
 }
 
+/// The per-user data root (`<data_dir>/merecat`). A `MERECAT_ROOT` override
+/// points the whole root at a scratch profile, so a headed-verification run
+/// (or any throwaway session) isolates from the real per-user data dir (the
+/// meerkat `MERE_ROOT` convention).
+fn default_merecat_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("MERECAT_ROOT") {
+        return PathBuf::from(root);
+    }
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("merecat")
+}
+
 /// The favicon URL for a fetched page: the document's declared
 /// `<link rel=icon>` href resolved against the page URL, else the well-known
 /// `/favicon.ico` for web pages. `None` when neither applies.
@@ -384,10 +441,13 @@ fn main() {
         )
         .init();
 
+    // Which graph actually shows (restored session / fresh-from-address /
+    // sample) is decided and logged inside `App::new`, after the restore
+    // attempt; claiming it here would lie on a restoring launch.
     let address = std::env::args().nth(1);
     match &address {
         Some(url) => tracing::info!(%url, "merecat starting on an address"),
-        None => tracing::info!("merecat starting on the sample graph"),
+        None => tracing::info!("merecat starting"),
     }
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
