@@ -6,14 +6,21 @@
 //! execution model (the architecture plan's doctrine 2 — the meerkat
 //! `command_drain` lesson).
 //!
-//! One deliberate boundary: **continuous canvas gestures are not Actions.**
-//! The canvas's semantic input methods (`pointer_down`, `cursor_moved`,
-//! `wheel`, ...) are already a typed vocabulary at the right granularity;
-//! the shell maps raw input onto them directly. `Action` is the app-intent
-//! tier above (navigate, reseed, flip a view mode), the tier automation and
-//! commands speak.
-
-use fetch::FetchUpdate;
+//! Two deliberate boundaries:
+//!
+//! * **The gesture law.** Ephemeral interaction may bypass Action: the
+//!   canvas's semantic input methods (`pointer_down`, `cursor_moved`,
+//!   `wheel`, ...) are already a typed vocabulary at the right granularity,
+//!   and the shell maps raw input onto them directly. Durable or externally
+//!   observable semantic change may not bypass — a gesture that ends in one
+//!   surfaces a semantic event at gesture end. `Action` is the app-intent
+//!   tier (navigate, reseed, flip a view mode), the tier automation and
+//!   commands speak.
+//! * **Port-agnostic messages.** This module never imports a service crate:
+//!   [`Update`] carries app-owned types, and each port's adapter
+//!   ([`crate::browse`] for the fetch actor) converts the service's concrete
+//!   types at the boundary. The universal vocabulary must not depend on one
+//!   port implementation.
 
 /// A typed app intent. The shell (keys, later the omnibar / command palette /
 /// automation adapters) produces these; [`crate::app::update`] consumes them.
@@ -50,8 +57,22 @@ pub enum Effect {
 }
 
 /// A typed service answer, drained by the shell on wake and folded back into
-/// state through [`crate::app::apply_update`].
+/// state through [`crate::app::apply_update`]. App-owned types only; port
+/// adapters convert.
 pub enum Update {
-    /// The fetch actor completed a page / favicon fetch.
-    Fetch(FetchUpdate),
+    /// A page fetch completed (successfully or not).
+    PageFetched {
+        url: String,
+        result: Result<FetchedPage, String>,
+    },
+    /// A favicon's raw bytes arrived for the node at `owner_url`.
+    FaviconFetched { owner_url: String, bytes: Vec<u8> },
+}
+
+/// A successfully fetched page document, in app-owned terms.
+pub struct FetchedPage {
+    /// The response's Content-Type header, verbatim.
+    pub content_type: Option<String>,
+    /// The decoded body text.
+    pub body: String,
 }

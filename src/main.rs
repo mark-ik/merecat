@@ -26,9 +26,9 @@
 
 mod action;
 mod app;
+mod browse;
 mod session;
 mod shell;
-mod web;
 
 use winit::event_loop::EventLoop;
 

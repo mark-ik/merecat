@@ -1,23 +1,61 @@
-//! The web lane's enrichment half: fold fetch outcomes into graph stamps.
-//! (The port itself — the fetch actor's handle and receiver — lives in the
-//! shell; this module is pure folding, so it stays testable and the app
-//! update never blocks.) Grows into the engine-registry lane at obviation
-//! rung 4, once the inker adoption lands serval-side.
+//! The browse lane: address opening, fetch, metadata enrichment, favicon
+//! discovery — and the fetch actor's adapter, converting the service's
+//! concrete types into the app-owned [`Update`] messages so the vocabulary
+//! stays port-agnostic. The folding itself is pure (testable; the app update
+//! never blocks). Live content (the engine registry, document lifecycle,
+//! verso-tile, content frames) is the separate `content` module born at
+//! obviation rung 4: notes, gemini documents, local media, and HTML are all
+//! content, while only some of it arrives by web fetching.
 
-use fetch::{FetchCommand, FetchOutcome};
+use fetch::{FetchCommand, FetchUpdate};
 use mere::canvas::Canvas;
 
-use crate::action::Effect;
+use crate::action::{Effect, FetchedPage, Update};
+
+/// Convert one fetch-actor answer into the app vocabulary. `None` for
+/// updates the app has no lane for yet (subresources arrive with `content`).
+pub fn update_from_fetch(update: FetchUpdate) -> Option<Update> {
+    match update {
+        FetchUpdate::Page(outcome) => Some(Update::PageFetched {
+            url: outcome.url,
+            result: outcome.result.map(|fetched| FetchedPage {
+                content_type: fetched.content_type,
+                body: fetched.body,
+            }),
+        }),
+        FetchUpdate::Favicon { owner_url, bytes } => {
+            Some(Update::FaviconFetched { owner_url, bytes })
+        }
+        FetchUpdate::Subresource(_) => None,
+    }
+}
+
+/// Translate an effect into the fetch actor's command, if it is fetch-shaped.
+/// (The shell's effect runner calls this so the mapping stays beside the
+/// enrichment it feeds.)
+pub fn fetch_command_for(effect: &Effect) -> Option<FetchCommand> {
+    match effect {
+        Effect::FetchPage(url) => Some(FetchCommand::Page(url.clone())),
+        Effect::FetchFavicon { owner_url, url } => Some(FetchCommand::Favicon {
+            owner_url: owner_url.clone(),
+            url: url.clone(),
+        }),
+        _ => None,
+    }
+}
 
 /// Fold one completed page fetch into the graph: stamp the response's
 /// Content-Type as the node's MIME hint, and for HTML extract the page
 /// `<title>` (render-free static parse) so the canvas caption flips from the
 /// host fallback to the real title, then chase the page's favicon so the node
 /// face wears a real icon.
-pub fn apply_page_outcome(canvas: &mut Canvas, outcome: FetchOutcome) -> Vec<Effect> {
-    let url = outcome.url;
+pub fn apply_page(
+    canvas: &mut Canvas,
+    url: String,
+    result: Result<FetchedPage, String>,
+) -> Vec<Effect> {
     let mut effects = Vec::new();
-    match outcome.result {
+    match result {
         Ok(fetched) => {
             let media = fetched
                 .content_type
@@ -34,7 +72,7 @@ pub fn apply_page_outcome(canvas: &mut Canvas, outcome: FetchOutcome) -> Vec<Eff
                     }
                 }
                 // Best-effort: chase the page's favicon; the bytes route back
-                // as a Favicon update keyed to this page url.
+                // as a FaviconFetched update keyed to this page url.
                 if let Some(icon_url) = favicon_url_for(&url, &doc) {
                     effects.push(Effect::FetchFavicon {
                         owner_url: url.clone(),
@@ -64,20 +102,6 @@ pub fn apply_favicon(canvas: &mut Canvas, owner_url: &str, bytes: &[u8]) -> Vec<
         vec![Effect::SaveSession, Effect::Redraw]
     } else {
         Vec::new()
-    }
-}
-
-/// Translate an effect into the fetch actor's command, if it is fetch-shaped.
-/// (The shell's effect runner calls this so the mapping stays beside the
-/// enrichment it feeds.)
-pub fn fetch_command_for(effect: &Effect) -> Option<FetchCommand> {
-    match effect {
-        Effect::FetchPage(url) => Some(FetchCommand::Page(url.clone())),
-        Effect::FetchFavicon { owner_url, url } => Some(FetchCommand::Favicon {
-            owner_url: owner_url.clone(),
-            url: url.clone(),
-        }),
-        _ => None,
     }
 }
 

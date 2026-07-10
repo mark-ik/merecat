@@ -46,23 +46,80 @@ platform event (winit / a11y / automation / scenario)
   -> projection (canvas Scene now; chrome DOM + pane tiles later)
 ```
 
-Two rules make this real rather than aspirational:
+Rules that make this real rather than aspirational:
 
 - `update` never blocks and never touches a platform API. Anything slow or
   platform-shaped is an `Effect` handled by a port.
 - Ports are the only owners of actors and stores. State holds data, not
   handles (the shell owns the handles and runs the effects).
+- The vocabulary stays port-agnostic: `Update` carries app-owned message
+  types; adapters (browse, later content/comms) convert each service's
+  concrete types at the port boundary.
+- **The gesture law**: ephemeral interaction may bypass Action (continuous
+  pointer/wheel maps onto the canvas's semantic input methods, which are
+  already typed vocabulary); durable or externally observable semantic
+  change may not. A gesture that ends in one (placing a node, committing a
+  viewport, changing selection/focus) surfaces a semantic event at gesture
+  end. Durable positions already have the family answer (the
+  cartography-geometry sidecar, persisted at session save); the events are
+  for observability.
+
+### Recorded for later, with triggers (2026-07-10 review round)
+
+A second-agent critique sharpened the plan; these are adopted as decisions
+whose implementation waits for a named trigger, so nothing designs against
+them in the meantime:
+
+- **Observation is the vocabulary's other half.** A snapshot/event pair
+  (application snapshot: windows, surfaces, focus, selection, available
+  actions, content state; plus an event stream) serves AccessKit,
+  automation, diagnostics, and scenarios from ONE surface. Trigger: rung 3's
+  chrome lands born-observable; the pair arrives with its first
+  scenario/automation consumer (the native-automation plan's convergence
+  point). A11y-as-semantic-projection is therefore NOT long-tail material.
+- **Action envelopes + ingress authorization.** Identity, source, target,
+  and outcome on actions; authorization at ingress (where personae/kith
+  capability grants plug in). Trigger: the first non-local action source
+  (automation/remote); targets with multi-window (rung 7).
+- **Multi-window shape.** One `Canvas` per GRAPH (not per window), pooled in
+  app truth; per-window/pane cameras via the canvas's existing
+  `viewport()`/`set_viewport` install seam (the camera is already off the
+  shared authority — meerkat proves this in production). Window records and
+  semantic focus join `App` at rung 7; no `Arc<Mutex>`, no
+  canvas-as-projection rewrite.
+- **Async boot/shutdown.** Today's sync boot IO (before an event loop
+  exists) and sync close-save are honest; when persistence goes async
+  (eidetic stores), boot becomes `Effect::LoadSession -> Update::SessionLoaded`
+  and close becomes `RequestClose -> PersistSession -> SessionSaved -> exit`.
+- **Correlation over URLs.** Enrichment keys by stable node id (URLs are
+  properties; several nodes can share one, and `get_node_by_url` answers
+  first-match), with request ids + staleness semantics arriving with the
+  content lane, where late results against superseded nodes actually bite.
 
 ## Module map (the future crate map)
 
 | Module | Owns | Today | Crate when |
 | --- | --- | --- | --- |
-| `action` | `Action`, `Effect`, `Update` enums | this plan's first slice | automation adapters need it without the app |
-| `app` | `App` state + the two `update` fns | first slice | never alone; travels with `action` |
-| `web` | fetch/enrichment port: page + favicon outcomes into graph stamps; later engine registry + verso-tile flip | exists inline; moves into the module | the engine registry lands (post inker adoption) |
-| `session` | persistence port: graph.json now; browser_nodes.json, view intent, settings, multi-session later | exists inline; moves into the module | multi-session lands |
-| `shell` | winit + SurfaceHost + input mapping onto canvas semantics + effect runner | today's main.rs | a second host (wasm) appears |
+| `action` | `Action`, `Effect`, `Update` enums (port-agnostic) | landed | headless automation needs `action + app` without a shell |
+| `app` | `App` state + the two `update` fns | landed | never alone; travels with `action` |
+| `browse` | address opening, fetch, redirects, metadata enrichment, favicon discovery (the fetch adapter) | landed (was `web`) | another app consumes the port |
+| `content` | engine registrations, per-node document lifecycle, verso-tile flip, content frames, input routing (the registry itself is serval/inker's) | absent | rung 4 births it; crate if feature isolation changes the dep graph |
+| `session` | persistence port: graph.json now; browser_nodes.json, view intent, settings, multi-session later | landed | multi-session lands |
+| `shell` | winit + SurfaceHost + layered present + input routing + effect runner | landed | a second host (wasm) appears, or desktop/web shells share the core |
 | `ui` | chrome DOM (omnibar, toolbar), pane tiles over platen | absent | it exists at all (needs xilem-serval + platen) |
+
+Crate promotion is gated on consumers and build shape, never on module size:
+headless automation wanting `action + app`, a second shell, another app
+consuming a port, or feature isolation that changes the dependency graph.
+The likely eventual shape is `merecat-core` / `merecat-desktop` /
+`merecat-web`; until a gate fires, modules are correct.
+
+Rung 3 also births the **layered present seam** in minimal form: the shell
+composites an ordered list of surfaces (canvas, then the chrome layer) with
+rects and focus-routed input, and that seam grows into a full surface plan
+(ids, z-order, per-surface input routing) at rung 5 when panes and content
+frames multiply. `Shell::render` must never become the next imperative
+crossroads.
 
 mere::canvas is hosted, not wrapped: the shell maps raw input onto the
 canvas's semantic methods directly (they are already the right vocabulary),
@@ -90,8 +147,10 @@ daily-driver value, not by meerkat's module sizes.
    verso-tile flip for the compat lane. Gate: the mere->serval agent's
    migration (adoption plan done-conditions 1-6).
 5. **Panes** — platen (the pane home) + the domain crates (gloss, roster,
-   trail, alembic/steward over session-runtime). Gate: rung 3's chrome
-   document (panes need a DOM home).
+   trail, alembic/steward over session-runtime). Gate: the surface
+   composition + focus routing seam (born minimal at rung 3) plus platen's
+   pane model; the chrome document is a product-order choice, not the
+   structural gate.
 6. **Multi-session + browser-state sidecar** — session-runtime's manifests,
    sessions/<id>/ layout, browser_nodes.json. Gate: rung 4 (per-node browser
    state is worth persisting once nodes hold live content).
@@ -104,10 +163,25 @@ daily-driver value, not by meerkat's module sizes.
    arrives when wanted, none blocks obviation of the daily-driver set.
 
 **Meerkat's deletion condition** (the founding doc's done-condition 2 made
-concrete): rungs 1-6 landed and Mark browses in merecat for a week without
-reaching for meerkat. Then meerkat leaves mere's workspace and the mere
-facade drops its compatibility re-exports (platen moves here in the same
-pass).
+concrete; behavioral receipts, not a subjective trial — 2026-07-10 review
+round): every row below passes, at which point daily-driving merecat is
+confirmation rather than the specification.
+
+- Open addresses from the omnibar; navigate live content.
+- Back, forward, reload, and redirects behave.
+- Focus and switch between the graph canvas and documents.
+- Open, arrange, and restore panes.
+- Restore graph, browser state, and content state after a restart.
+- Change engine/viewer settings and see them apply.
+- Run the same scenario through keyboard input and through automation
+  Actions (one description, two runners).
+- Produce a coherent application snapshot and accessibility tree.
+- Recover from a failed fetch, a failed engine start, and an interrupted
+  save.
+- Meerkat holds no capability absent from this matrix.
+
+Then meerkat leaves mere's workspace and the mere facade drops its
+compatibility re-exports (platen moves here in the same pass).
 
 ## What is deliberately NOT carried
 
@@ -132,8 +206,27 @@ fetch enrichment, favicon, session restore, canvas input), verified by build
 plus a headed smoke on the scratch profile, with every mutation path already
 flowing through `Action`.
 
+This plan supersedes the founding doc's target-shape section (which is now
+amendment on amendment); the founding doc keeps the naming, sequencing, and
+done-conditions story.
+
 ## Progress
 
 - 2026-07-10: Plan written (with Mark: "obviate meerkat, architect merecat";
-  the inker/serval migration explicitly belongs to the parallel agent). First
-  slice follows in-session.
+  the inker/serval migration explicitly belongs to the parallel agent).
+- 2026-07-10 (same session): **First slice LANDED** (a8d7117): main.rs is a
+  page of bootstrapping over action/app/browse/session/shell; keys,
+  close-save, boot fetch, and enrichment flow through the spine;
+  headed-smoke verified on the scratch profile.
+- 2026-07-10 (same session): **Second-agent review folded in.** Adopted now:
+  port-agnostic Update messages (the fetch adapter converts at the
+  boundary), the gesture law, `web` renamed `browse` with `content`'s
+  charter fixed, the crate-promotion gates, the behavioral-receipt deletion
+  matrix, the minimal layered-present seam scheduled for rung 3, and the
+  pane-gate correction. Recorded with triggers: snapshot/events (first
+  automation/scenario consumer; a11y projection pulled OUT of the long
+  tail), action envelopes + ingress authorization (first non-local source),
+  the multi-window shape (pooled canvas per graph + viewport install — the
+  existing seam, not a canvas rewrite), async boot/shutdown (when
+  persistence goes async), node-id correlation for enrichment (next
+  enrichment touch; request ids with the content lane).

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use mere::canvas::Canvas;
 
 use crate::action::{Action, Effect, Update};
-use crate::{session, web};
+use crate::{browse, session};
 
 /// The application state: the hosted canvas (which owns the graph) and where
 /// the session persists.
@@ -92,14 +92,12 @@ impl App {
     /// Fold one typed service answer into state.
     pub fn apply_update(&mut self, update: Update) -> Vec<Effect> {
         match update {
-            Update::Fetch(fetch::FetchUpdate::Page(outcome)) => {
-                web::apply_page_outcome(&mut self.canvas, outcome)
+            Update::PageFetched { url, result } => {
+                browse::apply_page(&mut self.canvas, url, result)
             }
-            Update::Fetch(fetch::FetchUpdate::Favicon { owner_url, bytes }) => {
-                web::apply_favicon(&mut self.canvas, &owner_url, &bytes)
+            Update::FaviconFetched { owner_url, bytes } => {
+                browse::apply_favicon(&mut self.canvas, &owner_url, &bytes)
             }
-            // Subresources arrive with the content lane (obviation rung 4).
-            Update::Fetch(fetch::FetchUpdate::Subresource(_)) => Vec::new(),
         }
     }
 }

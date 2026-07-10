@@ -19,9 +19,9 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::action::{Action, Effect, Update};
+use crate::action::{Action, Effect};
 use crate::app::App;
-use crate::{session, web};
+use crate::{browse, session};
 
 /// The merecat shell: app state plus the window, present stack, and ports
 /// that drive it.
@@ -78,7 +78,7 @@ impl Shell {
     /// The effect runner: the one place effects meet ports.
     fn run_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
-            if let Some(command) = web::fetch_command_for(&effect) {
+            if let Some(command) = browse::fetch_command_for(&effect) {
                 self.fetch_handle.command(command);
                 continue;
             }
@@ -181,9 +181,13 @@ impl ApplicationHandler for Shell {
     /// completed fetch is waiting. Drain fetches through the spine, then
     /// redraw so `frame()` folds everything in (and chains while settling).
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        while let Ok(update) = self.fetch_rx.try_recv() {
-            let effects = self.app.apply_update(Update::Fetch(update));
-            self.run_effects(effects);
+        while let Ok(raw) = self.fetch_rx.try_recv() {
+            // The port adapter converts the service's types at the boundary;
+            // the app only ever sees the app-owned vocabulary.
+            if let Some(update) = browse::update_from_fetch(raw) {
+                let effects = self.app.apply_update(update);
+                self.run_effects(effects);
+            }
         }
         self.request_redraw();
     }
