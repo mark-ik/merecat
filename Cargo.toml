@@ -41,8 +41,18 @@ dirs = "6"
 serval-extract = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 serval-static-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 # `linked_icon_href` (the page's declared `<link rel=icon>`) + image decode
-# for the fetched favicon bytes the orrery face paints.
+# for the fetched favicon bytes the canvas face paints; also the chrome
+# layer's layout engine (the omnibar document).
 serval-layout = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+# The chrome layer's document substrate + name types + paint vocabulary
+# (rung 3: the omnibar is merecat's first DOM surface, composited above the
+# canvas by the layered present).
+serval-scripted-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+layout-dom-api = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+# Suggestion rows key node identity by the graph's stable UUIDs.
+uuid = "1"
 # Resolve a declared icon href (or the /favicon.ico fallback) against the page URL.
 url = "2.5"
 # Rasterize + composite the orrery's Scene through the shared present stack.

@@ -36,6 +36,8 @@ pub struct Shell {
     /// Last cursor position in physical px. winit's `MouseInput` carries no
     /// position, so the shell tracks it from `CursorMoved`.
     cursor: (f32, f32),
+    /// Live Ctrl state, for the omnibar summon chords (Ctrl+L / Ctrl+K).
+    ctrl: bool,
     window: Option<Arc<Window>>,
     host: Option<SurfaceHost>,
     width: u32,
@@ -60,6 +62,7 @@ impl Shell {
             fetch_handle,
             fetch_rx,
             cursor: (0.0, 0.0),
+            ctrl: false,
             window: None,
             host: None,
             width: 1024,
@@ -93,30 +96,41 @@ impl Shell {
         }
     }
 
-    /// Produce the canvas's frame at the current size, rasterize + composite
-    /// it through the present stack, and chain another redraw while the
-    /// canvas is still animating (settling / gliding / dragging).
+    /// The layered present (born minimal at rung 3, grows into the surface
+    /// plan at rung 5): rasterize each surface's scene to its own texture and
+    /// compose them in order onto the frame — the canvas below, the chrome
+    /// layer (transparent-cleared, alpha-blended) above when the omnibar is
+    /// open. Chains another redraw while the canvas is still animating.
     fn render(&mut self) {
         if self.host.is_none() {
             return;
         }
         let (w, h) = (self.width.max(1), self.height.max(1));
-        let (scene, needs_redraw) = self.app.canvas.frame(w, h);
+        let (canvas_scene, needs_redraw) = self.app.canvas.frame(w, h);
+        let chrome_scene = self
+            .app
+            .omnibar
+            .open
+            .then(|| crate::ui::chrome_scene(&self.app.omnibar, w, h));
 
         let host = self.host.as_ref().unwrap();
-        let (_tex, view) = host.rasterize(&scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE));
+        let (_tex, canvas_view) =
+            host.rasterize(&canvas_scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE));
+        let chrome_view = chrome_scene.as_ref().map(|scene| {
+            host.rasterize(&scene, w, h, ColorLoad::Clear(wgpu::Color::TRANSPARENT))
+                .1
+        });
         let Some(frame) = host.acquire() else { return };
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        host.renderer().compose_external_texture(
-            &view,
-            &target,
-            host.format(),
-            w,
-            h,
-            ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]),
-        );
+        let full = ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]);
+        host.renderer()
+            .compose_external_texture(&canvas_view, &target, host.format(), w, h, full);
+        if let Some(view) = chrome_view.as_ref() {
+            host.renderer()
+                .compose_external_texture(view, &target, host.format(), w, h, full);
+        }
         frame.present();
 
         if needs_redraw {
@@ -219,6 +233,7 @@ impl ApplicationHandler for Shell {
             // directly (they are already the right typed vocabulary); Actions
             // are the app-intent tier above. (Architecture plan, the spine.)
             WindowEvent::ModifiersChanged(mods) => {
+                self.ctrl = mods.state().control_key();
                 self.app.canvas.set_ctrl(mods.state().control_key());
                 self.app.canvas.set_alt(mods.state().alt_key());
             }
@@ -257,18 +272,46 @@ impl ApplicationHandler for Shell {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    let action = match &event.logical_key {
-                        WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
-                        WinitKey::Character(s) => match s.as_str() {
-                            "i" => Some(Action::ToggleIsometric),
-                            "q" => Some(Action::OrbitBy(-0.15)),
-                            "e" => Some(Action::OrbitBy(0.15)),
-                            "[" => Some(Action::TiltBy(-0.05)),
-                            "]" => Some(Action::TiltBy(0.05)),
-                            "h" => Some(Action::ToggleHeightByDegree),
+                    let action = if self.app.omnibar.open {
+                        // The omnibar has keyboard focus: edit keys route to
+                        // it; canvas hotkeys are suspended while it is open.
+                        match &event.logical_key {
+                            WinitKey::Named(WinitNamedKey::Escape) => Some(Action::OmnibarClose),
+                            WinitKey::Named(WinitNamedKey::Enter) => Some(Action::OmnibarCommit),
+                            WinitKey::Named(WinitNamedKey::Backspace) => {
+                                Some(Action::OmnibarBackspace)
+                            }
+                            WinitKey::Named(WinitNamedKey::ArrowUp) => Some(Action::OmnibarMove(-1)),
+                            WinitKey::Named(WinitNamedKey::ArrowDown) => {
+                                Some(Action::OmnibarMove(1))
+                            }
+                            WinitKey::Named(WinitNamedKey::Space) => Some(Action::OmnibarChar(' ')),
+                            WinitKey::Character(s) if !self.ctrl => {
+                                s.chars().next().map(Action::OmnibarChar)
+                            }
                             _ => None,
-                        },
-                        _ => None,
+                        }
+                    } else {
+                        match &event.logical_key {
+                            WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
+                            WinitKey::Character(s) if self.ctrl => match s.as_str() {
+                                // The summon chords: Ctrl+L address flavor,
+                                // Ctrl+K command flavor (pre-seeded `>`).
+                                "l" => Some(Action::OmnibarOpen { command: false }),
+                                "k" => Some(Action::OmnibarOpen { command: true }),
+                                _ => None,
+                            },
+                            WinitKey::Character(s) => match s.as_str() {
+                                "i" => Some(Action::ToggleIsometric),
+                                "q" => Some(Action::OrbitBy(-0.15)),
+                                "e" => Some(Action::OrbitBy(0.15)),
+                                "[" => Some(Action::TiltBy(-0.05)),
+                                "]" => Some(Action::TiltBy(0.05)),
+                                "h" => Some(Action::ToggleHeightByDegree),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
                     };
                     if let Some(action) = action {
                         self.act(action);

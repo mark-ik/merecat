@@ -40,6 +40,19 @@ pub enum Action {
     ToggleHeightByDegree,
     /// Persist the session now (close path; enrichment saves ride effects).
     SaveSession,
+    /// Summon the omnibar (`command` pre-seeds the `>` actions lane).
+    OmnibarOpen { command: bool },
+    /// Dismiss the omnibar without committing.
+    OmnibarClose,
+    /// Append one typed character to the omnibar text.
+    OmnibarChar(char),
+    /// Delete the last omnibar character.
+    OmnibarBackspace,
+    /// Move the suggestion highlight by a delta (wraps at the ends).
+    OmnibarMove(i32),
+    /// Commit the highlighted suggestion (or literal-go on address-shaped
+    /// text with nothing highlighted).
+    OmnibarCommit,
 }
 
 /// A side effect `update` asks the shell to run through a port. `update`

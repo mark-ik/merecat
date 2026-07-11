@@ -29,6 +29,7 @@ mod app;
 mod browse;
 mod session;
 mod shell;
+mod ui;
 
 use winit::event_loop::EventLoop;
 

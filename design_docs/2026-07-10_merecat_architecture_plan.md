@@ -218,6 +218,22 @@ done-conditions story.
   page of bootstrapping over action/app/browse/session/shell; keys,
   close-save, boot fetch, and enrichment flow through the spine;
   headed-smoke verified on the scratch profile.
+- 2026-07-10 (same session): **Rung 3 first slice LANDED**: the summonable
+  omnibar over the layered present. Ctrl+L / Ctrl+K summon (Ctrl+K seeds the
+  `>` lane, a hint row this slice); typing flows through Omnibar Actions;
+  the find lane matches graph nodes (label/host/url, recency-ranked) ahead
+  of the go row (address-shaped input, https:// for dotted hosts); commit
+  selects an existing node without refetching or lowers to OpenAddress. The
+  chrome layer is merecat's first DOM surface: a ScriptedDom laid out by
+  serval-layout into a paint list, rasterized to a transparent-cleared texture and
+  alpha-composited above the canvas texture (the minimal layered-present
+  seam, in code). First-run bare launch auto-opens the palette; a bare
+  relaunch restores quietly. Placement lesson: serval-layout positions
+  absolutes by transform-translate (the gnode path), not left/top. Headed
+  receipt: `testing/merecat/images/2026-07-10_omnibar_centered.png` (typed
+  "meer", the restored Wikipedia node amber-highlighted). Next slices: the
+  `>` actions lane over the Action registry, at-rest focused-node caption,
+  IME/caret honesty.
 - 2026-07-10 (same session): **Second-agent review folded in.** Adopted now:
   port-agnostic Update messages (the fetch adapter converts at the
   boundary), the gesture law, `web` renamed `browse` with `content`'s
