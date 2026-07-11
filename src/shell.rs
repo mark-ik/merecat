@@ -107,11 +107,9 @@ impl Shell {
         }
         let (w, h) = (self.width.max(1), self.height.max(1));
         let (canvas_scene, needs_redraw) = self.app.canvas.frame(w, h);
-        let chrome_scene = self
-            .app
-            .omnibar
-            .open
-            .then(|| crate::ui::chrome_scene(&self.app.omnibar, w, h));
+        let caption = crate::app::focused_caption(&self.app.canvas);
+        let chrome_scene = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref())
+            .then(|| crate::ui::chrome_scene(&self.app.omnibar, caption.as_deref(), w, h));
 
         let host = self.host.as_ref().unwrap();
         let (_tex, canvas_view) =
@@ -162,7 +160,10 @@ impl ApplicationHandler for Shell {
         self.width = size.width.max(1);
         self.height = size.height.max(1);
         self.app.canvas.resize(self.width, self.height);
-        self.app.canvas.recenter();
+        // Frame the content, not the origin: a restored session's persisted
+        // positions can have settled anywhere in world space, and a camera
+        // centered on the origin would then show empty ground.
+        self.app.canvas.fit_to_content();
 
         let options = NetrenderOptions {
             tile_cache_size: Some(64),
@@ -253,6 +254,15 @@ impl ApplicationHandler for Shell {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // Click-away: a press while the omnibar is open dismisses it
+                // and is swallowed (the palette has focus; the canvas should
+                // not also react to the same press).
+                if self.app.omnibar.open {
+                    if state == ElementState::Pressed {
+                        self.act(Action::OmnibarClose);
+                    }
+                    return;
+                }
                 let button = match button {
                     MouseButton::Left => Some(PointerButton::Left),
                     MouseButton::Middle => Some(PointerButton::Middle),
@@ -302,6 +312,13 @@ impl ApplicationHandler for Shell {
                                 _ => None,
                             },
                             WinitKey::Character(s) => match s.as_str() {
+                                // Plain-key summons beside the Ctrl chords:
+                                // `/` (the quick-switcher convention) and `>`
+                                // straight into the actions lane. Chord-free,
+                                // so synthesized-input drivers can't lose the
+                                // modifier race either.
+                                "/" => Some(Action::OmnibarOpen { command: false }),
+                                ">" => Some(Action::OmnibarOpen { command: true }),
                                 "i" => Some(Action::ToggleIsometric),
                                 "q" => Some(Action::OrbitBy(-0.15)),
                                 "e" => Some(Action::OrbitBy(0.15)),

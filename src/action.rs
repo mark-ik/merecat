@@ -55,6 +55,21 @@ pub enum Action {
     OmnibarCommit,
 }
 
+/// The palette's action registry: every Action an app-intent lane (the `>`
+/// omnibar lane today; automation and a context menu later) may offer, with
+/// its display label. The registry is the single catalog those lanes filter;
+/// an Action absent here is reachable only by its dedicated input path.
+pub fn palette_actions() -> Vec<(&'static str, Action)> {
+    vec![
+        ("Reseed layout", Action::ReseedLayout),
+        ("Toggle isometric view", Action::ToggleIsometric),
+        ("Toggle height-by-degree", Action::ToggleHeightByDegree),
+        ("Orbit left", Action::OrbitBy(-0.15)),
+        ("Orbit right", Action::OrbitBy(0.15)),
+        ("Save session", Action::SaveSession),
+    ]
+}
+
 /// A side effect `update` asks the shell to run through a port. `update`
 /// itself never blocks and never touches a platform API.
 #[derive(Clone, Debug, PartialEq)]

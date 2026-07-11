@@ -246,3 +246,23 @@ done-conditions story.
   existing seam, not a canvas rewrite), async boot/shutdown (when
   persistence goes async), node-id correlation for enrichment (next
   enrichment touch; request ids with the content lane).
+- 2026-07-10 (same session): **Rung 3 second slice LANDED**: the `>` actions
+  lane over a `palette_actions()` registry in action.rs (six entries this
+  slice); committing an Act row lowers the registry Action through the same
+  `update` spine as everything else. At-rest caption: a `.whereami` chip
+  (focused node's display label + host) bottom-left whenever the omnibar is
+  closed, so the layered chrome earns its keep between summons. Click-away
+  closes the palette; plain-key summons `/` and `>` beside the Ctrl chords
+  (chord-free, so synthesized-input drivers cannot lose the modifier race,
+  which SendKeys demonstrably did with Ctrl+K). Receipts: unit (6 tests:
+  the registry filter, both commit paths, find-before-go, normalization,
+  hints) and headed (`rung3-actions-lane2.png`: `>re` filters to "Reseed
+  layout" selected + "Toggle height-by-degree"; `rung3-boot-framed.png`).
+  Boot-framing fix landed WITH the slice: the headed run exposed that a
+  restored session whose persisted positions settled away from the origin
+  boots to empty ground (recenter frames the origin, not the content).
+  `Canvas::fit_to_content()` added in the canvas crate (the
+  fit-to-content_bounds camera recenter's doc promised; zoom fits padded
+  bounds, capped at 1.0, empty graph falls back to recenter; 2 tests) and
+  merecat's `resumed` now calls it. Remaining rung 3 polish: IME/caret
+  honesty.

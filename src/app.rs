@@ -11,6 +11,19 @@ use crate::action::{Action, Effect, Update};
 use crate::ui::{OmnibarState, Suggestion, normalize_address, recompute_suggestions};
 use crate::{browse, session};
 
+/// The at-rest "where am I" caption: the focused node's display label (and
+/// host, when it adds information), or `None` with nothing focused.
+pub fn focused_caption(canvas: &Canvas) -> Option<String> {
+    let url = canvas.focused_url()?.to_string();
+    let graph = canvas.graph();
+    let (key, node) = graph.get_node_by_url(&url)?;
+    let label = graph.node_display_label(key);
+    match node.cached_host.as_deref() {
+        Some(host) if !label.contains(host) => Some(format!("{label}  \u{00b7}  {host}")),
+        _ => Some(label),
+    }
+}
+
 /// The application state: the hosted canvas (which owns the graph), the
 /// chrome state, and where the session persists.
 pub struct App {
@@ -157,12 +170,32 @@ impl App {
                             fx
                         };
                     }
+                    Some(Suggestion::Act { action, .. }) => {
+                        // The actions lane: the committed registry entry is
+                        // an ordinary Action; lower it through the same
+                        // spine everything else uses.
+                        self.omnibar = OmnibarState::default();
+                        return {
+                            let mut fx = self.update(action);
+                            fx.push(Effect::Redraw);
+                            fx
+                        };
+                    }
                     Some(Suggestion::Hint(_)) | None => vec![Effect::Redraw],
                 };
                 self.omnibar = OmnibarState::default();
                 effects.push(Effect::Redraw);
                 effects
             }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_stub() -> Self {
+        Self {
+            canvas: Canvas::new(),
+            omnibar: OmnibarState::default(),
+            data_root: std::env::temp_dir().join("merecat-app-test"),
         }
     }
 
@@ -176,5 +209,47 @@ impl App {
                 browse::apply_favicon(&mut self.canvas, &owner_url, &bytes)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Committing a `>` registry row lowers the registry Action through the
+    /// same spine as everything else, and the palette closes.
+    #[test]
+    fn committing_an_action_row_runs_the_action_and_closes() {
+        let mut app = App::test_stub();
+        for action in [
+            Action::OmnibarOpen { command: true },
+            Action::OmnibarChar('i'),
+            Action::OmnibarChar('s'),
+            Action::OmnibarChar('o'),
+        ] {
+            app.update(action);
+        }
+        assert!(!app.canvas.is_isometric());
+        let effects = app.update(Action::OmnibarCommit);
+        assert!(app.canvas.is_isometric(), "the committed toggle ran");
+        assert!(!app.omnibar.open, "the palette closed on commit");
+        assert!(effects.contains(&Effect::Redraw));
+    }
+
+    /// Committing a find-lane node row selects without fetching.
+    #[test]
+    fn committing_a_node_row_selects_without_fetch_effects() {
+        let mut app = App::test_stub();
+        app.canvas.visit("https://example.com/meerkats");
+        app.update(Action::OmnibarOpen { command: false });
+        for c in "meer".chars() {
+            app.update(Action::OmnibarChar(c));
+        }
+        let effects = app.update(Action::OmnibarCommit);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FetchPage(_))),
+            "selecting an existing node must not refetch: {effects:?}"
+        );
+        assert!(!app.omnibar.open);
     }
 }

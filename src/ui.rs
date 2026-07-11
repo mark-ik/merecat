@@ -40,7 +40,12 @@ pub enum Suggestion {
     },
     /// Open this address (mint-or-select + fetch).
     Go { url: String },
-    /// A muted hint row (empty state; the `>` lane this slice).
+    /// An app intent from the palette registry (the `>` lane).
+    Act {
+        label: &'static str,
+        action: crate::action::Action,
+    },
+    /// A muted hint row (empty states).
     Hint(&'static str),
 }
 
@@ -71,11 +76,19 @@ pub fn recompute_suggestions(state: &mut OmnibarState, canvas: &Canvas) {
     let text = state.text.trim();
 
     if let Some(rest) = text.strip_prefix('>') {
-        let _ = rest;
-        state
-            .suggestions
-            .push(Suggestion::Hint("actions arrive with the next slice"));
-        state.selected = 0;
+        // The actions lane: filter the palette registry (the filterable
+        // action list, in its first home).
+        let needle = rest.trim().to_lowercase();
+        state.suggestions.extend(
+            crate::action::palette_actions()
+                .into_iter()
+                .filter(|(label, _)| needle.is_empty() || label.to_lowercase().contains(&needle))
+                .map(|(label, action)| Suggestion::Act { label, action }),
+        );
+        if state.suggestions.is_empty() {
+            state.suggestions.push(Suggestion::Hint("no matching action"));
+        }
+        state.selected = state.selected.min(state.suggestions.len() - 1);
         return;
     }
 
@@ -160,14 +173,48 @@ const CHROME_SHEET: &str = "\
                     padding: 5px 8px; white-space: nowrap; overflow: hidden; \
                     background-color: rgb(232, 150, 40); border-radius: 6px; } \
     .omni-row-muted { color: rgb(140, 148, 165); font-size: 14px; \
-                      padding: 5px 8px; white-space: nowrap; }";
+                      padding: 5px 8px; white-space: nowrap; } \
+    .whereami { position: absolute; color: rgb(170, 178, 195); \
+                background-color: rgb(20, 25, 38); font-size: 12px; \
+                padding: 3px 10px; border-radius: 10px; \
+                border: 1px solid rgb(52, 62, 86); white-space: nowrap; }";
 
-/// Build the chrome layer's scene for the current omnibar state. The shell
-/// rasterizes it onto a transparent-cleared texture and composes it above
-/// the canvas layer.
-pub fn chrome_scene(state: &OmnibarState, w: u32, h: u32) -> netrender::Scene {
+/// Whether the chrome layer has anything to show (the shell skips the
+/// second rasterize pass entirely when it does not).
+pub fn chrome_has_content(state: &OmnibarState, caption: Option<&str>) -> bool {
+    state.open || caption.is_some()
+}
+
+/// Build the chrome layer's scene: the omnibar card when open, and the
+/// at-rest "where am I" caption chip (the focused node's label) at the
+/// bottom edge. The shell rasterizes it onto a transparent-cleared texture
+/// and composes it above the canvas layer.
+pub fn chrome_scene(
+    state: &OmnibarState,
+    caption: Option<&str>,
+    w: u32,
+    h: u32,
+) -> netrender::Scene {
     let mut dom = ScriptedDom::new();
     let root = dom.document();
+
+    if let Some(caption) = caption {
+        let chip = dom.create_element(qual("div"));
+        dom.set_attribute(chip, qual("class"), "whereami");
+        let bottom = (h as f32 - 34.0).max(0.0);
+        dom.set_attribute(
+            chip,
+            qual("style"),
+            &format!("transform: translate(12px, {bottom}px);"),
+        );
+        let chip_text = dom.create_text(caption);
+        dom.append_child(chip, chip_text);
+        dom.append_child(root, chip);
+    }
+
+    if !state.open {
+        return finish_scene(&dom, w, h);
+    }
 
     let card = dom.create_element(qual("div"));
     dom.set_attribute(card, qual("class"), "omni");
@@ -203,6 +250,7 @@ pub fn chrome_scene(state: &OmnibarState, w: u32, h: u32) -> netrender::Scene {
             Suggestion::Node { label, host, .. } if host.is_empty() => label.clone(),
             Suggestion::Node { label, host, .. } => format!("{label}  \u{00b7}  {host}"),
             Suggestion::Go { url } => format!("\u{2192} open {url}"),
+            Suggestion::Act { label, .. } => format!("\u{203a} {label}"),
             Suggestion::Hint(hint) => (*hint).to_string(),
         };
         let row_text = dom.create_text(&text);
@@ -210,10 +258,15 @@ pub fn chrome_scene(state: &OmnibarState, w: u32, h: u32) -> netrender::Scene {
         dom.append_child(card, row);
     }
 
-    let layout = IncrementalLayout::new(&dom, &[CHROME_SHEET], w as f32, h as f32);
+    finish_scene(&dom, w, h)
+}
+
+/// Lay out the chrome document and composite its paint list into a scene.
+fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
+    let layout = IncrementalLayout::new(dom, &[CHROME_SHEET], w as f32, h as f32);
     let scroll = ScrollOffsets::<DomNodeId>::default();
     let viewport = DeviceIntSize::new(w as i32, h as i32);
-    let plist = layout.emit_paint_list(&dom, &scroll, viewport);
+    let plist = layout.emit_paint_list(dom, &scroll, viewport);
     let layers = [CompositeLayer {
         commands: plist.commands(),
         fonts: plist.fonts(),
@@ -256,6 +309,39 @@ mod tests {
         state.text = ">set".into();
         recompute_suggestions(&mut state, &canvas);
         assert!(matches!(state.suggestions[0], Suggestion::Hint(_)));
+    }
+
+    #[test]
+    fn actions_lane_filters_the_palette_registry() {
+        let canvas = Canvas::new();
+        let mut state = OmnibarState {
+            open: true,
+            text: ">re".into(),
+            ..Default::default()
+        };
+        recompute_suggestions(&mut state, &canvas);
+        assert!(
+            state
+                .suggestions
+                .iter()
+                .any(|s| matches!(s, Suggestion::Act { label, .. } if *label == "Reseed layout")),
+            "`>re` must surface Reseed layout: {:?}",
+            state.suggestions
+        );
+        assert!(
+            !state
+                .suggestions
+                .iter()
+                .any(|s| matches!(s, Suggestion::Act { label, .. } if *label == "Save session")),
+            "`>re` must filter out non-matching actions"
+        );
+        // Bare `>` lists the whole registry.
+        state.text = ">".into();
+        recompute_suggestions(&mut state, &canvas);
+        assert_eq!(
+            state.suggestions.len(),
+            crate::action::palette_actions().len()
+        );
     }
 
     #[test]
