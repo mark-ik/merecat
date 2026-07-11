@@ -38,6 +38,11 @@ armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" 
 dirs = "6"
 # Render-free static-parse page extraction: the fetched body's `<title>`
 # (and later description/OpenGraph) enriches the page's graph node.
+# The engine contracts + the content lanes as session engines (session-engines
+# plan phase 4: merecat's content port spawns through the registry; the static
+# lane's netfetch feature gives LocalFetcher its https branch).
+inker = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+serval-documents = { git = "https://github.com/mark-ik/serval.git", branch = "main", features = ["netfetch"] }
 serval-extract = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 serval-static-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 # `linked_icon_href` (the page's declared `<link rel=icon>`) + image decode

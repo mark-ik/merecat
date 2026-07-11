@@ -64,6 +64,9 @@ enum Step {
     AssertFocused(String),
     AssertSuggestions(CmpOp, usize),
     AssertVisible,
+    /// The focused node's content lifecycle is Live (the phase-4 receipt's
+    /// app-truth half; the capture is the pixel half).
+    AssertContentLive,
     Log(String),
 }
 
@@ -237,6 +240,20 @@ impl Scenario {
                 }
                 Tick::Wait
             }
+            Step::AssertContentLive => {
+                let focused = app.canvas.focused_member();
+                let live = focused.is_some_and(|id| {
+                    matches!(app.content.get(id), Some(crate::content::NodeContent::Live))
+                });
+                if !live {
+                    let state = focused
+                        .and_then(|id| app.content.get(id))
+                        .map(|s| format!("{s:?}"))
+                        .unwrap_or_else(|| "no content state".to_string());
+                    self.fail(format!("assert content-live: focused node is {state}"));
+                }
+                Tick::Wait
+            }
             Step::Log(text) => {
                 self.log.push(text.clone());
                 Tick::Wait
@@ -343,6 +360,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                         Step::AssertSuggestions(op, n)
                     }
                     "visible" => Step::AssertVisible,
+                    "content-live" => Step::AssertContentLive,
                     _ => return err("unknown assert"),
                 }
             }

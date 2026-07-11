@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
+use inker::{DocumentSession, SessionRegistry, SessionSpawnRequest};
+use serval_documents::{LocalFetcher, StaticSessionEngine};
 use image::ImageEncoder;
 use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
 use netrender::external_texture::ExternalTexturePlacement;
@@ -50,6 +52,16 @@ pub struct Shell {
     host: Option<SurfaceHost>,
     width: u32,
     height: u32,
+    /// The content port (rung 4, session-engines plan phase 4): the session
+    /// registry does the engine-id dispatch, and the live sessions — retained,
+    /// non-Send handles — live here, keyed by the same node ids App's
+    /// ContentStates tracks. Ports own handles; App holds data.
+    content_engines: SessionRegistry<netrender::Scene>,
+    content_sessions: std::collections::HashMap<uuid::Uuid, Box<dyn DocumentSession<netrender::Scene>>>,
+    /// Mere's routing vocabulary over inker's engine rules: address -> engine id.
+    route_policy: inker::EngineRoutePolicy,
+    /// Monotonic epoch for the sessions' pump clock.
+    epoch: std::time::Instant,
 }
 
 impl Shell {
@@ -64,6 +76,12 @@ impl Shell {
         });
         let (fetch_handle, fetch_rx) = fetch::spawn_fetcher(fetch_wake);
 
+        // The content port's engines: the static lane (serval.web) with the
+        // shell-owned fetcher (netfetch: https + data:). Scripted/smolweb
+        // rungs join by registration, not new dispatch code.
+        let mut content_engines = SessionRegistry::new();
+        content_engines.register(Box::new(StaticSessionEngine::new(LocalFetcher)));
+
         let mut shell = Self {
             app,
             proxy,
@@ -77,6 +95,10 @@ impl Shell {
             host: None,
             width: 1024,
             height: 600,
+            content_engines,
+            content_sessions: std::collections::HashMap::new(),
+            route_policy: mere::routing::route_policy(),
+            epoch: std::time::Instant::now(),
         };
         shell.run_effects(boot_effects);
         shell
@@ -107,22 +129,44 @@ impl Shell {
                 Effect::SaveSession => {
                     session::save_session_graph(&self.app.data_root, self.app.canvas.graph())
                 }
-                // The content port's slot (rung 4). Sessions are retained,
-                // non-Send handles, so THIS is where they will live, keyed by
-                // node id, once serval-documents lands (session-engines plan
-                // phase 2). Until then the port answers honestly — a failure
-                // naming the gap, never a Requested node left spinning.
+                // The content port (rung 4, live since serval-documents
+                // landed): route the address to an engine id, spawn through
+                // the registry, hold the session keyed by node id. Every
+                // failure — unroutable id, spawn error — surfaces as
+                // ContentFailed; a Requested node never silently spins.
                 Effect::SpawnContent { node, url } => {
-                    tracing::info!(%node, %url, "content spawn requested; the port awaits serval-documents");
-                    let effects = self.app.apply_update(Update::ContentFailed {
-                        node,
-                        error: "content port not wired yet (session-engines plan phase 2)"
-                            .to_string(),
-                    });
+                    let request = inker::EngineRouteRequest {
+                        workspace_id: inker::WorkspaceRouteId::new("merecat"),
+                        view: None,
+                        node: None,
+                        address: url.clone(),
+                        content_type: None,
+                        pinned_engine: None,
+                    };
+                    let decision = self.route_policy.route(&request);
+                    let spawn = SessionSpawnRequest::new(&url)
+                        .with_viewport(self.width.max(1), self.height.max(1));
+                    let update = match self.content_engines.spawn(&decision.engine_id, &spawn) {
+                        Ok(session) => {
+                            tracing::info!(%node, %url, engine = %decision.engine_id, "content session live");
+                            self.content_sessions.insert(node, session);
+                            Update::ContentSpawned { node }
+                        }
+                        Err(err) => {
+                            tracing::warn!(%node, %url, engine = %decision.engine_id, %err, "content spawn failed");
+                            Update::ContentFailed {
+                                node,
+                                error: format!("{} ({})", err, decision.engine_id),
+                            }
+                        }
+                    };
+                    let effects = self.app.apply_update(update);
                     self.run_effects(effects);
                 }
                 Effect::CloseContent { node } => {
-                    tracing::info!(%node, "content close (no live port yet)");
+                    if self.content_sessions.remove(&node).is_some() {
+                        tracing::info!(%node, "content session closed");
+                    }
                 }
                 Effect::Redraw => self.request_redraw(),
                 // Fetch-shaped effects were consumed above.
@@ -153,7 +197,29 @@ impl Shell {
                 PhysicalSize::new(size.0, size.1),
             );
         }
-        let (canvas_scene, needs_redraw) = self.app.canvas.frame(w, h);
+        let (mut needs_redraw, canvas_scene) = {
+            let (scene, animating) = self.app.canvas.frame(w, h);
+            (animating, scene)
+        };
+        // The focused node's live content session (rung 4/5): pump its clock,
+        // take a frame, and let an unsettled session chain another redraw
+        // (static lanes settle immediately; scripted rungs will not).
+        let mut content_scene = None;
+        let mut content_settled = true;
+        if let Some(session) = self
+            .app
+            .canvas
+            .focused_member()
+            .and_then(|id| self.content_sessions.get_mut(&id))
+        {
+            let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
+            session.pump(now_ms);
+            content_scene = Some(session.frame(w, h));
+            content_settled = session.settled();
+        }
+        if !content_settled {
+            needs_redraw = true;
+        }
         let caption = crate::app::focused_caption(&self.app.canvas);
         let chrome_scene = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref())
             .then(|| crate::ui::chrome_scene(&self.app.omnibar, caption.as_deref(), w, h));
@@ -161,6 +227,9 @@ impl Shell {
         let host = self.host.as_ref().unwrap();
         let (_tex, canvas_view) =
             host.rasterize(&canvas_scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE));
+        let content_view = content_scene.as_ref().map(|scene| {
+            host.rasterize(scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE)).1
+        });
         let chrome_view = chrome_scene.as_ref().map(|scene| {
             host.rasterize(&scene, w, h, ColorLoad::Clear(wgpu::Color::TRANSPARENT))
                 .1
@@ -172,6 +241,10 @@ impl Shell {
         let full = ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]);
         host.renderer()
             .compose_external_texture(&canvas_view, &target, host.format(), w, h, full);
+        if let Some(view) = content_view.as_ref() {
+            host.renderer()
+                .compose_external_texture(view, &target, host.format(), w, h, full);
+        }
         if let Some(view) = chrome_view.as_ref() {
             host.renderer()
                 .compose_external_texture(view, &target, host.format(), w, h, full);
@@ -192,7 +265,15 @@ impl Shell {
                 nodes = self.app.canvas.graph().nodes().count(),
                 "capture state"
             );
-            let ok = capture_composed(host, &canvas_view, chrome_view.as_ref(), w, h, &path);
+            let ok = capture_composed(
+                host,
+                &canvas_view,
+                content_view.as_ref(),
+                chrome_view.as_ref(),
+                w,
+                h,
+                &path,
+            );
             if let Some(scenario) = self.scenario.as_mut() {
                 scenario.note_capture(&path, ok);
             }
@@ -245,6 +326,7 @@ impl Shell {
 fn capture_composed(
     host: &SurfaceHost,
     canvas_view: &wgpu::TextureView,
+    content_view: Option<&wgpu::TextureView>,
     chrome_view: Option<&wgpu::TextureView>,
     w: u32,
     h: u32,
@@ -274,6 +356,16 @@ fn capture_composed(
         h,
         full,
     );
+    if let Some(view) = content_view {
+        host.renderer().compose_external_texture(
+            view,
+            &target_view,
+            wgpu::TextureFormat::Rgba8Unorm,
+            w,
+            h,
+            full,
+        );
+    }
     if let Some(view) = chrome_view {
         host.renderer().compose_external_texture(
             view,

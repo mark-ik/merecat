@@ -1,0 +1,17 @@
+# Rung 4 receipt, self-driven: the content lane renders a real https page
+# through a registry-dispatched session (session-engines plan phase 4 — route
+# the address, spawn through the SessionRegistry, compose the session frame
+# into the layered present). Network-dependent by design: the static session
+# loads https through the shell's LocalFetcher (netfetch). Run on a FRESH
+# profile so the script owns the state.
+settle 30
+key escape
+open https://example.com/
+settle 40
+assert visible
+capture 01_node_at_rest
+act Toggle live content
+settle 40
+assert content-live
+capture 02_live_page
+log rung 4 self-drive complete

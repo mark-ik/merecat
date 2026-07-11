@@ -128,15 +128,12 @@ impl App {
             Action::ToggleNodeContent => {
                 // The flip targets the focused node; no focus, no-op (the
                 // caption chip tells the user what would flip).
-                let Some(target) = self
-                    .canvas
-                    .focused_url()
-                    .map(str::to_string)
-                    .and_then(|url| {
-                        let (_, node) = self.canvas.graph().get_node_by_url(&url)?;
-                        Some((node.id, url))
-                    })
-                else {
+                // Resolve the node by MEMBER, not by URL round-trip: two
+                // nodes may share a URL (the sample graph + an open), and
+                // get_node_by_url picks arbitrarily between them.
+                let Some(target) = self.canvas.focused_member().zip(
+                    self.canvas.focused_url().map(str::to_string),
+                ) else {
                     return Vec::new();
                 };
                 let (node, url) = target;
