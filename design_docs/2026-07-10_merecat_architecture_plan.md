@@ -310,3 +310,20 @@ done-conditions story.
   layout selected), the whole sample graph WITH node bodies (also this
   bug), and the caption pill. The scenario lane found, isolated, and
   verified this end to end — the receipt honesty paid off on day one.
+- 2026-07-11 (same session): **Rung 3 COMPLETE — IME/caret honesty
+  landed.** The omnibar gets a real caret: `cursor` (byte offset,
+  char-boundary safe) with Left/Right/Home/End motion, Delete, and
+  backspace/insert AT the caret; the input line renders split at the
+  cursor so the block caret draws at its true position. New vocabulary:
+  `OmnibarInsert(String)` (the IME-commit path, and later paste),
+  `OmnibarDelete`, `OmnibarCaret(CaretMove)`. IME: the shell enables the
+  window IME on omnibar open/close transitions, aims the candidate
+  window at the caret's neighborhood (`ui::ime_cursor_area`, average-
+  advance approximation), shows the in-flight preedit underlined at the
+  caret, and lowers only the commit through the spine — preedit rides
+  directly on state per the gesture law (composition is ephemeral; the
+  commit is the semantic event). Scenario grammar grew `insert`, the
+  caret keys, and `assert text`; receipts: 12 unit tests +
+  `02b_caret_mid_text.png` (caret drawn mid-text after two Lefts). The
+  ladder's next rung is 4: live content through the engine registry
+  (inker adoption landed serval-side, so it is unblocked).

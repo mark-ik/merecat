@@ -121,9 +121,12 @@ impl App {
             }
             Action::SaveSession => vec![Effect::SaveSession],
             Action::OmnibarOpen { command } => {
-                self.omnibar.open = true;
-                self.omnibar.text = if command { ">".to_string() } else { String::new() };
-                self.omnibar.selected = 0;
+                self.omnibar = OmnibarState {
+                    open: true,
+                    text: if command { ">".to_string() } else { String::new() },
+                    ..OmnibarState::default()
+                };
+                self.omnibar.cursor = self.omnibar.text.len();
                 recompute_suggestions(&mut self.omnibar, &self.canvas);
                 vec![Effect::Redraw]
             }
@@ -132,15 +135,35 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::OmnibarChar(c) => {
-                self.omnibar.text.push(c);
+                self.omnibar.insert_str(c.encode_utf8(&mut [0u8; 4]));
+                self.omnibar.selected = 0;
+                recompute_suggestions(&mut self.omnibar, &self.canvas);
+                vec![Effect::Redraw]
+            }
+            Action::OmnibarInsert(s) => {
+                self.omnibar.insert_str(&s);
                 self.omnibar.selected = 0;
                 recompute_suggestions(&mut self.omnibar, &self.canvas);
                 vec![Effect::Redraw]
             }
             Action::OmnibarBackspace => {
-                self.omnibar.text.pop();
-                self.omnibar.selected = 0;
-                recompute_suggestions(&mut self.omnibar, &self.canvas);
+                if self.omnibar.backspace() {
+                    self.omnibar.selected = 0;
+                    recompute_suggestions(&mut self.omnibar, &self.canvas);
+                }
+                vec![Effect::Redraw]
+            }
+            Action::OmnibarDelete => {
+                if self.omnibar.delete_forward() {
+                    self.omnibar.selected = 0;
+                    recompute_suggestions(&mut self.omnibar, &self.canvas);
+                }
+                vec![Effect::Redraw]
+            }
+            Action::OmnibarCaret(m) => {
+                // Caret motion never changes the text, so the suggestion
+                // list (and the highlight) stays put.
+                self.omnibar.move_caret(m);
                 vec![Effect::Redraw]
             }
             Action::OmnibarMove(delta) => {

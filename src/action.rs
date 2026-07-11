@@ -44,15 +44,30 @@ pub enum Action {
     OmnibarOpen { command: bool },
     /// Dismiss the omnibar without committing.
     OmnibarClose,
-    /// Append one typed character to the omnibar text.
+    /// Insert one typed character at the caret.
     OmnibarChar(char),
-    /// Delete the last omnibar character.
+    /// Insert a string at the caret (an IME commit; later, paste).
+    OmnibarInsert(String),
+    /// Delete the character before the caret.
     OmnibarBackspace,
+    /// Delete the character after the caret.
+    OmnibarDelete,
+    /// Move the caret within the omnibar text.
+    OmnibarCaret(CaretMove),
     /// Move the suggestion highlight by a delta (wraps at the ends).
     OmnibarMove(i32),
     /// Commit the highlighted suggestion (or literal-go on address-shaped
     /// text with nothing highlighted).
     OmnibarCommit,
+}
+
+/// A caret movement within the omnibar's single line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CaretMove {
+    Left,
+    Right,
+    Home,
+    End,
 }
 
 /// The palette's action registry: every Action an app-intent lane (the `>`

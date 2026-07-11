@@ -54,6 +54,13 @@ pub enum Suggestion {
 pub struct OmnibarState {
     pub open: bool,
     pub text: String,
+    /// The caret's byte offset into `text` (always on a char boundary).
+    pub cursor: usize,
+    /// In-flight IME composition, shown at the caret but not part of `text`.
+    /// Ephemeral by the gesture law: only the IME's commit becomes an Action
+    /// ([`crate::action::Action::OmnibarInsert`]); the shell sets this
+    /// directly.
+    pub preedit: Option<String>,
     /// Index into `suggestions` of the highlighted row.
     pub selected: usize,
     pub suggestions: Vec<Suggestion>,
@@ -65,6 +72,53 @@ impl OmnibarState {
         self.suggestions
             .get(self.selected)
             .filter(|s| !matches!(s, Suggestion::Hint(_)))
+    }
+
+    /// Insert `s` at the caret and advance it.
+    pub fn insert_str(&mut self, s: &str) {
+        self.text.insert_str(self.cursor, s);
+        self.cursor += s.len();
+    }
+
+    /// Delete the character before the caret. `false` at the line start.
+    pub fn backspace(&mut self) -> bool {
+        match self.text[..self.cursor].char_indices().last() {
+            Some((i, _)) => {
+                self.text.remove(i);
+                self.cursor = i;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Delete the character after the caret. `false` at the line end.
+    pub fn delete_forward(&mut self) -> bool {
+        if self.cursor < self.text.len() {
+            self.text.remove(self.cursor);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move the caret, staying on char boundaries.
+    pub fn move_caret(&mut self, m: crate::action::CaretMove) {
+        use crate::action::CaretMove;
+        self.cursor = match m {
+            CaretMove::Home => 0,
+            CaretMove::End => self.text.len(),
+            CaretMove::Left => self.text[..self.cursor]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0),
+            CaretMove::Right => self.text[self.cursor..]
+                .chars()
+                .next()
+                .map(|c| self.cursor + c.len_utf8())
+                .unwrap_or(self.cursor),
+        };
     }
 }
 
@@ -167,6 +221,8 @@ const CHROME_SHEET: &str = "\
     .omni-input { color: rgb(238, 242, 250); font-size: 16px; \
                   padding: 6px 8px; background-color: rgb(15, 19, 30); \
                   border-radius: 6px; white-space: nowrap; overflow: hidden; } \
+    .omni-preedit { color: rgb(180, 200, 255); \
+                    text-decoration: underline; } \
     .omni-row { color: rgb(216, 222, 234); font-size: 14px; \
                 padding: 5px 8px; white-space: nowrap; overflow: hidden; } \
     .omni-row-sel { color: rgb(28, 22, 10); font-size: 14px; \
@@ -178,6 +234,16 @@ const CHROME_SHEET: &str = "\
                 background-color: rgb(20, 25, 38); font-size: 12px; \
                 padding: 3px 10px; border-radius: 10px; \
                 border: 1px solid rgb(52, 62, 86); white-space: nowrap; }";
+
+/// Where the omnibar caret roughly sits on screen, as `(position, size)` in
+/// physical px — for the host to aim the IME candidate window
+/// (`Window::set_ime_cursor_area`). Average-advance approximation; the IME
+/// popup only needs the neighborhood, not the glyph-exact x.
+pub fn ime_cursor_area(state: &OmnibarState, w: u32) -> ((f32, f32), (f32, f32)) {
+    let left = ((w as f32 - CARD_W) / 2.0).max(8.0);
+    let chars_before = state.text[..state.cursor].chars().count();
+    ((left + 16.0 + chars_before as f32 * 8.0, CARD_TOP + 10.0), (2.0, 28.0))
+}
 
 /// Whether the chrome layer has anything to show (the shell skips the
 /// second rasterize pass entirely when it does not).
@@ -228,14 +294,24 @@ pub fn chrome_scene(
     );
     dom.append_child(root, card);
 
-    // The input line, with a block caret. (Real caret/IME handling arrives
-    // with the chrome document's editor tenant; the omnibar edits at the
-    // end of the line this slice.)
+    // The input line, split at the caret: text-before, the in-flight IME
+    // preedit (underlined, not yet part of the text), the caret glyph at its
+    // TRUE position, text-after. Inline spans, so the line flows as one run.
     let input = dom.create_element(qual("div"));
     dom.set_attribute(input, qual("class"), "omni-input");
-    let shown = format!("{}\u{258d}", state.text);
-    let input_text = dom.create_text(&shown);
-    dom.append_child(input, input_text);
+    let before = dom.create_text(&state.text[..state.cursor]);
+    dom.append_child(input, before);
+    if let Some(preedit) = state.preedit.as_deref() {
+        let span = dom.create_element(qual("span"));
+        dom.set_attribute(span, qual("class"), "omni-preedit");
+        let t = dom.create_text(preedit);
+        dom.append_child(span, t);
+        dom.append_child(input, span);
+    }
+    let caret = dom.create_text("\u{258d}");
+    dom.append_child(input, caret);
+    let after = dom.create_text(&state.text[state.cursor..]);
+    dom.append_child(input, after);
     dom.append_child(card, input);
 
     for (i, suggestion) in state.suggestions.iter().enumerate() {
@@ -349,6 +425,33 @@ mod tests {
              (chip={chip_alone} card={card_alone} together={two_absolutes}); \
              the second sibling's subtree is being dropped"
         );
+    }
+
+    #[test]
+    fn caret_editing_is_char_boundary_safe() {
+        use crate::action::CaretMove;
+        let mut s = OmnibarState {
+            open: true,
+            ..Default::default()
+        };
+        s.insert_str("mère");
+        assert_eq!(s.cursor, s.text.len());
+        s.move_caret(CaretMove::Left);
+        s.move_caret(CaretMove::Left);
+        s.move_caret(CaretMove::Left);
+        assert!(s.backspace(), "removes the char before the caret");
+        assert_eq!(s.text, "ère");
+        assert!(s.delete_forward(), "removes the multibyte char after");
+        assert_eq!(s.text, "re");
+        s.move_caret(CaretMove::End);
+        s.insert_str("x");
+        s.move_caret(CaretMove::Home);
+        s.insert_str("t");
+        assert_eq!(s.text, "trex");
+        s.move_caret(CaretMove::Home);
+        assert!(!s.backspace(), "backspace at the line start is a no-op");
+        s.move_caret(CaretMove::End);
+        assert!(!s.delete_forward(), "delete at the line end is a no-op");
     }
 
     #[test]

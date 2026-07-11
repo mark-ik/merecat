@@ -13,6 +13,11 @@ type alp
 assert omnibar open
 assert suggestions >= 1
 capture 02_find_lane
+# Caret honesty: the block caret draws at its true position, not the end.
+key left
+key left
+capture 02b_caret_mid_text
+key end
 key enter
 assert omnibar closed
 assert focused alpha

@@ -21,9 +21,11 @@
 //! open <url>                # Action::OpenAddress (use mere:// for offline)
 //! omnibar find|actions      # Action::OmnibarOpen
 //! type <text>               # Action::OmnibarChar per char
-//! key enter|escape|backspace|up|down
+//! insert <text>             # Action::OmnibarInsert (the IME-commit path)
+//! key enter|escape|backspace|delete|up|down|left|right|home|end
 //! act <palette label>       # commit a palette_actions() entry by label
 //! assert omnibar open|closed
+//! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
 //! assert suggestions ==|>=|<= <n>
 //! assert visible            # at least one node inside the viewport
@@ -52,11 +54,13 @@ enum Step {
     Open(String),
     Omnibar { command: bool },
     Type(String),
+    Insert(String),
     Key(EditKey),
     Act(String),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
+    AssertText(String),
     AssertFocused(String),
     AssertSuggestions(CmpOp, usize),
     AssertVisible,
@@ -68,8 +72,13 @@ enum EditKey {
     Enter,
     Escape,
     Backspace,
+    Delete,
     Up,
     Down,
+    Left,
+    Right,
+    Home,
+    End,
 }
 
 #[derive(Debug)]
@@ -143,13 +152,22 @@ impl Scenario {
             Step::Open(url) => Tick::Act(vec![Action::OpenAddress(url.clone())]),
             Step::Omnibar { command } => Tick::Act(vec![Action::OmnibarOpen { command: *command }]),
             Step::Type(text) => Tick::Act(text.chars().map(Action::OmnibarChar).collect()),
-            Step::Key(key) => Tick::Act(vec![match key {
-                EditKey::Enter => Action::OmnibarCommit,
-                EditKey::Escape => Action::OmnibarClose,
-                EditKey::Backspace => Action::OmnibarBackspace,
-                EditKey::Up => Action::OmnibarMove(-1),
-                EditKey::Down => Action::OmnibarMove(1),
-            }]),
+            Step::Insert(text) => Tick::Act(vec![Action::OmnibarInsert(text.clone())]),
+            Step::Key(key) => {
+                use crate::action::CaretMove;
+                Tick::Act(vec![match key {
+                    EditKey::Enter => Action::OmnibarCommit,
+                    EditKey::Escape => Action::OmnibarClose,
+                    EditKey::Backspace => Action::OmnibarBackspace,
+                    EditKey::Delete => Action::OmnibarDelete,
+                    EditKey::Up => Action::OmnibarMove(-1),
+                    EditKey::Down => Action::OmnibarMove(1),
+                    EditKey::Left => Action::OmnibarCaret(CaretMove::Left),
+                    EditKey::Right => Action::OmnibarCaret(CaretMove::Right),
+                    EditKey::Home => Action::OmnibarCaret(CaretMove::Home),
+                    EditKey::End => Action::OmnibarCaret(CaretMove::End),
+                }])
+            }
             Step::Act(label) => {
                 let wanted = label.to_lowercase();
                 match palette_actions()
@@ -172,6 +190,15 @@ impl Scenario {
                 if app.omnibar.open != *open {
                     let state = if *open { "open" } else { "closed" };
                     self.fail(format!("assert omnibar {state}: it is not"));
+                }
+                Tick::Wait
+            }
+            Step::AssertText(want) => {
+                if app.omnibar.text != *want {
+                    self.fail(format!(
+                        "assert text '{want}': the omnibar holds '{}'",
+                        app.omnibar.text
+                    ));
                 }
                 Tick::Wait
             }
@@ -263,13 +290,23 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                 _ => return err("omnibar wants find|actions"),
             },
             "type" if !rest.is_empty() => Step::Type(rest.to_string()),
+            "insert" if !rest.is_empty() => Step::Insert(rest.to_string()),
             "key" => match rest {
                 "enter" => Step::Key(EditKey::Enter),
                 "escape" => Step::Key(EditKey::Escape),
                 "backspace" => Step::Key(EditKey::Backspace),
+                "delete" => Step::Key(EditKey::Delete),
                 "up" => Step::Key(EditKey::Up),
                 "down" => Step::Key(EditKey::Down),
-                _ => return err("key wants enter|escape|backspace|up|down"),
+                "left" => Step::Key(EditKey::Left),
+                "right" => Step::Key(EditKey::Right),
+                "home" => Step::Key(EditKey::Home),
+                "end" => Step::Key(EditKey::End),
+                _ => {
+                    return err(
+                        "key wants enter|escape|backspace|delete|up|down|left|right|home|end",
+                    );
+                }
             },
             "act" if !rest.is_empty() => Step::Act(rest.to_string()),
             "settle" => Step::Settle(if rest.is_empty() {
@@ -287,6 +324,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                         "closed" => Step::AssertOmnibar(false),
                         _ => return err("assert omnibar wants open|closed"),
                     },
+                    "text" => Step::AssertText(arg.to_string()),
                     "focused" if !arg.is_empty() => Step::AssertFocused(arg.to_string()),
                     "suggestions" => {
                         let (op, n) = arg
@@ -371,6 +409,28 @@ mod tests {
         run(&mut sc, &mut app);
         assert!(!sc.failed, "log: {:?}", sc.log);
         assert!(app.canvas.is_isometric(), "the act step ran the registry action");
+    }
+
+    /// Caret keys and the IME-commit insert edit at the cursor, driven
+    /// through the scenario vocabulary like any other intent.
+    #[test]
+    fn caret_keys_edit_at_the_cursor() {
+        let mut app = App::test_stub();
+        let mut sc = scenario(
+            "omnibar find\n\
+             type abd\n\
+             key left\n\
+             insert c\n\
+             assert text abcd\n\
+             key home\n\
+             key delete\n\
+             assert text bcd\n\
+             key end\n\
+             key backspace\n\
+             assert text bc\n",
+        );
+        run(&mut sc, &mut app);
+        assert!(!sc.failed, "log: {:?}", sc.log);
     }
 
     #[test]

@@ -15,13 +15,13 @@ use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
 use serval_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::action::{Action, Effect};
+use crate::action::{Action, CaretMove, Effect};
 use crate::app::App;
 use crate::{browse, session};
 
@@ -82,9 +82,17 @@ impl Shell {
         shell
     }
 
-    /// Lower one app intent through the spine and run what falls out.
+    /// Lower one app intent through the spine and run what falls out. Syncs
+    /// the window's IME enablement to the omnibar on open/close transitions
+    /// (a platform call, so it lives here, not in `update`).
     fn act(&mut self, action: Action) {
+        let was_open = self.app.omnibar.open;
         let effects = self.app.update(action);
+        if self.app.omnibar.open != was_open
+            && let Some(window) = self.window.as_ref()
+        {
+            window.set_ime_allowed(self.app.omnibar.open);
+        }
         self.run_effects(effects);
     }
 
@@ -116,6 +124,18 @@ impl Shell {
             return;
         }
         let (w, h) = (self.width.max(1), self.height.max(1));
+        // Aim the IME candidate window at the caret's neighborhood, so
+        // composition popups open beside the omnibar input rather than at
+        // the window corner.
+        if self.app.omnibar.open
+            && let Some(window) = self.window.as_ref()
+        {
+            let (pos, size) = crate::ui::ime_cursor_area(&self.app.omnibar, w);
+            window.set_ime_cursor_area(
+                PhysicalPosition::new(pos.0, pos.1),
+                PhysicalSize::new(size.0, size.1),
+            );
+        }
         let (canvas_scene, needs_redraw) = self.app.canvas.frame(w, h);
         let caption = crate::app::focused_caption(&self.app.canvas);
         let chrome_scene = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref())
@@ -476,6 +496,19 @@ impl ApplicationHandler for Shell {
                             WinitKey::Named(WinitNamedKey::ArrowDown) => {
                                 Some(Action::OmnibarMove(1))
                             }
+                            WinitKey::Named(WinitNamedKey::ArrowLeft) => {
+                                Some(Action::OmnibarCaret(CaretMove::Left))
+                            }
+                            WinitKey::Named(WinitNamedKey::ArrowRight) => {
+                                Some(Action::OmnibarCaret(CaretMove::Right))
+                            }
+                            WinitKey::Named(WinitNamedKey::Home) => {
+                                Some(Action::OmnibarCaret(CaretMove::Home))
+                            }
+                            WinitKey::Named(WinitNamedKey::End) => {
+                                Some(Action::OmnibarCaret(CaretMove::End))
+                            }
+                            WinitKey::Named(WinitNamedKey::Delete) => Some(Action::OmnibarDelete),
                             WinitKey::Named(WinitNamedKey::Space) => Some(Action::OmnibarChar(' ')),
                             WinitKey::Character(s) if !self.ctrl => {
                                 s.chars().next().map(Action::OmnibarChar)
@@ -514,6 +547,25 @@ impl ApplicationHandler for Shell {
                     if let Some(action) = action {
                         self.act(action);
                     }
+                }
+            }
+            // IME composition. Preedit is ephemeral by the gesture law — it
+            // rides directly on state and only the commit lowers to an
+            // Action (`OmnibarInsert`, the same path a future paste takes).
+            WindowEvent::Ime(ime) => {
+                if !self.app.omnibar.open {
+                    return;
+                }
+                match ime {
+                    Ime::Commit(s) => {
+                        self.app.omnibar.preedit = None;
+                        self.act(Action::OmnibarInsert(s));
+                    }
+                    Ime::Preedit(s, _caret) => {
+                        self.app.omnibar.preedit = (!s.is_empty()).then_some(s);
+                        self.request_redraw();
+                    }
+                    Ime::Enabled | Ime::Disabled => {}
                 }
             }
             WindowEvent::RedrawRequested => {
