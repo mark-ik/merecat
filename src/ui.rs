@@ -284,15 +284,13 @@ mod tests {
     use super::*;
 
     /// Canary for the chrome layer's load-bearing serval-layout behavior:
-    /// SIBLING absolutely-positioned subtrees must all emit paint. Found
-    /// failing 2026-07-11 against serval's in-flight layout checkpoint
-    /// (c80c78d "wpt harness + layout + css-animations"): the second
-    /// absolute sibling's subtree emits nothing, which blanks the omnibar
-    /// card whenever the caption chip precedes it (and the canvas gnode
-    /// pool, which is many absolute siblings). Ignored until the serval
-    /// lane lands; run with `--ignored` to re-check.
+    /// SIBLING absolutely-positioned subtrees must all emit paint. Caught
+    /// 2026-07-11: serval-layout only cascaded/boxed the FIRST element child
+    /// of a multi-root document (a host-built DOM with no `<html>` wrapper),
+    /// so the omnibar card blanked whenever the caption chip preceded it.
+    /// Fixed serval-side (multi-root box tree + cascade + root-background
+    /// gate); this stays as merecat's tripwire on the behavior it leans on.
     #[test]
-    #[ignore = "serval-layout in-flight regression: second absolute sibling drops (c80c78d)"]
     fn chrome_absolute_siblings_all_paint() {
         let count = |style: &str, nested: bool| {
             let mut dom = ScriptedDom::new();

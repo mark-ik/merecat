@@ -294,3 +294,19 @@ done-conditions story.
   until the serval lane lands (run with `--ignored` to re-check). Pixel
   receipts for the card re-run through the scenario the moment that fix
   lands; the lane itself is proven.
+- 2026-07-11 (same session): **The paint drop FIXED serval-side** (serval
+  f7b3c53), with Mark's authorization. Not a recent regression after all:
+  serval-layout had never supported multi-root documents (a host DOM with
+  no `<html>` wrapper) — build_box_tree took only the document's first
+  element child, run_cascade traversed only the first, and the
+  root-background propagation promoted the first sibling's background to
+  the whole canvas. Merecat's chrome (chip + card as document-root
+  siblings) and the canvas gnode pool were the first two-root consumers.
+  Fixed: synthetic block root over all document-level elements, cascade
+  loops every root, root-background gates on a sole root; 295/295
+  serval-layout tests green + a multi-root regression test. Merecat's
+  canary un-ignored and green. The scenario now delivers the full pixel
+  receipt: `04_actions_lane.png` shows the centered card (`>re`, Reseed
+  layout selected), the whole sample graph WITH node bodies (also this
+  bug), and the caption pill. The scenario lane found, isolated, and
+  verified this end to end — the receipt honesty paid off on day one.
