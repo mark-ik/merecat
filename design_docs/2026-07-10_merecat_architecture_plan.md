@@ -327,3 +327,17 @@ done-conditions story.
   `02b_caret_mid_text.png` (caret drawn mid-text after two Lefts). The
   ladder's next rung is 4: live content through the engine registry
   (inker adoption landed serval-side, so it is unblocked).
+- 2026-07-11 (same session): **Rung 4 prep — the `content` module is
+  born**, sized to meet the session-engines plan (serval docs 2026-07-10)
+  at its phase 2/4 boundary. App truth: `ContentStates` (node id ->
+  Requested/Live/Failed lifecycle; failure is a surfaced, retryable
+  state, per the no-placebo rule). Vocabulary: `Action::ToggleNodeContent`
+  (flips the focused node, in the palette registry), effects
+  `SpawnContent`/`CloseContent`, updates `ContentSpawned`/`ContentFailed`.
+  The shell's effect runner holds the port SLOT: sessions are retained
+  non-Send handles, so they will live shell-side keyed by node id; until
+  serval-documents lands the port answers every spawn with an honest
+  failure naming the gap. When phase 2 lands, the wiring delta is
+  confined to that runner arm plus frame composition into the layered
+  present — the vocabulary, lifecycle, palette entry, and scenario
+  drivability are already in place. 15 unit tests.

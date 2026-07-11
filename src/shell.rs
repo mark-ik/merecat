@@ -21,7 +21,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::action::{Action, CaretMove, Effect};
+use crate::action::{Action, CaretMove, Effect, Update};
 use crate::app::App;
 use crate::{browse, session};
 
@@ -106,6 +106,23 @@ impl Shell {
             match effect {
                 Effect::SaveSession => {
                     session::save_session_graph(&self.app.data_root, self.app.canvas.graph())
+                }
+                // The content port's slot (rung 4). Sessions are retained,
+                // non-Send handles, so THIS is where they will live, keyed by
+                // node id, once serval-documents lands (session-engines plan
+                // phase 2). Until then the port answers honestly — a failure
+                // naming the gap, never a Requested node left spinning.
+                Effect::SpawnContent { node, url } => {
+                    tracing::info!(%node, %url, "content spawn requested; the port awaits serval-documents");
+                    let effects = self.app.apply_update(Update::ContentFailed {
+                        node,
+                        error: "content port not wired yet (session-engines plan phase 2)"
+                            .to_string(),
+                    });
+                    self.run_effects(effects);
+                }
+                Effect::CloseContent { node } => {
+                    tracing::info!(%node, "content close (no live port yet)");
                 }
                 Effect::Redraw => self.request_redraw(),
                 // Fetch-shaped effects were consumed above.

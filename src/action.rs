@@ -40,6 +40,10 @@ pub enum Action {
     ToggleHeightByDegree,
     /// Persist the session now (close path; enrichment saves ride effects).
     SaveSession,
+    /// Flip the focused node's live content: spawn a document session for it
+    /// through the content port, or close the one it has (rung 4; the
+    /// session-engines plan's phase-4 consumer intent).
+    ToggleNodeContent,
     /// Summon the omnibar (`command` pre-seeds the `>` actions lane).
     OmnibarOpen { command: bool },
     /// Dismiss the omnibar without committing.
@@ -81,6 +85,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
         ("Orbit left", Action::OrbitBy(-0.15)),
         ("Orbit right", Action::OrbitBy(0.15)),
+        ("Toggle live content", Action::ToggleNodeContent),
         ("Save session", Action::SaveSession),
     ]
 }
@@ -95,6 +100,12 @@ pub enum Effect {
     FetchFavicon { owner_url: String, url: String },
     /// Persist the session through the persistence port.
     SaveSession,
+    /// Spawn a live document session for `node` at `url` through the
+    /// content port (registry-dispatched once serval-documents lands;
+    /// until then the port answers with an honest ContentFailed).
+    SpawnContent { node: uuid::Uuid, url: String },
+    /// Close `node`'s live session; the port drops the handle.
+    CloseContent { node: uuid::Uuid },
     /// The projection is stale; present another frame.
     Redraw,
 }
@@ -110,6 +121,10 @@ pub enum Update {
     },
     /// A favicon's raw bytes arrived for the node at `owner_url`.
     FaviconFetched { owner_url: String, bytes: Vec<u8> },
+    /// The content port spawned a live session for `node`.
+    ContentSpawned { node: uuid::Uuid },
+    /// The content port could not spawn (or lost) `node`'s session.
+    ContentFailed { node: uuid::Uuid, error: String },
 }
 
 /// A successfully fetched page document, in app-owned terms.

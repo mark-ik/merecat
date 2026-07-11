@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use mere::canvas::Canvas;
 
 use crate::action::{Action, Effect, Update};
+use crate::content::ContentStates;
 use crate::ui::{OmnibarState, Suggestion, normalize_address, recompute_suggestions};
 use crate::{browse, session};
 
@@ -35,6 +36,9 @@ pub struct App {
     /// `graph.json` (single-session shape; sessions/<id>/ arrives with
     /// multi-session).
     pub data_root: PathBuf,
+    /// Per-node content lifecycle (rung 4). Data only: the live session
+    /// handles live in the shell's content port, keyed by the same ids.
+    pub content: ContentStates,
 }
 
 impl App {
@@ -78,6 +82,7 @@ impl App {
                 canvas,
                 omnibar,
                 data_root,
+                content: ContentStates::default(),
             },
             effects,
         )
@@ -120,6 +125,29 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::SaveSession => vec![Effect::SaveSession],
+            Action::ToggleNodeContent => {
+                // The flip targets the focused node; no focus, no-op (the
+                // caption chip tells the user what would flip).
+                let Some(target) = self
+                    .canvas
+                    .focused_url()
+                    .map(str::to_string)
+                    .and_then(|url| {
+                        let (_, node) = self.canvas.graph().get_node_by_url(&url)?;
+                        Some((node.id, url))
+                    })
+                else {
+                    return Vec::new();
+                };
+                let (node, url) = target;
+                if self.content.flip_spawns(node) {
+                    self.content.note_requested(node);
+                    vec![Effect::SpawnContent { node, url }, Effect::Redraw]
+                } else {
+                    self.content.note_closed(node);
+                    vec![Effect::CloseContent { node }, Effect::Redraw]
+                }
+            }
             Action::OmnibarOpen { command } => {
                 self.omnibar = OmnibarState {
                     open: true,
@@ -219,6 +247,7 @@ impl App {
             canvas: Canvas::new(),
             omnibar: OmnibarState::default(),
             data_root: std::env::temp_dir().join("merecat-app-test"),
+            content: ContentStates::default(),
         }
     }
 
@@ -230,6 +259,15 @@ impl App {
             }
             Update::FaviconFetched { owner_url, bytes } => {
                 browse::apply_favicon(&mut self.canvas, &owner_url, &bytes)
+            }
+            Update::ContentSpawned { node } => {
+                self.content.note_live(node);
+                vec![Effect::Redraw]
+            }
+            Update::ContentFailed { node, error } => {
+                tracing::warn!(%node, %error, "content spawn failed");
+                self.content.note_failed(node, error);
+                vec![Effect::Redraw]
             }
         }
     }
@@ -257,6 +295,51 @@ mod tests {
         assert!(app.canvas.is_isometric(), "the committed toggle ran");
         assert!(!app.omnibar.open, "the palette closed on commit");
         assert!(effects.contains(&Effect::Redraw));
+    }
+
+    /// The content flip lowers through the spine: focused node -> Requested +
+    /// SpawnContent; the port's honest failure folds back; a failed node
+    /// retries on the next flip.
+    #[test]
+    fn content_flip_lowers_and_fails_honestly() {
+        use crate::content::NodeContent;
+        let mut app = App::test_stub();
+        assert!(
+            app.update(Action::ToggleNodeContent).is_empty(),
+            "no focus, no-op"
+        );
+        app.canvas.visit("https://example.com/page");
+        let effects = app.update(Action::ToggleNodeContent);
+        let Some(Effect::SpawnContent { node, url }) = effects
+            .iter()
+            .find(|e| matches!(e, Effect::SpawnContent { .. }))
+            .cloned()
+        else {
+            panic!("flip on a focused node spawns: {effects:?}");
+        };
+        assert_eq!(url, "https://example.com/page");
+        assert_eq!(app.content.get(node), Some(&NodeContent::Requested));
+        assert!(
+            !app.update(Action::ToggleNodeContent)
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnContent { .. })),
+            "flipping an in-flight node closes, never double-spawns"
+        );
+        app.content.note_requested(node);
+        app.apply_update(Update::ContentFailed {
+            node,
+            error: "port not wired".into(),
+        });
+        assert!(
+            matches!(app.content.get(node), Some(NodeContent::Failed(_))),
+            "failure is a surfaced state"
+        );
+        assert!(
+            app.update(Action::ToggleNodeContent)
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnContent { .. })),
+            "a failed node retries on the next flip"
+        );
     }
 
     /// Committing a find-lane node row selects without fetching.
