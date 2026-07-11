@@ -93,8 +93,10 @@ them in the meantime:
   and close becomes `RequestClose -> PersistSession -> SessionSaved -> exit`.
 - **Correlation over URLs.** Enrichment keys by stable node id (URLs are
   properties; several nodes can share one, and `get_node_by_url` answers
-  first-match), with request ids + staleness semantics arriving with the
-  content lane, where late results against superseded nodes actually bite.
+  first-match). Armillary now supplies host-neutral `RequestId`/`RequestIds`
+  and `Correlated<T>`; the content lane should use those for command/update
+  pairing and retain app-owned staleness semantics for late results against
+  superseded nodes.
 
 ## Module map (the future crate map)
 
@@ -266,3 +268,29 @@ done-conditions story.
   bounds, capped at 1.0, empty graph falls back to recenter; 2 tests) and
   merecat's `resumed` now calls it. Remaining rung 3 polish: IME/caret
   honesty.
+- 2026-07-11: **Self-drive scenario lane LANDED** (the vocabulary's first
+  automation consumer; this fires the recorded snapshot/events trigger, so
+  the observation pair is now next-up material). `MERECAT_SCENARIO` points
+  at a script (grammar: open / omnibar / type / key / act / settle /
+  capture / assert omnibar|focused|suggestions|visible / log); the shell
+  pumps one step per rendered frame; every step lowers to an ordinary
+  Action through the same spine as a keypress, and `act <label>` commits a
+  `palette_actions()` registry entry, so the runner adds no second
+  execution model (doctrine 2 held). Self-capture composes the frame's
+  OWN presented layer views into a COPY_SRC target and reads back (never a
+  re-rasterization); `scenario.done` carries `RESULT ok|fail` + log, the
+  same sentinel `Run-Scenario` parses; the run never saves the session, so
+  scenarios are rerun-deterministic. Harness twin: `Run-MerecatScenario`
+  in mk-harness.ps1 (per-run fresh profile by default). Seed:
+  `scenarios/rung3_omnibar.scn` (find lane, caption, actions lane,
+  isometric; RESULT ok, 5 captures, all asserts green). This lane is why
+  the day's other finding surfaced: capture-state tracing proved the
+  palette OPEN in app truth while the pixels lacked the card, and a
+  paint-command probe pinned an in-flight serval-layout regression (the
+  SECOND absolutely-positioned sibling's subtree emits no paint; serval
+  checkpoint c80c78d) — which also blanks the canvas gnode pool, and
+  retroactively explains part of the SendKeys "lost key" confusion.
+  Canary: `ui::tests::chrome_absolute_siblings_all_paint`, `#[ignore]`d
+  until the serval lane lands (run with `--ignored` to re-check). Pixel
+  receipts for the card re-run through the scenario the moment that fix
+  lands; the lane itself is proven.

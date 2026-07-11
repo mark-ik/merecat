@@ -1,0 +1,29 @@
+# Rung 3 receipt, self-driven: find lane, caption, actions lane, at rest.
+# Offline by design (mere:// addresses fetch nothing). Run on a FRESH profile:
+# the first-run auto-open is dismissed up front so the script owns the state.
+settle 30
+key escape
+open mere://alpha
+open mere://beta
+settle 20
+assert visible
+capture 01_two_nodes
+omnibar find
+type alp
+assert omnibar open
+assert suggestions >= 1
+capture 02_find_lane
+key enter
+assert omnibar closed
+assert focused alpha
+settle 10
+capture 03_caption_at_rest
+omnibar actions
+type re
+assert suggestions >= 1
+capture 04_actions_lane
+key escape
+act Toggle isometric view
+settle 20
+capture 05_isometric
+log rung 3 self-drive complete

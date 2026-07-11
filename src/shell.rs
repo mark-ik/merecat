@@ -4,10 +4,12 @@
 //! effect runner. The only module that touches a platform API; everything it
 //! learns flows back through the spine.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
+use image::ImageEncoder;
 use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
@@ -38,6 +40,12 @@ pub struct Shell {
     cursor: (f32, f32),
     /// Live Ctrl state, for the omnibar summon chords (Ctrl+L / Ctrl+K).
     ctrl: bool,
+    /// The self-drive scenario, when `MERECAT_SCENARIO` is set: pumped once
+    /// after every rendered frame; steps lower to ordinary Actions.
+    scenario: Option<crate::scenario::Scenario>,
+    /// A capture the next `render` fulfills from the very views it presents
+    /// (never a re-rasterization — the receipt must be the presented frame).
+    pending_capture: Option<std::path::PathBuf>,
     window: Option<Arc<Window>>,
     host: Option<SurfaceHost>,
     width: u32,
@@ -63,6 +71,8 @@ impl Shell {
             fetch_rx,
             cursor: (0.0, 0.0),
             ctrl: false,
+            scenario: crate::scenario::Scenario::from_env(),
+            pending_capture: None,
             window: None,
             host: None,
             width: 1024,
@@ -131,6 +141,26 @@ impl Shell {
         }
         frame.present();
 
+        // Scenario self-capture: compose the SAME layer views this frame just
+        // presented into an owned COPY_SRC target and read it back — the
+        // receipt is the presented frame, not a re-rasterization (a second
+        // `canvas.frame()` in the same pass produced stale, layer-dropping
+        // captures). Immune to focus theft and occlusion by construction.
+        if let Some(path) = self.pending_capture.take() {
+            tracing::info!(
+                open = self.app.omnibar.open,
+                text = %self.app.omnibar.text,
+                suggestions = self.app.omnibar.suggestions.len(),
+                chrome = chrome_view.is_some(),
+                nodes = self.app.canvas.graph().nodes().count(),
+                "capture state"
+            );
+            let ok = capture_composed(host, &canvas_view, chrome_view.as_ref(), w, h, &path);
+            if let Some(scenario) = self.scenario.as_mut() {
+                scenario.note_capture(&path, ok);
+            }
+        }
+
         if needs_redraw {
             self.request_redraw();
         }
@@ -141,6 +171,157 @@ impl Shell {
             window.request_redraw();
         }
     }
+
+    /// Advance the self-drive scenario one step after each rendered frame.
+    /// Steps lower to Actions through the same spine as a keypress; a Done
+    /// tick writes the sentinel and exits WITHOUT saving the session (a
+    /// scenario never mutates the profile it ran against).
+    fn scenario_pump(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(scenario) = self.scenario.as_mut() else {
+            return;
+        };
+        match scenario.tick(&self.app) {
+            crate::scenario::Tick::Act(actions) => {
+                for action in actions {
+                    self.act(action);
+                }
+                self.request_redraw();
+            }
+            crate::scenario::Tick::Wait => self.request_redraw(),
+            crate::scenario::Tick::Capture(path) => {
+                self.pending_capture = Some(path);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::Done => {
+                if let Some(scenario) = self.scenario.take() {
+                    scenario.finish();
+                }
+                event_loop.exit();
+            }
+        }
+    }
+
+}
+
+/// Compose the frame's already-rasterized layer views into an owned
+/// `COPY_SRC` target, read the pixels back, and encode a PNG at `path`.
+fn capture_composed(
+    host: &SurfaceHost,
+    canvas_view: &wgpu::TextureView,
+    chrome_view: Option<&wgpu::TextureView>,
+    w: u32,
+    h: u32,
+    path: &Path,
+) -> bool {
+    let target = host.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("merecat scenario capture"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let full = ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]);
+    host.renderer().compose_external_texture(
+        canvas_view,
+        &target_view,
+        wgpu::TextureFormat::Rgba8Unorm,
+        w,
+        h,
+        full,
+    );
+    if let Some(view) = chrome_view {
+        host.renderer().compose_external_texture(
+            view,
+            &target_view,
+            wgpu::TextureFormat::Rgba8Unorm,
+            w,
+            h,
+            full,
+        );
+    }
+    let rgba = read_texture_rgba(host.device(), host.queue(), &target, w, h);
+    if rgba.is_empty() {
+        return false;
+    }
+    let Ok(file) = std::fs::File::create(path) else {
+        return false;
+    };
+    image::codecs::png::PngEncoder::new(file)
+        .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)
+        .is_ok()
+}
+
+/// Read a texture's pixels back as tightly packed RGBA8 (empty on failure).
+/// Standard wgpu readback: copy into a row-aligned buffer, map, strip the
+/// per-row padding.
+fn read_texture_rgba(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let row_bytes = width * 4;
+    let padded = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("merecat capture readback"),
+        size: padded as u64 * height as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("merecat capture readback"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    if device.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+        tracing::warn!("capture readback poll failed");
+        return Vec::new();
+    }
+    if !matches!(rx.recv(), Ok(Ok(()))) {
+        tracing::warn!("capture readback map failed");
+        return Vec::new();
+    }
+    let mapped = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((row_bytes * height) as usize);
+    for row in 0..height as usize {
+        let start = row * padded as usize;
+        out.extend_from_slice(&mapped[start..start + row_bytes as usize]);
+    }
+    out
 }
 
 impl ApplicationHandler for Shell {
@@ -335,7 +516,10 @@ impl ApplicationHandler for Shell {
                     }
                 }
             }
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::RedrawRequested => {
+                self.render();
+                self.scenario_pump(event_loop);
+            }
             _ => {}
         }
     }

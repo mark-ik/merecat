@@ -283,6 +283,76 @@ fn qual(local: &str) -> QualName {
 mod tests {
     use super::*;
 
+    /// Canary for the chrome layer's load-bearing serval-layout behavior:
+    /// SIBLING absolutely-positioned subtrees must all emit paint. Found
+    /// failing 2026-07-11 against serval's in-flight layout checkpoint
+    /// (c80c78d "wpt harness + layout + css-animations"): the second
+    /// absolute sibling's subtree emits nothing, which blanks the omnibar
+    /// card whenever the caption chip precedes it (and the canvas gnode
+    /// pool, which is many absolute siblings). Ignored until the serval
+    /// lane lands; run with `--ignored` to re-check.
+    #[test]
+    #[ignore = "serval-layout in-flight regression: second absolute sibling drops (c80c78d)"]
+    fn chrome_absolute_siblings_all_paint() {
+        let count = |style: &str, nested: bool| {
+            let mut dom = ScriptedDom::new();
+            let root = dom.document();
+            let el = dom.create_element(qual("div"));
+            dom.set_attribute(el, qual("class"), "omni");
+            dom.set_attribute(el, qual("style"), style);
+            if nested {
+                let inner = dom.create_element(qual("div"));
+                dom.set_attribute(inner, qual("class"), "omni-input");
+                let t = dom.create_text("hello");
+                dom.append_child(inner, t);
+                dom.append_child(el, inner);
+            } else {
+                let t = dom.create_text("hello");
+                dom.append_child(el, t);
+            }
+            dom.append_child(root, el);
+            let layout = IncrementalLayout::new(&dom, &[CHROME_SHEET], 1024.0, 600.0);
+            let scroll = ScrollOffsets::<DomNodeId>::default();
+            let viewport = DeviceIntSize::new(1024, 600);
+            layout.emit_paint_list(&dom, &scroll, viewport).commands().len()
+        };
+        let two_absolutes = {
+            let mut dom = ScriptedDom::new();
+            let root = dom.document();
+            let chip = dom.create_element(qual("div"));
+            dom.set_attribute(chip, qual("class"), "whereami");
+            dom.set_attribute(chip, qual("style"), "transform: translate(12px, 566px);");
+            let t = dom.create_text("alpha");
+            dom.append_child(chip, t);
+            dom.append_child(root, chip);
+            let card = dom.create_element(qual("div"));
+            dom.set_attribute(card, qual("class"), "omni");
+            dom.set_attribute(
+                card,
+                qual("style"),
+                "transform: translate(232px, 96px); width: 560px;",
+            );
+            let inner = dom.create_element(qual("div"));
+            dom.set_attribute(inner, qual("class"), "omni-input");
+            let t2 = dom.create_text("hello");
+            dom.append_child(inner, t2);
+            dom.append_child(card, inner);
+            dom.append_child(root, card);
+            let layout = IncrementalLayout::new(&dom, &[CHROME_SHEET], 1024.0, 600.0);
+            let scroll = ScrollOffsets::<DomNodeId>::default();
+            let viewport = DeviceIntSize::new(1024, 600);
+            layout.emit_paint_list(&dom, &scroll, viewport).commands().len()
+        };
+        let chip_alone = count("transform: translate(232px, 96px); width: 560px;", false);
+        let card_alone = count("transform: translate(232px, 96px); width: 560px;", true);
+        assert!(
+            two_absolutes > card_alone.max(chip_alone),
+            "two absolute siblings must paint more than either alone \
+             (chip={chip_alone} card={card_alone} together={two_absolutes}); \
+             the second sibling's subtree is being dropped"
+        );
+    }
+
     #[test]
     fn address_normalization_recognizes_hosts_and_schemes() {
         assert_eq!(

@@ -60,6 +60,9 @@ netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" 
 serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 # Pins match mere's workspace so the shared subtrees unify.
 winit = "0.30.13"
+# PNG encode for the scenario lane's GPU self-capture (composed-frame
+# readback -> receipt).
+image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

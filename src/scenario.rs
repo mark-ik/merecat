@@ -1,0 +1,390 @@
+//! The self-drive scenario lane: the app drives ITSELF from a scenario file,
+//! so headed receipts need no OS synthetic input — no focus race, no key
+//! theft when a human is using the machine (the SendKeys lane's unfixable
+//! failure mode). This is the vocabulary's first automation consumer (the
+//! architecture plan's recorded trigger): every step lowers to an ordinary
+//! [`Action`] through the same `update` spine as a keypress, so the runner
+//! needs no second execution model.
+//!
+//! Activation: set `MERECAT_SCENARIO` to a scenario file path before launch;
+//! captures land in `MERECAT_CAPTURE_DIR` (default: beside the scenario).
+//! The run ends by writing `scenario.done` there — first line `RESULT ok` or
+//! `RESULT fail`, then the log lines — and exiting WITHOUT saving the
+//! session, so a scenario never mutates the profile it ran against and
+//! reruns stay deterministic.
+//!
+//! Grammar (one verb per line, `#` comments):
+//!
+//! ```text
+//! settle [frames]           # pump N frames (default 20)
+//! capture <name>            # self-capture the composed frame -> <name>.png
+//! open <url>                # Action::OpenAddress (use mere:// for offline)
+//! omnibar find|actions      # Action::OmnibarOpen
+//! type <text>               # Action::OmnibarChar per char
+//! key enter|escape|backspace|up|down
+//! act <palette label>       # commit a palette_actions() entry by label
+//! assert omnibar open|closed
+//! assert focused <substr>   # focused node's url/caption contains substr
+//! assert suggestions ==|>=|<= <n>
+//! assert visible            # at least one node inside the viewport
+//! log <text>
+//! ```
+
+use std::path::{Path, PathBuf};
+
+use crate::action::{Action, palette_actions};
+use crate::app::App;
+
+/// A parsed scenario plus its run state. The shell pumps [`Scenario::tick`]
+/// once per rendered frame; one step is consumed per frame, so every step
+/// observes a fully projected app state.
+pub struct Scenario {
+    steps: Vec<Step>,
+    idx: usize,
+    settle: u32,
+    log: Vec<String>,
+    failed: bool,
+    out_dir: PathBuf,
+}
+
+#[derive(Debug)]
+enum Step {
+    Open(String),
+    Omnibar { command: bool },
+    Type(String),
+    Key(EditKey),
+    Act(String),
+    Settle(u32),
+    Capture(String),
+    AssertOmnibar(bool),
+    AssertFocused(String),
+    AssertSuggestions(CmpOp, usize),
+    AssertVisible,
+    Log(String),
+}
+
+#[derive(Debug)]
+enum EditKey {
+    Enter,
+    Escape,
+    Backspace,
+    Up,
+    Down,
+}
+
+#[derive(Debug)]
+enum CmpOp {
+    Eq,
+    Ge,
+    Le,
+}
+
+/// What the shell should do this frame.
+pub enum Tick {
+    /// Lower these actions through the spine, then keep pumping frames.
+    Act(Vec<Action>),
+    /// Still settling; pump another frame.
+    Wait,
+    /// Compose and read back the current frame to this path.
+    Capture(PathBuf),
+    /// Every step is consumed: write the sentinel and exit the event loop.
+    Done,
+}
+
+impl Scenario {
+    /// The env-var activation seam. A parse error still yields a scenario —
+    /// one that is already failed with the error in its log — so the driver
+    /// waiting on `scenario.done` learns WHY instead of timing out.
+    pub fn from_env() -> Option<Self> {
+        let path = PathBuf::from(std::env::var_os("MERECAT_SCENARIO")?);
+        let out_dir = std::env::var_os("MERECAT_CAPTURE_DIR")
+            .map(PathBuf::from)
+            .or_else(|| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&out_dir);
+        Some(match std::fs::read_to_string(&path) {
+            Ok(body) => match parse(&body) {
+                Ok(steps) => Self {
+                    steps,
+                    idx: 0,
+                    settle: 0,
+                    log: Vec::new(),
+                    failed: false,
+                    out_dir,
+                },
+                Err(err) => Self::stillborn(out_dir, format!("parse error: {err}")),
+            },
+            Err(err) => Self::stillborn(out_dir, format!("unreadable scenario {path:?}: {err}")),
+        })
+    }
+
+    fn stillborn(out_dir: PathBuf, why: String) -> Self {
+        Self {
+            steps: Vec::new(),
+            idx: 0,
+            settle: 0,
+            log: vec![format!("FAIL: {why}")],
+            failed: true,
+            out_dir,
+        }
+    }
+
+    /// Consume at most one step against the current app state.
+    pub fn tick(&mut self, app: &App) -> Tick {
+        if self.settle > 0 {
+            self.settle -= 1;
+            return Tick::Wait;
+        }
+        let Some(step) = self.steps.get(self.idx) else {
+            return Tick::Done;
+        };
+        self.idx += 1;
+        match step {
+            Step::Open(url) => Tick::Act(vec![Action::OpenAddress(url.clone())]),
+            Step::Omnibar { command } => Tick::Act(vec![Action::OmnibarOpen { command: *command }]),
+            Step::Type(text) => Tick::Act(text.chars().map(Action::OmnibarChar).collect()),
+            Step::Key(key) => Tick::Act(vec![match key {
+                EditKey::Enter => Action::OmnibarCommit,
+                EditKey::Escape => Action::OmnibarClose,
+                EditKey::Backspace => Action::OmnibarBackspace,
+                EditKey::Up => Action::OmnibarMove(-1),
+                EditKey::Down => Action::OmnibarMove(1),
+            }]),
+            Step::Act(label) => {
+                let wanted = label.to_lowercase();
+                match palette_actions()
+                    .into_iter()
+                    .find(|(l, _)| l.to_lowercase() == wanted)
+                {
+                    Some((_, action)) => Tick::Act(vec![action]),
+                    None => {
+                        self.fail(format!("act: no palette action labelled '{label}'"));
+                        Tick::Wait
+                    }
+                }
+            }
+            Step::Settle(frames) => {
+                self.settle = *frames;
+                Tick::Wait
+            }
+            Step::Capture(name) => Tick::Capture(self.out_dir.join(format!("{name}.png"))),
+            Step::AssertOmnibar(open) => {
+                if app.omnibar.open != *open {
+                    let state = if *open { "open" } else { "closed" };
+                    self.fail(format!("assert omnibar {state}: it is not"));
+                }
+                Tick::Wait
+            }
+            Step::AssertFocused(substr) => {
+                let needle = substr.to_lowercase();
+                let url = app
+                    .canvas
+                    .focused_url()
+                    .map(|u| u.to_lowercase())
+                    .unwrap_or_default();
+                let caption = crate::app::focused_caption(&app.canvas)
+                    .map(|c| c.to_lowercase())
+                    .unwrap_or_default();
+                if !url.contains(&needle) && !caption.contains(&needle) {
+                    self.fail(format!(
+                        "assert focused '{substr}': focused is '{url}' / '{caption}'"
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertSuggestions(op, n) => {
+                let len = app.omnibar.suggestions.len();
+                let ok = match op {
+                    CmpOp::Eq => len == *n,
+                    CmpOp::Ge => len >= *n,
+                    CmpOp::Le => len <= *n,
+                };
+                if !ok {
+                    self.fail(format!("assert suggestions: have {len}, wanted {n}"));
+                }
+                Tick::Wait
+            }
+            Step::AssertVisible => {
+                if !app.canvas.graph_visible() {
+                    self.fail("assert visible: every node is off-screen".to_string());
+                }
+                Tick::Wait
+            }
+            Step::Log(text) => {
+                self.log.push(text.clone());
+                Tick::Wait
+            }
+        }
+    }
+
+    /// Record a capture's outcome (the shell owns the GPU work).
+    pub fn note_capture(&mut self, path: &Path, ok: bool) {
+        if ok {
+            self.log.push(format!("captured {}", path.display()));
+        } else {
+            self.fail(format!("capture failed: {}", path.display()));
+        }
+    }
+
+    fn fail(&mut self, why: String) {
+        self.failed = true;
+        self.log.push(format!("FAIL: {why}"));
+    }
+
+    /// Write the `scenario.done` sentinel the driver waits on. First line is
+    /// `RESULT ok`/`RESULT fail`, then the log lines (the same shape
+    /// meerkat's `Run-Scenario` parses).
+    pub fn finish(&self) {
+        let result = if self.failed { "fail" } else { "ok" };
+        let mut body = format!("RESULT {result}\n");
+        for line in &self.log {
+            body.push_str(line);
+            body.push('\n');
+        }
+        let _ = std::fs::write(self.out_dir.join("scenario.done"), body);
+    }
+}
+
+fn parse(body: &str) -> Result<Vec<Step>, String> {
+    let mut steps = Vec::new();
+    for (i, raw) in body.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (verb, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let rest = rest.trim();
+        let err = |msg: &str| Err(format!("line {}: {msg}: '{line}'", i + 1));
+        steps.push(match verb {
+            "open" if !rest.is_empty() => Step::Open(rest.to_string()),
+            "omnibar" => match rest {
+                "find" => Step::Omnibar { command: false },
+                "actions" => Step::Omnibar { command: true },
+                _ => return err("omnibar wants find|actions"),
+            },
+            "type" if !rest.is_empty() => Step::Type(rest.to_string()),
+            "key" => match rest {
+                "enter" => Step::Key(EditKey::Enter),
+                "escape" => Step::Key(EditKey::Escape),
+                "backspace" => Step::Key(EditKey::Backspace),
+                "up" => Step::Key(EditKey::Up),
+                "down" => Step::Key(EditKey::Down),
+                _ => return err("key wants enter|escape|backspace|up|down"),
+            },
+            "act" if !rest.is_empty() => Step::Act(rest.to_string()),
+            "settle" => Step::Settle(if rest.is_empty() {
+                20
+            } else {
+                rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
+            }),
+            "capture" if !rest.is_empty() => Step::Capture(rest.to_string()),
+            "assert" => {
+                let (what, arg) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+                let arg = arg.trim();
+                match what {
+                    "omnibar" => match arg {
+                        "open" => Step::AssertOmnibar(true),
+                        "closed" => Step::AssertOmnibar(false),
+                        _ => return err("assert omnibar wants open|closed"),
+                    },
+                    "focused" if !arg.is_empty() => Step::AssertFocused(arg.to_string()),
+                    "suggestions" => {
+                        let (op, n) = arg
+                            .split_once(char::is_whitespace)
+                            .ok_or_else(|| format!("line {}: assert suggestions wants '<op> <n>'", i + 1))?;
+                        let op = match op {
+                            "==" => CmpOp::Eq,
+                            ">=" => CmpOp::Ge,
+                            "<=" => CmpOp::Le,
+                            _ => return err("assert suggestions op wants ==|>=|<="),
+                        };
+                        let n = n
+                            .trim()
+                            .parse()
+                            .map_err(|_| format!("line {}: bad suggestion count", i + 1))?;
+                        Step::AssertSuggestions(op, n)
+                    }
+                    "visible" => Step::AssertVisible,
+                    _ => return err("unknown assert"),
+                }
+            }
+            "log" => Step::Log(rest.to_string()),
+            _ => return err("unknown verb"),
+        });
+    }
+    Ok(steps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scenario(body: &str) -> Scenario {
+        Scenario {
+            steps: parse(body).expect("scenario parses"),
+            idx: 0,
+            settle: 0,
+            log: Vec::new(),
+            failed: false,
+            out_dir: std::env::temp_dir(),
+        }
+    }
+
+    /// Drive a scenario against a real App the way the shell does, minus the
+    /// GPU: Act ticks lower through `update`, captures are acknowledged.
+    fn run(sc: &mut Scenario, app: &mut App) {
+        loop {
+            match sc.tick(app) {
+                Tick::Act(actions) => {
+                    for a in actions {
+                        app.update(a);
+                    }
+                }
+                Tick::Wait => {}
+                Tick::Capture(path) => sc.note_capture(&path, true),
+                Tick::Done => break,
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_scenario_drives_the_spine_and_passes() {
+        let mut app = App::test_stub();
+        let mut sc = scenario(
+            "# rung 3 smoke\n\
+             open mere://alpha\n\
+             open mere://beta\n\
+             omnibar find\n\
+             type alp\n\
+             assert omnibar open\n\
+             assert suggestions >= 1\n\
+             key enter\n\
+             assert focused alpha\n\
+             assert omnibar closed\n\
+             omnibar actions\n\
+             type re\n\
+             assert suggestions >= 1\n\
+             key escape\n\
+             act Toggle isometric view\n\
+             log done\n",
+        );
+        run(&mut sc, &mut app);
+        assert!(!sc.failed, "log: {:?}", sc.log);
+        assert!(app.canvas.is_isometric(), "the act step ran the registry action");
+    }
+
+    #[test]
+    fn a_failed_assert_marks_the_run_and_names_itself() {
+        let mut app = App::test_stub();
+        let mut sc = scenario("assert focused nothing-is-focused-yet\n");
+        run(&mut sc, &mut app);
+        assert!(sc.failed);
+        assert!(sc.log[0].contains("assert focused"), "log: {:?}", sc.log);
+    }
+
+    #[test]
+    fn parse_errors_name_their_line() {
+        let err = parse("open mere://x\nfrobnicate\n").unwrap_err();
+        assert!(err.contains("line 2"), "{err}");
+    }
+}
