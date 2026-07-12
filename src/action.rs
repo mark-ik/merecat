@@ -94,10 +94,17 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
 /// itself never blocks and never touches a platform API.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    /// Fetch a page document through the fetch actor.
-    FetchPage(String),
-    /// Fetch a favicon (already-absolute `url`) for the node at `owner_url`.
-    FetchFavicon { owner_url: String, url: String },
+    /// Fetch a page document through the fetch actor, for enrichment of the
+    /// node that requested it (correlation-over-URLs: several nodes may
+    /// share an address, and a node may navigate away mid-flight).
+    FetchPage { node: uuid::Uuid, url: String },
+    /// Fetch a favicon (already-absolute `url`) for `node`, whose page lives
+    /// at `owner_url` (the staleness check compares against it on return).
+    FetchFavicon {
+        node: uuid::Uuid,
+        owner_url: String,
+        url: String,
+    },
     /// Persist the session through the persistence port.
     SaveSession,
     /// Spawn a live document session for `node` at `url` through the
@@ -114,13 +121,21 @@ pub enum Effect {
 /// state through [`crate::app::apply_update`]. App-owned types only; port
 /// adapters convert.
 pub enum Update {
-    /// A page fetch completed (successfully or not).
+    /// A page fetch completed (successfully or not) for `node`, which
+    /// requested `url` (enrichment applies only while the node still lives
+    /// there — a late result against a superseded node drops explicitly).
     PageFetched {
+        node: uuid::Uuid,
         url: String,
         result: Result<FetchedPage, String>,
     },
-    /// A favicon's raw bytes arrived for the node at `owner_url`.
-    FaviconFetched { owner_url: String, bytes: Vec<u8> },
+    /// A favicon's raw bytes arrived for `node`, requested while its page
+    /// was `owner_url`.
+    FaviconFetched {
+        node: uuid::Uuid,
+        owner_url: String,
+        bytes: Vec<u8>,
+    },
     /// The content port spawned a live session for `node`.
     ContentSpawned { node: uuid::Uuid },
     /// The content port could not spawn (or lost) `node`'s session.

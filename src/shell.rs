@@ -62,6 +62,9 @@ pub struct Shell {
     route_policy: inker::EngineRoutePolicy,
     /// Monotonic epoch for the sessions' pump clock.
     epoch: std::time::Instant,
+    /// In-flight fetch correlation: which node asked for each URL, noted
+    /// before commanding the actor, reattached by the adapter on completion.
+    pending_fetches: browse::PendingFetches,
 }
 
 impl Shell {
@@ -99,6 +102,7 @@ impl Shell {
             content_sessions: std::collections::HashMap::new(),
             route_policy: mere::routing::route_policy(),
             epoch: std::time::Instant::now(),
+            pending_fetches: browse::PendingFetches::default(),
         };
         shell.run_effects(boot_effects);
         shell
@@ -121,7 +125,7 @@ impl Shell {
     /// The effect runner: the one place effects meet ports.
     fn run_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
-            if let Some(command) = browse::fetch_command_for(&effect) {
+            if let Some(command) = browse::fetch_command_for(&effect, &mut self.pending_fetches) {
                 self.fetch_handle.command(command);
                 continue;
             }
@@ -170,7 +174,7 @@ impl Shell {
                 }
                 Effect::Redraw => self.request_redraw(),
                 // Fetch-shaped effects were consumed above.
-                Effect::FetchPage(_) | Effect::FetchFavicon { .. } => {}
+                Effect::FetchPage { .. } | Effect::FetchFavicon { .. } => {}
             }
         }
     }
@@ -509,7 +513,7 @@ impl ApplicationHandler for Shell {
         while let Ok(raw) = self.fetch_rx.try_recv() {
             // The port adapter converts the service's types at the boundary;
             // the app only ever sees the app-owned vocabulary.
-            if let Some(update) = browse::update_from_fetch(raw) {
+            if let Some(update) = browse::update_from_fetch(raw, &mut self.pending_fetches) {
                 let effects = self.app.apply_update(update);
                 self.run_effects(effects);
             }

@@ -64,9 +64,14 @@ impl App {
         };
         let mut effects = Vec::new();
         if let Some(url) = address {
-            canvas.visit(url);
-            if fetch::is_fetchable(url) {
-                effects.push(Effect::FetchPage(url.to_string()));
+            let key = canvas.visit(url);
+            if fetch::is_fetchable(url)
+                && let Some(node) = canvas.graph().get_node(key).map(|n| n.id)
+            {
+                effects.push(Effect::FetchPage {
+                    node,
+                    url: url.to_string(),
+                });
             }
         }
         // A bare FIRST launch opens the omnibar by itself, so the app is
@@ -92,10 +97,12 @@ impl App {
     pub fn update(&mut self, action: Action) -> Vec<Effect> {
         match action {
             Action::OpenAddress(url) => {
-                self.canvas.visit(&url);
+                let key = self.canvas.visit(&url);
                 let mut effects = vec![Effect::Redraw];
-                if fetch::is_fetchable(&url) {
-                    effects.push(Effect::FetchPage(url));
+                if fetch::is_fetchable(&url)
+                    && let Some(node) = self.canvas.graph().get_node(key).map(|n| n.id)
+                {
+                    effects.push(Effect::FetchPage { node, url });
                 }
                 effects
             }
@@ -251,12 +258,14 @@ impl App {
     /// Fold one typed service answer into state.
     pub fn apply_update(&mut self, update: Update) -> Vec<Effect> {
         match update {
-            Update::PageFetched { url, result } => {
-                browse::apply_page(&mut self.canvas, url, result)
+            Update::PageFetched { node, url, result } => {
+                browse::apply_page(&mut self.canvas, node, url, result)
             }
-            Update::FaviconFetched { owner_url, bytes } => {
-                browse::apply_favicon(&mut self.canvas, &owner_url, &bytes)
-            }
+            Update::FaviconFetched {
+                node,
+                owner_url,
+                bytes,
+            } => browse::apply_favicon(&mut self.canvas, node, &owner_url, &bytes),
             Update::ContentSpawned { node } => {
                 self.content.note_live(node);
                 vec![Effect::Redraw]
@@ -350,7 +359,7 @@ mod tests {
         }
         let effects = app.update(Action::OmnibarCommit);
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FetchPage(_))),
+            !effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })),
             "selecting an existing node must not refetch: {effects:?}"
         );
         assert!(!app.omnibar.open);
