@@ -31,4 +31,7 @@ key escape
 act Toggle isometric view
 settle 20
 capture 05_isometric
+# The observation surface's stream half: semantic events were emitted.
+assert event address-opened mere://alpha
+assert event omnibar-committed
 log rung 3 self-drive complete

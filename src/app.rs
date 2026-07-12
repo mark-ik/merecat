@@ -9,6 +9,7 @@ use mere::canvas::Canvas;
 
 use crate::action::{Action, Effect, Update};
 use crate::content::ContentStates;
+use crate::observe::AppEvent;
 use crate::ui::{OmnibarState, Suggestion, normalize_address, recompute_suggestions};
 use crate::{browse, session};
 
@@ -39,6 +40,9 @@ pub struct App {
     /// Per-node content lifecycle (rung 4). Data only: the live session
     /// handles live in the shell's content port, keyed by the same ids.
     pub content: ContentStates,
+    /// Semantic events since the last drain (the observation pair's stream
+    /// half; the shell drains each frame). Data, like everything else here.
+    events: Vec<AppEvent>,
 }
 
 impl App {
@@ -88,15 +92,23 @@ impl App {
                 omnibar,
                 data_root,
                 content: ContentStates::default(),
+                events: Vec::new(),
             },
             effects,
         )
+    }
+
+    /// Drain the semantic events emitted since the last call (the shell
+    /// hands them to the scenario's log, diagnostics, or drops them).
+    pub fn take_events(&mut self) -> Vec<AppEvent> {
+        std::mem::take(&mut self.events)
     }
 
     /// Consume one app intent. Never blocks; anything slow leaves as an effect.
     pub fn update(&mut self, action: Action) -> Vec<Effect> {
         match action {
             Action::OpenAddress(url) => {
+                self.events.push(AppEvent::AddressOpened(url.clone()));
                 let key = self.canvas.visit(&url);
                 let mut effects = vec![Effect::Redraw];
                 if fetch::is_fetchable(&url)
@@ -108,6 +120,7 @@ impl App {
             }
             Action::ReseedLayout => {
                 if self.canvas.reseed() {
+                    self.events.push(AppEvent::LayoutReseeded);
                     vec![Effect::Redraw]
                 } else {
                     Vec::new()
@@ -146,9 +159,17 @@ impl App {
                 let (node, url) = target;
                 if self.content.flip_spawns(node) {
                     self.content.note_requested(node);
+                    self.events.push(AppEvent::ContentState {
+                        node,
+                        state: "requested".to_string(),
+                    });
                     vec![Effect::SpawnContent { node, url }, Effect::Redraw]
                 } else {
                     self.content.note_closed(node);
+                    self.events.push(AppEvent::ContentState {
+                        node,
+                        state: "closed".to_string(),
+                    });
                     vec![Effect::CloseContent { node }, Effect::Redraw]
                 }
             }
@@ -160,10 +181,12 @@ impl App {
                 };
                 self.omnibar.cursor = self.omnibar.text.len();
                 recompute_suggestions(&mut self.omnibar, &self.canvas);
+                self.events.push(AppEvent::OmnibarOpened);
                 vec![Effect::Redraw]
             }
             Action::OmnibarClose => {
                 self.omnibar = OmnibarState::default();
+                self.events.push(AppEvent::OmnibarClosed);
                 vec![Effect::Redraw]
             }
             Action::OmnibarChar(c) => {
@@ -211,6 +234,11 @@ impl App {
                     normalize_address(self.omnibar.text.trim())
                         .map(|url| Suggestion::Go { url })
                 });
+                if let Some(s) = committed.as_ref() {
+                    self.events.push(AppEvent::OmnibarCommitted(
+                        crate::observe::suggestion_line(s),
+                    ));
+                }
                 let mut effects = match committed {
                     Some(Suggestion::Node { url, .. }) => {
                         // Find lane: select the existing node; never refetch.
@@ -252,6 +280,7 @@ impl App {
             omnibar: OmnibarState::default(),
             data_root: std::env::temp_dir().join("merecat-app-test"),
             content: ContentStates::default(),
+            events: Vec::new(),
         }
     }
 
@@ -268,10 +297,18 @@ impl App {
             } => browse::apply_favicon(&mut self.canvas, node, &owner_url, &bytes),
             Update::ContentSpawned { node } => {
                 self.content.note_live(node);
+                self.events.push(AppEvent::ContentState {
+                    node,
+                    state: "live".to_string(),
+                });
                 vec![Effect::Redraw]
             }
             Update::ContentFailed { node, error } => {
                 tracing::warn!(%node, %error, "content spawn failed");
+                self.events.push(AppEvent::ContentState {
+                    node,
+                    state: format!("failed: {error}"),
+                });
                 self.content.note_failed(node, error);
                 vec![Effect::Redraw]
             }

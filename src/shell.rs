@@ -299,9 +299,14 @@ impl Shell {
     /// tick writes the sentinel and exits WITHOUT saving the session (a
     /// scenario never mutates the profile it ran against).
     fn scenario_pump(&mut self, event_loop: &ActiveEventLoop) {
+        // Drain the semantic event stream every frame: into the scenario's
+        // log when one is running, dropped otherwise (a future diagnostics
+        // subscriber taps in here).
+        let events = self.app.take_events();
         let Some(scenario) = self.scenario.as_mut() else {
             return;
         };
+        scenario.note_events(&events);
         match scenario.tick(&self.app) {
             crate::scenario::Tick::Act(actions) => {
                 for action in actions {

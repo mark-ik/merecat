@@ -29,8 +29,13 @@
 //! assert focused <substr>   # focused node's url/caption contains substr
 //! assert suggestions ==|>=|<= <n>
 //! assert visible            # at least one node inside the viewport
+//! assert event <substr>     # a semantic event matching <substr> was emitted
 //! log <text>
 //! ```
+//!
+//! Asserts read the observation surface ([`crate::observe`]) — the same
+//! snapshot/event pair the a11y and automation lanes consume — so a green
+//! scenario certifies the surface those lanes will stand on.
 
 use std::path::{Path, PathBuf};
 
@@ -47,6 +52,9 @@ pub struct Scenario {
     log: Vec<String>,
     failed: bool,
     out_dir: PathBuf,
+    /// The app's semantic event stream, drained by the shell each frame
+    /// (described strings; `assert event` matches substrings against them).
+    events: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -67,6 +75,9 @@ enum Step {
     /// The focused node's content lifecycle is Live (the phase-4 receipt's
     /// app-truth half; the capture is the pixel half).
     AssertContentLive,
+    /// A semantic event whose description contains the substring was emitted
+    /// at some point this run.
+    AssertEvent(String),
     Log(String),
 }
 
@@ -123,6 +134,7 @@ impl Scenario {
                     log: Vec::new(),
                     failed: false,
                     out_dir,
+                    events: Vec::new(),
                 },
                 Err(err) => Self::stillborn(out_dir, format!("parse error: {err}")),
             },
@@ -138,7 +150,15 @@ impl Scenario {
             log: vec![format!("FAIL: {why}")],
             failed: true,
             out_dir,
+            events: Vec::new(),
         }
+    }
+
+    /// Fold the frame's drained semantic events into the run (the shell
+    /// calls this each pump; `assert event` and failure diagnostics read it).
+    pub fn note_events(&mut self, events: &[crate::observe::AppEvent]) {
+        self.events
+            .extend(events.iter().map(crate::observe::AppEvent::describe));
     }
 
     /// Consume at most one step against the current app state.
@@ -189,68 +209,80 @@ impl Scenario {
                 Tick::Wait
             }
             Step::Capture(name) => Tick::Capture(self.out_dir.join(format!("{name}.png"))),
+            // Asserts read the observation surface — the same snapshot the
+            // a11y/automation lanes consume — never app fields directly.
             Step::AssertOmnibar(open) => {
-                if app.omnibar.open != *open {
+                let snap = crate::observe::snapshot(app);
+                if snap.omnibar.open != *open {
                     let state = if *open { "open" } else { "closed" };
                     self.fail(format!("assert omnibar {state}: it is not"));
                 }
                 Tick::Wait
             }
             Step::AssertText(want) => {
-                if app.omnibar.text != *want {
+                let snap = crate::observe::snapshot(app);
+                if snap.omnibar.text != *want {
                     self.fail(format!(
                         "assert text '{want}': the omnibar holds '{}'",
-                        app.omnibar.text
+                        snap.omnibar.text
                     ));
                 }
                 Tick::Wait
             }
             Step::AssertFocused(substr) => {
                 let needle = substr.to_lowercase();
-                let url = app
-                    .canvas
-                    .focused_url()
-                    .map(|u| u.to_lowercase())
+                let snap = crate::observe::snapshot(app);
+                let hay = snap
+                    .focused
+                    .map(|f| format!("{} {}", f.url, f.caption).to_lowercase())
                     .unwrap_or_default();
-                let caption = crate::app::focused_caption(&app.canvas)
-                    .map(|c| c.to_lowercase())
-                    .unwrap_or_default();
-                if !url.contains(&needle) && !caption.contains(&needle) {
-                    self.fail(format!(
-                        "assert focused '{substr}': focused is '{url}' / '{caption}'"
-                    ));
+                if !hay.contains(&needle) {
+                    self.fail(format!("assert focused '{substr}': focused is '{hay}'"));
                 }
                 Tick::Wait
             }
             Step::AssertSuggestions(op, n) => {
-                let len = app.omnibar.suggestions.len();
+                let snap = crate::observe::snapshot(app);
+                let len = snap.omnibar.suggestions.len();
                 let ok = match op {
                     CmpOp::Eq => len == *n,
                     CmpOp::Ge => len >= *n,
                     CmpOp::Le => len <= *n,
                 };
                 if !ok {
-                    self.fail(format!("assert suggestions: have {len}, wanted {n}"));
+                    self.fail(format!(
+                        "assert suggestions: have {len} ({:?}), wanted {n}",
+                        snap.omnibar.suggestions
+                    ));
                 }
                 Tick::Wait
             }
             Step::AssertVisible => {
-                if !app.canvas.graph_visible() {
+                if !crate::observe::snapshot(app).graph_visible {
                     self.fail("assert visible: every node is off-screen".to_string());
                 }
                 Tick::Wait
             }
             Step::AssertContentLive => {
-                let focused = app.canvas.focused_member();
-                let live = focused.is_some_and(|id| {
-                    matches!(app.content.get(id), Some(crate::content::NodeContent::Live))
-                });
-                if !live {
-                    let state = focused
-                        .and_then(|id| app.content.get(id))
-                        .map(|s| format!("{s:?}"))
-                        .unwrap_or_else(|| "no content state".to_string());
-                    self.fail(format!("assert content-live: focused node is {state}"));
+                let snap = crate::observe::snapshot(app);
+                let focused = snap.focused.as_ref().map(|f| f.member);
+                let state = focused
+                    .and_then(|id| snap.content.iter().find(|(n, _)| *n == id))
+                    .map(|(_, s)| s.clone());
+                if state.as_deref() != Some("live") {
+                    self.fail(format!(
+                        "assert content-live: focused node is {}",
+                        state.unwrap_or_else(|| "without content state".to_string())
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertEvent(substr) => {
+                if !self.events.iter().any(|e| e.contains(substr.as_str())) {
+                    self.fail(format!(
+                        "assert event '{substr}': not in the stream (last: {:?})",
+                        self.events.iter().rev().take(6).collect::<Vec<_>>()
+                    ));
                 }
                 Tick::Wait
             }
@@ -284,6 +316,15 @@ impl Scenario {
         for line in &self.log {
             body.push_str(line);
             body.push('\n');
+        }
+        // On failure, the event tail is the diagnosis: what actually
+        // happened, in semantic terms, right before things went wrong.
+        if self.failed {
+            for event in self.events.iter().rev().take(12).rev() {
+                body.push_str("event: ");
+                body.push_str(event);
+                body.push('\n');
+            }
         }
         let _ = std::fs::write(self.out_dir.join("scenario.done"), body);
     }
@@ -342,6 +383,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                         _ => return err("assert omnibar wants open|closed"),
                     },
                     "text" => Step::AssertText(arg.to_string()),
+                    "event" if !arg.is_empty() => Step::AssertEvent(arg.to_string()),
                     "focused" if !arg.is_empty() => Step::AssertFocused(arg.to_string()),
                     "suggestions" => {
                         let (op, n) = arg
@@ -383,6 +425,7 @@ mod tests {
             log: Vec::new(),
             failed: false,
             out_dir: std::env::temp_dir(),
+            events: Vec::new(),
         }
     }
 
@@ -390,11 +433,14 @@ mod tests {
     /// GPU: Act ticks lower through `update`, captures are acknowledged.
     fn run(sc: &mut Scenario, app: &mut App) {
         loop {
-            match sc.tick(app) {
+            let tick = sc.tick(app);
+            sc.note_events(&app.take_events());
+            match tick {
                 Tick::Act(actions) => {
                     for a in actions {
                         app.update(a);
                     }
+                    sc.note_events(&app.take_events());
                 }
                 Tick::Wait => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
@@ -422,6 +468,9 @@ mod tests {
              assert suggestions >= 1\n\
              key escape\n\
              act Toggle isometric view\n\
+             assert event address-opened mere://alpha\n\
+             assert event omnibar-committed\n\
+             assert event omnibar-closed\n\
              log done\n",
         );
         run(&mut sc, &mut app);

@@ -327,6 +327,32 @@ done-conditions story.
   `02b_caret_mid_text.png` (caret drawn mid-text after two Lefts). The
   ladder's next rung is 4: live content through the engine registry
   (inker adoption landed serval-side, so it is unblocked).
+- 2026-07-12: **Correlation-over-URLs LANDED for the browse lane** (the
+  recorded trigger fired at rung 4's enrichment touch; the content lane
+  already resolved by member). Fetch effects carry the requesting node's
+  id; the shell's `browse::PendingFetches` notes it before commanding the
+  actor and the adapter reattaches it on completion — the fetch crate's
+  wire types are untouched (meerkat shares them; same-URL requesters are
+  interchangeable, so the table keys by URL and pops one per completion).
+  Stamps land on the exact requester via new mere-side member-keyed
+  setters (`set_node_title_for`/`set_node_mime_hint_for`/
+  `set_node_favicon_for`); a late result against a node that navigated
+  away drops explicitly. Receipts: URL-twin targeting, superseded drop,
+  refuse-to-guess on unmatched completions.
+- 2026-07-12 (same session): **The observation pair LANDED** (recorded
+  trigger: the scenario lane is the first automation consumer).
+  `observe::snapshot(app)` is one coherent read (focused node, omnibar
+  view with suggestion rows as display strings, per-node content
+  lifecycle, node count, graph visibility); `observe::AppEvent` is the
+  stream half, emitted at the semantic tier (address-opened,
+  omnibar-opened/closed/committed, layout-reseeded, content states) and
+  drained by the shell each frame. Scenario asserts now read the
+  snapshot instead of poking app fields — a green scenario certifies the
+  surface the a11y/automation lanes stand on — and `assert event
+  <substr>` covers the stream; a failed run's sentinel carries the event
+  tail as its diagnosis. Gesture-end events (click-selection,
+  drag-placement) stay with the gesture-law follow-up, noted in
+  observe's charter. 20 unit tests; both scenarios RESULT ok.
 - 2026-07-11 (same session): **Rung 4 prep — the `content` module is
   born**, sized to meet the session-engines plan (serval docs 2026-07-10)
   at its phase 2/4 boundary. App truth: `ContentStates` (node id ->

@@ -28,6 +28,7 @@ mod action;
 mod app;
 mod browse;
 mod content;
+mod observe;
 mod scenario;
 mod session;
 mod shell;
