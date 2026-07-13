@@ -162,8 +162,8 @@ pub fn apply_page(
             tracing::info!(%url, content_type = ?media, bytes = fetched.body.len(), "page fetched");
             canvas.set_node_mime_hint_for(node, media.clone());
             if media.as_deref() == Some("text/html") {
-                let doc = serval_static_dom::StaticDocument::parse(&fetched.body);
-                if let Some(title) = serval_extract::extract(&doc).title {
+                let doc = genet_static_dom::StaticDocument::parse(&fetched.body);
+                if let Some(title) = genet_extract::extract(&doc).title {
                     if canvas.set_node_title_for(node, title.clone()) {
                         tracing::info!(%url, %title, "node title enriched from the page");
                     }
@@ -200,7 +200,7 @@ pub fn apply_favicon(
         tracing::info!(%node, url = %owner_url, "favicon for a superseded node; dropped");
         return Vec::new();
     }
-    let Some(decoded) = serval_layout::decode_image_bytes(bytes) else {
+    let Some(decoded) = genet_layout::decode_image_bytes(bytes) else {
         return Vec::new();
     };
     if canvas.set_node_favicon_for(node, decoded.rgba, decoded.width, decoded.height) {
@@ -214,9 +214,9 @@ pub fn apply_favicon(
 /// The favicon URL for a fetched page: the document's declared
 /// `<link rel=icon>` href resolved against the page URL, else the well-known
 /// `/favicon.ico` for web pages. `None` when neither applies.
-fn favicon_url_for(page_url: &str, doc: &serval_static_dom::StaticDocument) -> Option<String> {
+fn favicon_url_for(page_url: &str, doc: &genet_static_dom::StaticDocument) -> Option<String> {
     let base = url::Url::parse(page_url).ok()?;
-    if let Some(href) = serval_layout::linked_icon_href(doc) {
+    if let Some(href) = genet_layout::linked_icon_href(doc) {
         if let Ok(resolved) = base.join(&href) {
             return Some(resolved.to_string());
         }

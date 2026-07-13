@@ -7,7 +7,7 @@ meerkat becomes unnecessary. Companion to
 [2026-07-08_merecat_founding.md](./2026-07-08_merecat_founding.md) and mere's
 2026-07-09 boundary pass plan (its decisions are assumed here, as amended:
 canvas stays mere, platen is the pane home and arrives with the port, the
-verso family is serval's `verso-tile`).
+verso family is genet's `verso-tile`).
 
 ## Doctrine
 
@@ -105,7 +105,7 @@ them in the meantime:
 | `action` | `Action`, `Effect`, `Update` enums (port-agnostic) | landed | headless automation needs `action + app` without a shell |
 | `app` | `App` state + the two `update` fns | landed | never alone; travels with `action` |
 | `browse` | address opening, fetch, redirects, metadata enrichment, favicon discovery (the fetch adapter) | landed (was `web`) | another app consumes the port |
-| `content` | engine registrations, per-node document lifecycle, verso-tile flip, content frames, input routing (the registry itself is serval/inker's) | absent | rung 4 births it; crate if feature isolation changes the dep graph |
+| `content` | engine registrations, per-node document lifecycle, verso-tile flip, content frames, input routing (the registry itself is genet/inker's) | absent | rung 4 births it; crate if feature isolation changes the dep graph |
 | `session` | persistence port: graph.json now; browser_nodes.json, view intent, settings, multi-session later | landed | multi-session lands |
 | `shell` | winit + SurfaceHost + layered present + input routing + effect runner | landed | a second host (wasm) appears, or desktop/web shells share the core |
 | `ui` | chrome DOM (omnibar, toolbar), pane tiles over platen | absent | it exists at all (needs xilem-serval + platen) |
@@ -146,7 +146,7 @@ daily-driver value, not by meerkat's module sizes.
    without a terminal argument.
 4. **Live content on nodes** — the engine registry via the inker adoption;
    pelt's Engine impls; document scenes for readable pages; scry tiles +
-   verso-tile flip for the compat lane. Gate: the mere->serval agent's
+   verso-tile flip for the compat lane. Gate: the mere->genet agent's
    migration (adoption plan done-conditions 1-6).
 5. **Panes** — platen (the pane home) + the domain crates (gloss, roster,
    trail, alembic/steward over session-runtime). Gate: the surface
@@ -216,7 +216,7 @@ done-conditions story.
 ## Progress
 
 - 2026-07-10: Plan written (with Mark: "obviate meerkat, architect merecat";
-  the inker/serval migration explicitly belongs to the parallel agent).
+  the inker/genet migration explicitly belongs to the parallel agent).
 - 2026-07-10 (same session): **First slice LANDED** (a8d7117): main.rs is a
   page of bootstrapping over action/app/browse/session/shell; keys,
   close-save, boot fetch, and enrichment flow through the spine;
@@ -228,10 +228,10 @@ done-conditions story.
   of the go row (address-shaped input, https:// for dotted hosts); commit
   selects an existing node without refetching or lowers to OpenAddress. The
   chrome layer is merecat's first DOM surface: a ScriptedDom laid out by
-  serval-layout into a paint list, rasterized to a transparent-cleared texture and
+  genet-layout into a paint list, rasterized to a transparent-cleared texture and
   alpha-composited above the canvas texture (the minimal layered-present
   seam, in code). First-run bare launch auto-opens the palette; a bare
-  relaunch restores quietly. Placement lesson: serval-layout positions
+  relaunch restores quietly. Placement lesson: genet-layout positions
   absolutes by transform-translate (the gnode path), not left/top. Headed
   receipt: `testing/merecat/images/2026-07-10_omnibar_centered.png` (typed
   "meer", the restored Wikipedia node amber-highlighted). Next slices: the
@@ -287,17 +287,17 @@ done-conditions story.
   isometric; RESULT ok, 5 captures, all asserts green). This lane is why
   the day's other finding surfaced: capture-state tracing proved the
   palette OPEN in app truth while the pixels lacked the card, and a
-  paint-command probe pinned an in-flight serval-layout regression (the
-  SECOND absolutely-positioned sibling's subtree emits no paint; serval
+  paint-command probe pinned an in-flight genet-layout regression (the
+  SECOND absolutely-positioned sibling's subtree emits no paint; genet
   checkpoint c80c78d) — which also blanks the canvas gnode pool, and
   retroactively explains part of the SendKeys "lost key" confusion.
   Canary: `ui::tests::chrome_absolute_siblings_all_paint`, `#[ignore]`d
-  until the serval lane lands (run with `--ignored` to re-check). Pixel
+  until the genet lane lands (run with `--ignored` to re-check). Pixel
   receipts for the card re-run through the scenario the moment that fix
   lands; the lane itself is proven.
-- 2026-07-11 (same session): **The paint drop FIXED serval-side** (serval
+- 2026-07-11 (same session): **The paint drop FIXED genet-side** (genet
   f7b3c53), with Mark's authorization. Not a recent regression after all:
-  serval-layout had never supported multi-root documents (a host DOM with
+  genet-layout had never supported multi-root documents (a host DOM with
   no `<html>` wrapper) — build_box_tree took only the document's first
   element child, run_cascade traversed only the first, and the
   root-background propagation promoted the first sibling's background to
@@ -305,7 +305,7 @@ done-conditions story.
   siblings) and the canvas gnode pool were the first two-root consumers.
   Fixed: synthetic block root over all document-level elements, cascade
   loops every root, root-background gates on a sole root; 295/295
-  serval-layout tests green + a multi-root regression test. Merecat's
+  genet-layout tests green + a multi-root regression test. Merecat's
   canary un-ignored and green. The scenario now delivers the full pixel
   receipt: `04_actions_lane.png` shows the centered card (`>re`, Reseed
   layout selected), the whole sample graph WITH node bodies (also this
@@ -327,7 +327,7 @@ done-conditions story.
   caret keys, and `assert text`; receipts: 12 unit tests +
   `02b_caret_mid_text.png` (caret drawn mid-text after two Lefts). The
   ladder's next rung is 4: live content through the engine registry
-  (inker adoption landed serval-side, so it is unblocked).
+  (inker adoption landed genet-side, so it is unblocked).
 - 2026-07-12: **Correlation-over-URLs LANDED for the browse lane** (the
   recorded trigger fired at rung 4's enrichment touch; the content lane
   already resolved by member). Fetch effects carry the requesting node's
@@ -355,7 +355,7 @@ done-conditions story.
   drag-placement) stay with the gesture-law follow-up, noted in
   observe's charter. 20 unit tests; both scenarios RESULT ok.
 - 2026-07-11 (same session): **Rung 4 prep — the `content` module is
-  born**, sized to meet the session-engines plan (serval docs 2026-07-10)
+  born**, sized to meet the session-engines plan (genet docs 2026-07-10)
   at its phase 2/4 boundary. App truth: `ContentStates` (node id ->
   Requested/Live/Failed lifecycle; failure is a surfaced, retryable
   state, per the no-placebo rule). Vocabulary: `Action::ToggleNodeContent`
@@ -363,7 +363,7 @@ done-conditions story.
   `SpawnContent`/`CloseContent`, updates `ContentSpawned`/`ContentFailed`.
   The shell's effect runner holds the port SLOT: sessions are retained
   non-Send handles, so they will live shell-side keyed by node id; until
-  serval-documents lands the port answers every spawn with an honest
+  genet-documents lands the port answers every spawn with an honest
   failure naming the gap. When phase 2 lands, the wiring delta is
   confined to that runner arm plus frame composition into the layered
   present — the vocabulary, lifecycle, palette entry, and scenario

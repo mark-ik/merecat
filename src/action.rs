@@ -108,7 +108,7 @@ pub enum Effect {
     /// Persist the session through the persistence port.
     SaveSession,
     /// Spawn a live document session for `node` at `url` through the
-    /// content port (registry-dispatched once serval-documents lands;
+    /// content port (registry-dispatched once genet-documents lands;
     /// until then the port answers with an honest ContentFailed).
     SpawnContent { node: uuid::Uuid, url: String },
     /// Close `node`'s live session; the port drops the handle.

@@ -2,13 +2,13 @@
 //! document lifecycle only. Charter per the architecture plan's module map:
 //! engine registrations, per-node document lifecycle, the verso-tile flip,
 //! content frames, and input routing — where the registry itself is
-//! serval/inker's, never a hand-wired lane ladder (the session-engines plan,
-//! serval docs 2026-07-10, phase 4 names merecat as its consumer).
+//! genet/inker's, never a hand-wired lane ladder (the session-engines plan,
+//! genet docs 2026-07-10, phase 4 names merecat as its consumer).
 //!
 //! What lives HERE is the lifecycle state machine and nothing else. Live
 //! document sessions are retained, non-`Send` handles, so the shell's
 //! content port owns them (ports are the only owners of handles; `App`
-//! holds data) keyed by the same node ids. Until the serval-documents
+//! holds data) keyed by the same node ids. Until the genet-documents
 //! component lands (engines plan phase 2), the shell port answers every
 //! spawn with an honest failure naming the gap — a `Requested` node never
 //! silently spins (the no-placebo rule).

@@ -7,7 +7,7 @@
 //! the actions lane (a hint row this slice; the filterable action list next).
 //!
 //! Rendering rides the family's proven DOM path: a small `ScriptedDom` +
-//! stylesheet laid out by serval-layout, emitted as a paint list, composited
+//! stylesheet laid out by genet-layout, emitted as a paint list, composited
 //! by the shell as the second surface of the layered-present seam (canvas
 //! below, chrome above; the chrome texture clears transparent and
 //! alpha-blends over). The palette is tiny, so the document rebuilds
@@ -17,8 +17,8 @@ use layout_dom_api::{LayoutDom, LayoutDomMut, LocalName, Namespace, QualName};
 use mere::canvas::Canvas;
 use paint_list_api::{DeviceIntSize, PaintList};
 use paint_list_render::{CompositeLayer, composite_paint_layers};
-use serval_layout::{IncrementalLayout, ScrollOffsets};
-use serval_scripted_dom::{NodeId as DomNodeId, ScriptedDom};
+use genet_layout::{IncrementalLayout, ScrollOffsets};
+use genet_scripted_dom::{NodeId as DomNodeId, ScriptedDom};
 use uuid::Uuid;
 
 /// How many node matches the find lane shows.
@@ -285,7 +285,7 @@ pub fn chrome_scene(
     let card = dom.create_element(qual("div"));
     dom.set_attribute(card, qual("class"), "omni");
     // Positioned by transform-translate, the property the canvas gnode pool
-    // proves serval-layout honors (left/top on absolutes are not it).
+    // proves genet-layout honors (left/top on absolutes are not it).
     let left = ((w as f32 - CARD_W) / 2.0).max(8.0);
     dom.set_attribute(
         card,
@@ -359,12 +359,12 @@ fn qual(local: &str) -> QualName {
 mod tests {
     use super::*;
 
-    /// Canary for the chrome layer's load-bearing serval-layout behavior:
+    /// Canary for the chrome layer's load-bearing genet-layout behavior:
     /// SIBLING absolutely-positioned subtrees must all emit paint. Caught
-    /// 2026-07-11: serval-layout only cascaded/boxed the FIRST element child
+    /// 2026-07-11: genet-layout only cascaded/boxed the FIRST element child
     /// of a multi-root document (a host-built DOM with no `<html>` wrapper),
     /// so the omnibar card blanked whenever the caption chip preceded it.
-    /// Fixed serval-side (multi-root box tree + cascade + root-background
+    /// Fixed genet-side (multi-root box tree + cascade + root-background
     /// gate); this stays as merecat's tripwire on the behavior it leans on.
     #[test]
     fn chrome_absolute_siblings_all_paint() {

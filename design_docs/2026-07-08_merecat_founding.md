@@ -28,14 +28,14 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
   chrome, settings, session, **and the presentation surfaces**: orrery
   (graph canvas scene host), platen with its arrangements/cartography
   satellites (composition/projection), and the verso family (verso,
-  verso-api, verso-scry, verso-serval, browser-worker: the engine
+  verso-api, verso-scry, verso-genet, browser-worker: the engine
   multiplexer, the heart of the web lane). Amended 2026-07-09 per the
   [mere/merecat boundary pass plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-09_mere_merecat_boundary_pass_plan.md):
   the earlier shape kept orrery/platen in mere; they are application
   surfaces, and the `mere` facade's re-exports of them are compatibility
   scaffolding for the in-workspace host, not the library boundary. Its
   Cargo.toml should read like the ecosystem map: mere, personae, murm, moot,
-  serval. A direct dep on something mere composes is the seam leaking.
+  genet. A direct dep on something mere composes is the seam leaking.
 
 ## Sequencing (seam first, split second)
 
@@ -80,7 +80,7 @@ plus the `[patch.crates-io]` entries restated from mere's workspace manifest —
 a standalone consumer must carry those itself). The bin is a thin winit shell
 hosting the window-agnostic `mere::orrery::Orrery` content-root: an address
 argument mints its node in a fresh mere graph (`Orrery::visit`) and the canvas
-renders it through serval-winit-host, with physics on an armillary actor.
+renders it through genet-winit-host, with physics on an armillary actor.
 Nothing was copied from meerkat's shell; orrery's demo-scene catalog stayed
 behind. Headed receipt: `testing/merecat/images/2026-07-09_first_vertical_slice.png`.
 Done-condition 1 of three is met; the next slices are the verso-api browser
@@ -91,7 +91,7 @@ FETCHES. mere's `fetch` actor (armillary thread, netfetcher/errand + cookie
 jar) is consumed as an individual crate from mere's workspace (it is app-side
 material that moves here with the port); the page outcome stamps the response
 Content-Type as the node's MIME hint and, for HTML, the static-parse
-`<title>` (serval-extract) onto the node — the canvas caption flips from the
+`<title>` (genet-extract) onto the node — the canvas caption flips from the
 host fallback to the real title (`example.com` -> `Example Domain`,
 receipt `testing/merecat/images/2026-07-09_fetch_title_enrichment.png`).
 Supporting seam work in mere: orrery gained `set_node_title` (rebuilds the

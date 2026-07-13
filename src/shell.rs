@@ -10,12 +10,12 @@ use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
 use inker::{DocumentSession, SessionRegistry, SessionSpawnRequest};
-use serval_documents::{LocalFetcher, StaticSessionEngine};
+use genet_documents::{LocalFetcher, StaticSessionEngine};
 use image::ImageEncoder;
 use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
-use serval_winit_host::SurfaceHost;
+use genet_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -79,7 +79,7 @@ impl Shell {
         });
         let (fetch_handle, fetch_rx) = fetch::spawn_fetcher(fetch_wake);
 
-        // The content port's engines: the static lane (serval.web) with the
+        // The content port's engines: the static lane (genet.web) with the
         // shell-owned fetcher (netfetch: https + data:). Scripted/smolweb
         // rungs join by registration, not new dispatch code.
         let mut content_engines = SessionRegistry::new();
@@ -133,7 +133,7 @@ impl Shell {
                 Effect::SaveSession => {
                     session::save_session_graph(&self.app.data_root, self.app.canvas.graph())
                 }
-                // The content port (rung 4, live since serval-documents
+                // The content port (rung 4, live since genet-documents
                 // landed): route the address to an engine id, spawn through
                 // the registry, hold the session keyed by node id. Every
                 // failure — unroutable id, spawn error — surfaces as
