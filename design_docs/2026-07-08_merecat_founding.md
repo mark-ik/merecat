@@ -20,10 +20,10 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
 
 - **mere** = the composition tier over the promoted families: kernel graph +
   domain vocabulary (gloss, apparatus, card, roster), eidetic persistence
-  assembly over muniment/codicil, forme, and the composition seams where the
-  host injects murm's endpoint and moot's store. Local-first in the strict
-  sense: fully functional offline, no p2p deps in core. Mere has no window,
-  engine, GPU, fetch, or browser-lifecycle knowledge.
+  assembly over muniment/codicil, forme, and optional projections from peer
+  domain snapshots and events. Local-first in the strict sense: fully
+  functional offline, with peer dependencies absent from core. Mere has no
+  window, engine, GPU, fetch, or browser-lifecycle knowledge.
 - **merecat** = this repo. The app: windows, panes, input, render hosts,
   chrome, settings, session, **and the presentation surfaces**: orrery
   (graph canvas scene host), platen with its arrangements/cartography
@@ -53,9 +53,12 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
    changes). Strip MPL headers on the way; this repo is MIT/Apache,
    edition 2024. Mere re-bases last, per standing doctrine.
 
-Until step 3 the crate is a name-reserving placeholder. Murm/moot promotion
-proceeds independently on its own purity gates (moot: no sockets; murm: no
-store-of-record) and neither waits on the other.
+Until step 3 the crate is a name-reserving placeholder. Murm/Moot promotion
+follows Mere's
+[`murm-replication` boundary plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-12_murm_peer_runtime_and_moot_domain_plan.md):
+Murm owns the reusable peer-exchange foundation, Moot supplies governed-space
+semantics over its lower replication crate, and Merecat configures both through
+domain-level services rather than assembling p2panda sessions.
 
 ## Current extraction state
 

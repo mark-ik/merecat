@@ -159,7 +159,8 @@ daily-driver value, not by meerkat's module sizes.
 7. **Multi-window** — the one-state-N-windows doctrine over the Action spine
    (a window is a projection, so the spine already has the right shape).
    Gate: rung 3.
-8. **The long tail** — comms (murm posture), intel (embed/infer glue),
+8. **The long tail** — comms and community services (Murm direct exchange +
+   Moot over `murm-replication`), intel (embed/infer glue),
    import/crawl, scripting (rhai + document-host), theming
    (register-theme/tinct), a11y projection. Each is a port + Actions; each
    arrives when wanted, none blocks obviation of the daily-driver set.
