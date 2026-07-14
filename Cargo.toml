@@ -14,12 +14,14 @@ path = "src/main.rs"
 
 [dependencies]
 # The library this app is the reference host for: graph truth + the
-# composition tier, consumed through the `mere` facade (kernel, orrery,
+# composition tier, consumed through the `mere` facade (kernel, canvas,
 # forme, platen, glossary, ...). Git sibling per workspace convention; a
 # local checkout is picked up via the gitignored `.cargo/config.toml`
-# patches (mirrors mere's own sibling handling). The facade's orrery/platen
-# re-exports are compatibility scaffolding: those surfaces move INTO this
-# repo as the port proceeds (boundary pass plan, 2026-07-09).
+# patches (mirrors mere's own sibling handling). Of the facade's twelve
+# re-exports only two are compatibility scaffolding, `platen` and
+# `workbench`: those move INTO this repo as the port proceeds. Canvas
+# STAYS in mere (the 2026-07-09 amendment reversed its move); the crate
+# was called `orrery` at merecat's founding. Boundary pass plan, 2026-07-09.
 mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The fetch actor (armillary + netfetcher/errand + the cookie jar): merecat's
 # web lane, consumed as an individual crate from mere's workspace while it
@@ -60,7 +62,7 @@ paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch =
 uuid = "1"
 # Resolve a declared icon href (or the /favicon.ico fallback) against the page URL.
 url = "2.5"
-# Rasterize + composite the orrery's Scene through the shared present stack.
+# Rasterize + composite the canvas Scene through the shared present stack.
 netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # Pins match mere's workspace so the shared subtrees unify.

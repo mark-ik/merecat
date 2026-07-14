@@ -1,5 +1,13 @@
 # Merecat founding
 
+> **Reader's note, 2026-07-14.** Names below are as of 2026-07-08 and several have
+> since changed. `orrery` is now `canvas` and stays in mere (the 2026-07-09 boundary-pass
+> amendment reversed its move), so `mere::orrery::Orrery` is a path that no longer exists.
+> The engine `serval` is now `genet`. This doc's target-shape section is superseded by
+> [2026-07-10_merecat_architecture_plan.md](./2026-07-10_merecat_architecture_plan.md);
+> the naming, sequencing, and done-conditions story here still stands. Rung 5 is scoped in
+> [2026-07-14_merecat_rung5_panes_plan.md](./2026-07-14_merecat_rung5_panes_plan.md).
+
 2026-07-08. Merecat is the promotion target for mere's `meerkat` app crate,
 and the other half of a role swap: **mere becomes a library** (the lake: a
 graph over semantically related content) and **merecat becomes its consumer**

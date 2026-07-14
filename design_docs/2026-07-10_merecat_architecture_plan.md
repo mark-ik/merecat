@@ -1,13 +1,21 @@
 # Merecat architecture: obviating meerkat
 
-2026-07-10. The founding doc set the role swap (mere = library, merecat = the
-reference host); the boundary pass sharpened what mere keeps. This plan is
-the other half: what merecat IS, structurally, and the ladder by which
-meerkat becomes unnecessary. Companion to
-[2026-07-08_merecat_founding.md](./2026-07-08_merecat_founding.md) and mere's
-2026-07-09 boundary pass plan (its decisions are assumed here, as amended:
-canvas stays mere, platen is the pane home and arrives with the port, the
-verso family is genet's `verso-tile`).
+2026-07-10, refreshed 2026-07-14. The founding doc set the role swap (mere =
+library, merecat = the reference host); the boundary pass sharpened what mere
+keeps. This plan is the other half: what merecat IS, structurally, and the
+ladder by which meerkat becomes unnecessary. Companion to
+[2026-07-08_merecat_founding.md](./2026-07-08_merecat_founding.md),
+[2026-07-14_merecat_rung5_panes_plan.md](./2026-07-14_merecat_rung5_panes_plan.md),
+and mere's 2026-07-09 boundary pass plan (its decisions are assumed here, as
+amended: canvas stays mere; platen is the node-tiling home inside the workbench
+pane and arrives with the port; the pane model itself is mere's `frisket` crate,
+whose destination is undecided; the verso family is genet's `verso-tile`).
+
+Platen is **not** the pane home, and the 2026-07-10 text that said so is the
+root of rung 5's misframing. Every platen `Workbench` mutator takes a
+`forme::GraphMemberId` (the kernel `Node` UUID), so a platen tile can only ever be
+a graph node. The pane model with kinds, ids, a split tree, and an on-disk format
+is `mere/crates/shell/frisket`. See the rung-5 plan.
 
 ## Doctrine
 
@@ -33,6 +41,17 @@ verso family is genet's `verso-tile`).
    composites frames; it never hand-dispatches lanes the way meerkat's
    content actor does. Hand-wiring is the duplication the registry exists to
    prevent.
+
+   *Amended 2026-07-14: the registry gives you spawn, not observation.* Dispatch,
+   input, and the link hit-table are on the `DocumentSession` trait, so those lanes stay
+   hand-dispatch-free. The document INTERIOR is not: a11y projection and DOM
+   introspection reach the concrete type through `as_any`, which the trait's own doc
+   comment says. Meerkat pays this at four downcast sites, but it downcasts to
+   `HostScriptedDocument`, its **own** type. Merecat cannot follow: its one registered
+   engine is genet's `StaticSessionEngine`, whose session type `StaticDocumentSession` is
+   private, and `LoadedDocument`'s fields are private with no DOM accessor. For the lane
+   merecat actually ships, the downcast option does not exist. So this is a genet ask (a
+   projection accessor on `DocumentSession`), and it is the only path, not a fallback.
 
 ## The spine
 
@@ -77,6 +96,14 @@ them in the meantime:
   chrome lands born-observable; the pair arrives with its first
   scenario/automation consumer (the native-automation plan's convergence
   point). A11y-as-semantic-projection is therefore NOT long-tail material.
+
+  *Landed 2026-07-12 (f3e0a5c), but short of this charter, so do not read it as
+  discharged.* `observe::Snapshot` carries focused node, omnibar view, content lifecycle,
+  node count, and graph visibility. It carries no windows, no surfaces, no focus target,
+  and no available actions. Today no scenario can assert which surface is showing or
+  focused, which is exactly the receipt rung 5 needs. `available actions` is nearly free
+  (`action::palette_actions()` is already the registry the `>` lane commits through);
+  `surfaces` and `focus` arrive with rung-5 slice A; `windows` honestly waits for rung 7.
 - **Action envelopes + ingress authorization.** Identity, source, target,
   and outcome on actions; authorization at ingress (where personae/kith
   capability grants plug in). Trigger: the first non-local action source
@@ -105,10 +132,22 @@ them in the meantime:
 | `action` | `Action`, `Effect`, `Update` enums (port-agnostic) | landed | headless automation needs `action + app` without a shell |
 | `app` | `App` state + the two `update` fns | landed | never alone; travels with `action` |
 | `browse` | address opening, fetch, redirects, metadata enrichment, favicon discovery (the fetch adapter) | landed (was `web`) | another app consumes the port |
-| `content` | engine registrations, per-node document lifecycle, verso-tile flip, content frames, input routing (the registry itself is genet/inker's) | absent | rung 4 births it; crate if feature isolation changes the dep graph |
-| `session` | persistence port: graph.json now; browser_nodes.json, view intent, settings, multi-session later | landed | multi-session lands |
-| `shell` | winit + SurfaceHost + layered present + input routing + effect runner | landed | a second host (wasm) appears, or desktop/web shells share the core |
-| `ui` | chrome DOM (omnibar, toolbar), pane tiles over platen | absent | it exists at all (needs xilem-serval + platen) |
+| `content` | per-node document lifecycle (`NodeContent` / `ContentStates`) | landed (rung 4, d1e6234; 109 LOC) | feature isolation changes the dep graph |
+| `session` | persistence port: graph.json now; browser_nodes.json, view intent, multi-session later | landed | multi-session lands |
+| `settings` | engine/viewer settings as app truth; retention, transport-preference, export-profile (assigned to merecat by three mere plans) | absent | it exists at all |
+| `shell` | winit + SurfaceHost + layered present + input routing + effect runner | landed (696 LOC, 0 tests; over the 600 ceiling) | a second host (wasm) appears, or desktop/web shells share the core |
+| `surface` | surface list, rect math, hit-test, focus resolution | absent | rung 5 slice A births it |
+| `pane` | `FrisketLayout` in app truth, summon/close/divider Actions | absent | rung 5 slice C, if `frisket` is adopted |
+| `observe` | `snapshot(app)` + the `AppEvent` stream | landed (175 LOC) | AccessKit or automation consume it out-of-process |
+| `scenario` | the self-drive grammar + GPU self-capture | landed (517 LOC) | test-only builds change the dep graph |
+| `ui` | chrome DOM (omnibar, caption chip); pane tiles later | landed (rung 3; 534 LOC, 6 tests; hand-built `ScriptedDom` laid out by genet-layout, emitted as a paint list, composited as the chrome layer; no view framework) | a second chrome consumer appears, or a toolkit adoption changes the dep graph |
+
+The `content` row's 2026-07-10 charter listed five things; the module owns one.
+Engine registration is `shell.rs:85-86`, frame composition is `shell.rs:212-223`,
+and session handles are `shell.rs:60`, all by design (ports own the non-Send
+handles, which content.rs's own header says). The verso-tile flip and content input
+routing do not exist at all; they are rung-5 work, because they need the surface
+plan. Registration and frames stay in `shell`.
 
 Crate promotion is gated on consumers and build shape, never on module size:
 headless automation wanting `action + app`, a second shell, another app
@@ -116,12 +155,45 @@ consuming a port, or feature isolation that changes the dependency graph.
 The likely eventual shape is `merecat-core` / `merecat-desktop` /
 `merecat-web`; until a gate fires, modules are correct.
 
-Rung 3 also births the **layered present seam** in minimal form: the shell
-composites an ordered list of surfaces (canvas, then the chrome layer) with
-rects and focus-routed input, and that seam grows into a full surface plan
-(ids, z-order, per-surface input routing) at rung 5 when panes and content
-frames multiply. `Shell::render` must never become the next imperative
-crossroads.
+## Supply reachable today
+
+The most useful fact for planning the remaining rungs, and it was absent from the
+2026-07-10 draft. In merecat's `Cargo.lock` **today**, transitively through `mere`
+and `session-runtime`, all of these resolve and compile: `frisket` (the pane model),
+`platen`, `forme`, `gloss`, `roster`, `trail`, `apparatus`, `uxtree` (the a11y
+stitcher), `pelt-core` (the tile contract), and `verso-tile` (a hard dep of `fetch`).
+They are already in the build graph and merely not nameable; naming one costs a dep
+line, the precedent merecat already uses twice (`fetch` and `session-runtime` as
+direct git deps on mere.git).
+
+Two facade gaps: `frisket` and `uxtree` are not re-exported by `mere`.
+
+Not in the build graph: `cambium`, `sprigging`, and `pelt-desktop` (all sitting in
+`[[patch.unused]]`), and `scrying-engine`.
+
+So the model half of rung 5 needs no repo move and no facade change to start. Only
+the renderer half is blocked, and it is blocked outside merecat.
+
+Rung 3 births the **layered present** in its crudest honest form, and the
+2026-07-10 text overstated it. What exists: `Shell::render` rasterizes a fixed set
+of scenes (canvas always, the focused node's content session when live, the chrome
+layer when it has content) and composites them in hardcoded order, every one of them
+full-window (`let full = ExternalTexturePlacement::new([0.0, 0.0, w, h])`, reused for
+all three). There is no surface list, no ids, no z-order, and no rects. Input routing
+is one boolean, `self.app.omnibar.open`, branched at three sites; continuous gestures
+(CursorMoved, MouseWheel) do not consult even that and go unconditionally to the
+canvas. A live content session receives no input at all.
+
+The ordered surface list (ids, z-order, per-surface rects, per-surface input routing)
+is therefore **not** an inherited asset. It is rung 5's first slice, and rung 4 is not
+finished until it exists, because the content surface is already on screen and already
+broken by its absence: it composites opaque (`ColorLoad::Clear(WHITE)`) at full window,
+so a focused node with live content completely occludes the graph canvas.
+
+`Shell::render` must never become the next imperative crossroads. It is 696 LOC with
+zero tests and already holds render, run_effects, act, all input routing, and capture.
+Rung 5 adds rect math, hit-testing, and focus dispatch to exactly that file. Split
+before adding.
 
 mere::canvas is hosted, not wrapped: the shell maps raw input onto the
 canvas's semantic methods directly (they are already the right vocabulary),
@@ -134,57 +206,122 @@ Meerkat dies when merecat is the daily driver. Each rung names the meerkat
 capability, its source of supply, and its gate. Rungs are ordered by
 daily-driver value, not by meerkat's module sizes.
 
-1. **Graph canvas + persistence + enrichment** — mere::canvas, fetch,
+1. **Graph canvas + persistence + enrichment**. Supplied by mere::canvas, fetch,
    session-runtime. LANDED (slices 1-4, 2026-07-09): open address, fetch,
    title/mime/favicon stamps, session restore.
-2. **The Action spine** — this plan's first slice: restructure the bin onto
+2. **The Action spine**. This plan's first slice: restructure the bin onto
    action/app/web/session/shell modules, behavior-preserving. Gate: none.
-3. **Omnibar + navigation chrome** — shell/chrome's host-neutral vocabulary
-   (History, NavTarget, suggest) over a xilem-serval chrome document, as a
-   second composited layer above the canvas. Gate: none (the vocabulary and
-   the render stack both exist). This is the rung that makes merecat usable
-   without a terminal argument.
-4. **Live content on nodes** — the engine registry via the inker adoption;
-   pelt's Engine impls; document scenes for readable pages; scry tiles +
-   verso-tile flip for the compat lane. Gate: the mere->genet agent's
-   migration (adoption plan done-conditions 1-6).
-5. **Panes** — platen (the pane home) + the domain crates (gloss, roster,
-   trail, alembic/steward over session-runtime). Gate: the surface
-   composition + focus routing seam (born minimal at rung 3) plus platen's
-   pane model; the chrome document is a product-order choice, not the
-   structural gate.
-6. **Multi-session + browser-state sidecar** — session-runtime's manifests,
+3. **Omnibar + navigation chrome**. COMPLETE 2026-07-11, but not from the supply
+   this rung named. Merecat has zero xilem dependency: the chrome is a hand-built
+   `genet_scripted_dom::ScriptedDom` over a `&'static str` sheet, laid out by
+   `genet_layout::IncrementalLayout`, emitted as a paint list and composited by
+   `paint_list_render::composite_paint_layers`. mere's `chrome` crate really does hold
+   `NavTarget`, `History`, and `suggestions(query, history)`, but the mere facade does
+   not re-export `chrome`, so merecat cannot reach it. Merecat rolled its own
+   `ui::Suggestion`, `normalize_address`, and `recompute_suggestions` matching GRAPH
+   truth. Record `suggest` as **superseded by design**: graph search is the right
+   product for merecat, not history-made-spatial. `nav` is **still owed**, not
+   superseded: the `Action` enum has no Back, Forward, or Reload variant, while the
+   deletion matrix requires all three. That owed work moves off this rung (below).
+4. **Live content on nodes**. LANDED for the static lane 2026-07-11 (d1e6234). Gate
+   (the mere->genet agent's migration, adoption done-conditions 1-6) FIRED. The rung
+   delivered about a third of its charter, so name the rest here rather than let a
+   fired gate read as a finished row. NOT landed: exactly one engine is registered
+   (`StaticSessionEngine` under `genet.web`), and `genet-documents` is pulled with
+   `features = ["netfetch"]` only, so scripted and smolweb are not compiled in (they
+   join by a feature flip plus two register calls, not new dispatch); the compat lane
+   ("scry tiles + verso-tile flip") does not exist, since there is no `scrying-engine`
+   dep (`verso-tile` IS in the graph, through `fetch`); the content frame is a
+   full-window opaque layer, not a node-sized tile; no input reaches a session; and only
+   the focused node is pumped and framed, so `Live` is a lie for every other node. The
+   compat lane and content input are rung-5 work, because they need the surface plan.
+5. **Panes**. Scoped in
+   [2026-07-14_merecat_rung5_panes_plan.md](./2026-07-14_merecat_rung5_panes_plan.md).
+   Supply: `frisket` (the pane model: PaneId, PaneContent, a PaneNode split tree,
+   FrisketLayout, frame.json through session-runtime) plus `platen` (the node-tiling model
+   INSIDE one `PaneContent::Workbench` leaf) plus the domain crates that actually exist:
+   `gloss`, `roster`, `trail`, and `apparatus` (a skeleton that supplies nothing yet).
+   Strike "alembic/steward" from the domain-crate list: neither is a crate. Per the
+   2026-07-10 pane-content decision they are session-runtime vocabulary with views
+   app-side. Gate, restated honestly: BUILD the surface composition and focus routing
+   seam (it does not exist), then adopt `frisket`. Platen supplies no pane model and no
+   renderer. The renderer is the one genuinely blocked piece and this rung never named
+   it: platen emits fractions, never rects; `platen-view` does not exist (deleted
+   2026-06-15, superseded by pelt); the only working platen renderer is pelt-desktop's
+   `TileSurface`, which drags `cambium` and `sprigging`. Name the choice: take
+   pelt-desktop, or render `WorkbenchPlan` on the ScriptedDom path merecat already runs.
+6. **Multi-session + browser-state sidecar**. The session-runtime manifests,
    sessions/<id>/ layout, browser_nodes.json. Gate: rung 4 (per-node browser
    state is worth persisting once nodes hold live content).
-7. **Multi-window** — the one-state-N-windows doctrine over the Action spine
+7. **Multi-window**. The one-state-N-windows doctrine over the Action spine
    (a window is a projection, so the spine already has the right shape).
    Gate: rung 3.
-8. **The long tail** — comms and community services (Murm direct exchange +
-   Moot over `murm-replication`), intel (embed/infer glue),
-   import/crawl, scripting (rhai + document-host), theming
-   (register-theme/tinct), a11y projection. Each is a port + Actions; each
-   arrives when wanted, none blocks obviation of the daily-driver set.
+8. **The long tail**. Comms and community services (Murm direct exchange +
+   Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
+   scripting (rhai + document-host), theming (register-theme/tinct). Each is a
+   port + Actions. A11y projection is NOT here: it is rung 5 (see this plan's own
+   "recorded for later", which pulled it out of the long tail; the 2026-07-10 text
+   contradicted itself by leaving it in this row). Gate, which this rung lacked:
+   Murm and Moot are **not** promoted libraries. `murm-replication` lives at
+   `mere/crates/murm/replication`, inside mere's workspace; there is no repos/murm and
+   no repos/moot; the mere facade re-exports none of comms, murm, moot, or mesh; and
+   the only workspace consumer of `comms` is meerkat. Promotion is the peer-runtime
+   plan's Phase G, gated on Phases A through F. Until Phase G lands, merecat cannot name
+   Murm or Moot in Cargo.toml at any rung. The founding doc says merecat's Cargo.toml
+   "should read like the ecosystem map: mere, personae, murm, moot, genet"; two of those
+   five cannot be written today.
 
 **Meerkat's deletion condition** (the founding doc's done-condition 2 made
 concrete; behavioral receipts, not a subjective trial — 2026-07-10 review
 round): every row below passes, at which point daily-driving merecat is
 confirmation rather than the specification.
 
-- Open addresses from the omnibar; navigate live content.
-- Back, forward, reload, and redirects behave.
-- Focus and switch between the graph canvas and documents.
-- Open, arrange, and restore panes.
-- Restore graph, browser state, and content state after a restart.
-- Change engine/viewer settings and see them apply.
-- Run the same scenario through keyboard input and through automation
-  Actions (one description, two runners).
-- Produce a coherent application snapshot and accessibility tree.
-- Recover from a failed fetch, a failed engine start, and an interrupted
-  save.
+Each row carries its rung. They were unannotated in the 2026-07-10 draft, which is
+how a rung-5 receipt came to read as rung-4-completable.
+
+- (r3/r4) Open addresses from the omnibar; navigate live content. **Met** for the
+  static lane.
+- (r3, still owed) Back, forward, reload, and redirects behave. `Action` has no Back,
+  Forward, or Reload variant. Rung 3 is marked complete and this has no owner; give it
+  one.
+- (r5) Focus and switch between the graph canvas and documents. **Unmet, and not a
+  rung-4 item**: content sessions receive zero input, and the only focus concept in the
+  codebase is the graph node's. Needs rung-5 slices A and B.
+- (r5) Open, arrange, and restore panes. Split in two, because "arrange" hides two
+  tiers:
+  - **Frisket tier** (the low bar, clear it early): summon, divider drag, maximize, close,
+    restore. Every meerkat summon is a fixed Right-split at a hardcoded ratio, and
+    `frisket::reparent_leaf` is dead in the host.
+  - **Tile tier** (the real arrange, and what meerkat actually ships): merge onto a tab
+    bar, split on an edge, restore the tiling. Tear-out is **rung 7**, not this row: it
+    is multi-window by definition, and its supply (`2026-07-08_portable_tiles_plan.md`)
+    is itself blocked on step 3 of the forest-DOM plan.
+- (r6) Restore graph, browser state, and content state after a restart.
+- (r4, not r6) Change engine/viewer settings and see them apply. The module map filed
+  settings under `session`, gated on rung 6, so the matrix demanded at rung 4 what the
+  map delivered at rung 6. Settings now have their own module-map row.
+- (r5) Run the same scenario through keyboard input and through automation Actions (one
+  description, two runners). Merecat has **one** runner. The grammar also cannot drive
+  panes: no pointer verbs, no element verbs, no surface targeting. `settle` is still
+  frame-counting (default 20) though the shell already reads `session.settled()`.
+- (r5) Produce a coherent application snapshot and accessibility tree. The snapshot
+  landed missing four of its six promised members (no windows, surfaces, focus target, or
+  available actions). The a11y tree does not exist in merecat at all: no accesskit dep,
+  no uxtree dep, no projector call.
+- (r4/r6) Recover from a failed fetch, a failed engine start, and an interrupted save.
+- (unrunged) Drop a file on the window: it becomes a node, or textures the node under it.
+  Merecat handles no winit `DroppedFile` or `HoveredFile`. The last row below makes this
+  a defect rather than a wishlist item, and it needs a rung.
 - Meerkat holds no capability absent from this matrix.
 
-Then meerkat leaves mere's workspace and the mere facade drops its
-compatibility re-exports (platen moves here in the same pass).
+Then meerkat leaves mere's workspace and the mere facade drops its two
+compatibility re-exports, `platen` and `workbench`, in the same pass. The facade
+re-exports twelve crates and only those two are scaffolding; the other ten
+(apparatus, canvas, forme, gloss, glossary, graphlets, kernel, linked_data, roster,
+trail) are the permanent library boundary. `workbench`'s move is an inference from the
+code (it hard-deps platen and lives inside `crates/platen/domain/workbench`), not a
+recorded decision, and it needs Mark's confirmation: if it does not move, a library
+crate ends up depending on the app's crate, which is an inversion.
 
 ## What is deliberately NOT carried
 
@@ -192,13 +329,67 @@ compatibility re-exports (platen moves here in the same pass).
   Action spine; the command REGISTRY vocabulary is worth rereading when rung
   3 adds a command palette).
 - The bin-module sprawl (85 modules in main.rs). Merecat's bin stays a shell.
-- `PaneContent`/`ContentPane` vocabulary as-is; pane identity gets designed
-  at rung 5 against platen's model, not inherited.
+- `ContentPane`. It is a `pub(crate)`, two-variant, non-serde nav-focus
+  discriminator (Orrery | Workbench) meaning "which content pane does the omnibar act
+  on". It is not a pane-identity type, and dropping it costs nothing.
+- (Corrected 2026-07-14.) The 2026-07-10 text said pane identity gets designed at rung
+  5 "against platen's model". Platen has no pane identity and no pane kinds, so that
+  sentence sent the implementer at the wrong crate. Pane identity is designed against
+  `frisket`, and mostly inherited from it: `PaneNode::Leaf { pane_id: PaneId(u64),
+  content: PaneContent, graph_id: GraphId }`. Whatever replaces `PaneContent` must still
+  answer `follows_active_graph()` (the multi-graph re-sourcing policy behind
+  `retag_graph_bound`), a stable serde tag, and `tag()` (tracing plus accessible names).
+  Drop `System`, `Tile(LeafNodeRef)`, and `Custom(String)` on the way over: no host
+  constructs them. Two caveats. `Custom` is used inside frame's own layout ops as a
+  transient sentinel, and there are two (`__placeholder__` and `__dedup_placeholder__`),
+  so the replacement needs a placeholder affordance. And `PaneContent` variant names are
+  the on-disk `frame.json` serde tags: `PaneContent::Orrery` stays `Orrery` on disk even
+  though the crate is now `canvas`. Renaming it is a format migration, already parked as
+  a separate vocabulary decision. Do not sweep it with the names.
 - Meerkat's scenario runner as code; the VOCABULARY (one description, two
   runners) returns as Action-driven automation per the native-automation
   plan.
 
-## First slice (this session)
+## The toolkit question, deferred not answered
+
+Recorded so it stops being decided by omission.
+
+Merecat has no view framework in its dependency graph. Rung 3's chrome hand-builds a
+`ScriptedDom` and, per its own module doc, "rebuilds wholesale per state change rather
+than diffing". That was the right call for a seven-entry palette and it shipped well. It
+will be tested by a roster with hundreds of rows and clickable facet cards. That pressure
+is the trigger for this decision.
+
+The alternative is `cambium` (the extracted xilem fork in repos/cambium: packages
+`cambium`, `meristem`, `sprigging`, `cambium-nematic`, `cambium-winit`), which supplies
+button, checkbox, radio_group, select, slider, text_field, editor, menu, overlay,
+data_grid, Keyed and PortableKeyed, and a multi-window runner, with 181 tests green.
+Note the flagship component (the filterable action list) does **not** exist in it:
+`menu()` is render-only and the host owns query, selection, and keyboard. Do not budget
+it as supply.
+
+Merecat is the only family member currently insulated from the toolkit churn, because it
+took no toolkit dep. That insulation is an asset. Spend it deliberately.
+
+## Watch items
+
+Neither is a dependency; both landed after the 2026-07-10 draft.
+
+- **The Cambium duplication is live.** Cambium's C5 step (delete the copies in genet) has
+  not run: `components/xilem-serval`, `components/xilem-core`, and `components/chisel` are
+  still genet workspace members, so two diverged copies of the toolkit exist. mere's HEAD
+  (`271e79d`, "Point Meerkat UI at Cambium") already points meerkat at cambium through its
+  gitignored `.cargo/config.toml`, which means mere's committed manifest builds only because
+  of a local file. This is the thing that gates rung 5's pelt-desktop renderer option, and it
+  is not merecat's to fix.
+- **`livery`.** `livery` 0.0.2 and `genet-livery` 0.0.2 are genet workspace members at HEAD:
+  a clean-room, generated CSS property and cascade engine. `genet-livery` deps
+  `layout-dom-api`, `paint_list_api`, and taffy, the same seam `ui.rs` already drives through
+  genet-layout. Genet's own audit names Cambium as first consumer and says it "does not claim
+  to be Merecat's production theme". Watch, do not plan against it; the swap would be confined
+  to `ui.rs`'s layout and paint call.
+
+## First slice (2026-07-10)
 
 Restructure the existing bin onto the spine, behavior-preserving:
 `action.rs` (Action/Effect/Update), `app.rs` (state + update), `web.rs`
@@ -354,6 +545,11 @@ done-conditions story.
   tail as its diagnosis. Gesture-end events (click-selection,
   drag-placement) stay with the gesture-law follow-up, noted in
   observe's charter. 20 unit tests; both scenarios RESULT ok.
+
+  *(Chronology note: the rung-4-prep entry below is dated 2026-07-11 and sits after the
+  two 2026-07-12 entries. It is left in place as accurate history, but "the last entry"
+  is not the current state. That mis-ordering is precisely how rung 4's landing went
+  unrecorded for three days. Newest entries go at the bottom from here on.)*
 - 2026-07-11 (same session): **Rung 4 prep — the `content` module is
   born**, sized to meet the session-engines plan (genet docs 2026-07-10)
   at its phase 2/4 boundary. App truth: `ContentStates` (node id ->
@@ -368,3 +564,55 @@ done-conditions story.
   confined to that runner arm plus frame composition into the layered
   present — the vocabulary, lifecycle, palette entry, and scenario
   drivability are already in place. 15 unit tests.
+
+  *(Superseded 2026-07-11 by d1e6234, below: the port no longer answers every spawn with
+  an honest failure. The rest of this entry is accurate history.)*
+- 2026-07-11: **Rung 4 LANDED for the static lane** (d1e6234). The reserved runner arm
+  went live: `Effect::SpawnContent` builds an `inker::EngineRouteRequest`,
+  `mere::routing::route_policy()` picks the engine id, `inker::SessionRegistry` spawns,
+  and the retained non-Send `Box<dyn DocumentSession<netrender::Scene>>` lives shell-side
+  keyed by node id. Ports own handles, App holds data, exactly as prepped. Static lane
+  only (`StaticSessionEngine` registered under `genet.web`, with the shell's
+  `LocalFetcher`). Receipt: `scenarios/rung4_content.scn`, `assert content-live`,
+  RESULT ok. Still open on rung 4, and now scheduled into rung 5 because each needs the
+  surface plan: content input routing (zero calls to `click_at`, `scroll_by`, or `links`);
+  per-node placement (the session frames at full window and composites opaque, so it
+  occludes the canvas); non-focused nodes (only `focused_member()` is pumped and framed,
+  so `ContentStates::live_nodes()` is dead and `Live` is a lie for every other node); the
+  compat lane (no `scrying-engine` dep; `verso-tile` IS in the graph through `fetch`); and
+  scripted/smolweb (a `genet-documents` feature flip plus two register calls).
+- 2026-07-12: **Ring-3 fork pins mirrored** (fa41d4c) and **Genet consumed** (37e536f):
+  the engine's rename from Serval landed in merecat's manifest.
+- 2026-07-14: **The rename completed under us, and merecat came through green.** The local
+  folder is now repos/genet (it was repos/serval through 07-13), `serval-xilem` is package
+  `cambium`, and chisel is package `sprigging`. Merecat's gitignored `.cargo/config.toml`
+  was swept onto repos/genet and its `serval-*` toolkit patch keys replaced by a cambium
+  section. Receipt: `cargo metadata --offline` exits 0 and `cargo check --bin merecat` is
+  green (2m08s, one warning, the dead `live_nodes` noted above). There was a real but
+  transient break mid-sweep: genet moved onto a published `genet-stylo` registry family
+  while merecat's lock still pointed at a stale genet rev, which put two `genet-stylo`
+  copies in the graph against one `links = "servo_style_crate"` key. It resolved when the
+  sweep finished. Watch for it if a sibling's stylo pins move again.
+- 2026-07-14: **Rung 5 scoped** in
+  [2026-07-14_merecat_rung5_panes_plan.md](./2026-07-14_merecat_rung5_panes_plan.md), and
+  this plan refreshed against it. The headline correction: platen is not a pane model (every
+  `Workbench` mutator takes a `forme::GraphMemberId`), the pane model is mere's `frisket`
+  crate, and the surface composition + focus routing seam this plan booked as born-at-rung-3
+  was never born. Rung 5's first slice builds it.
+- 2026-07-14: **The pane model renamed and split** (with Mark), which answers rung 5's
+  highest-leverage open question before it was asked twice. `frame` was two crates in one coat:
+  mere's workspace identity vocabulary (`GraphId`, `SessionId`, depended on by `crawl` and
+  `session-runtime`, with nothing to do with panes) fused with the pane model. Cut at that seam.
+  **`incipit`** (new, `crates/incipit`, serde + uuid only) holds the ids and stays in mere; it is
+  what lets `crawl` name a graph without depending on `kernel`. **`frisket`** (renamed from
+  `frame`, `crates/shell/frisket`) is the pane model; a frisket is the press frame whose cut-out
+  apertures decide what prints where, and it sits beside `platen` and `forme` in the press
+  anatomy. `frame` was overloaded three ways here (a rendered frame, a `TileFrame`, a window's
+  pane arrangement), which is why it went. `session_runtime::frame_layout_store` became
+  `frisket_store`. Frisket's destination is merecat (its `PaneContent` names panes merecat owns
+  outright, and a library crate enumerating the app's panes is an inversion), but it cannot move
+  while meerkat depends on it, so merecat git-deps it exactly as it already does `fetch` and
+  `session-runtime`, and it relocates at meerkat's deletion with `frisket_store` alongside. Two
+  names deliberately left on disk, to change together in one format migration rather than as two
+  silent breaks: the sidecar is still `frame.json`, and `PaneContent::Orrery` is still `Orrery`.
+  Receipts: frisket 14 tests, incipit 3, session-runtime 188, meerkat compiles green.
