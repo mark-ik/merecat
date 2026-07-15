@@ -193,7 +193,23 @@ Fix two rung-4 bugs in the same slice:
   when it is not. A second node's content stays live while unfocused. The deletion-matrix
   row "Focus and switch between the graph canvas and documents" passes.
 
-### C. The pane tree: adopt `frisket`
+### C. The pane tree: adopt `frisket` — LANDED 2026-07-15 (79cdcbf)
+
+merecat git-deps frisket, holds a `FrisketLayout` in app truth, and drives it
+through the Action spine. `pane.rs` supplies the host-side geometry frisket lacks
+(`place_panes` walks the ratio tree into rects, `path_of` aims the ops).
+`surface::plan(Layout)` became `assemble(base, content, chrome)`: the shell walks
+the tree (Orrery leaf = canvas, others = `Pane(PaneId)` surfaces), content insets
+over the canvas, chrome on top. Actions: SummonPane, CloseActivePane,
+SetActivePaneDivider, ToggleMaximizePane (host view state; frisket has no maximize
+op). SaveSession persists `frame.json` through `frisket_store` and boot restores
+it. Panes render as labeled placeholders (`ui::pane_scene`); real content is slice
+D. Adopted as-is: the three dead variants stay (dropping them is a frisket
+refactor with on-disk-format implications — the "adopt, don't rewrite" line).
+Receipts: 35 unit tests, and two headed runs on one profile (RESULT ok):
+`rung5_panes.scn` (summon/divider-0.7/maximize/close, captures confirm each) and
+`rung5_panes_restore.scn` (fresh process finds the Roster restored from
+frame.json). Original scope below.
 
 Take `frisket` as a direct git dep on mere.git. It is already in merecat's `Cargo.lock`
 transitively through session-runtime; it is merely not nameable, which is why merecat
