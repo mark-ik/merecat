@@ -35,11 +35,16 @@ impl Rect {
         Self::new(0.0, 0.0, w as f32, h as f32)
     }
 
-    /// `[x, y, w, h]`, the shape `netrender::ExternalTexturePlacement::new`
-    /// takes as its `dest_rect`. Keeping the conversion here means the shell
-    /// never hand-builds a placement.
+    /// The `dest_rect` `netrender::ExternalTexturePlacement::new` takes:
+    /// `[x0, y0, x1, y1]` MIN/MAX CORNERS, not `[x, y, w, h]`. The compositor's
+    /// vertex shader reads it as `mix(dest.xy, dest.zw, local)`, interpolating
+    /// the quad between the two corners. Every prior placement in the codebase
+    /// was the full window at the origin, `[0, 0, w, h]`, where corners and
+    /// offset+size happen to coincide; a non-origin rect does not, so this must
+    /// emit corners. Keeping the conversion here means the shell never
+    /// hand-builds a placement and never re-learns this.
     pub fn dest(&self) -> [f32; 4] {
-        [self.x, self.y, self.w, self.h]
+        [self.x, self.y, self.x + self.w, self.y + self.h]
     }
 
     /// Whether a window-space point falls inside this rect. Half-open on the
@@ -376,6 +381,20 @@ mod tests {
             focus_for_press(&plan, FocusTarget::Content(node(5)), 100.0, 400.0),
             FocusTarget::Canvas
         );
+    }
+
+    #[test]
+    fn dest_emits_corners_not_offset_plus_size() {
+        // The compositor reads dest_rect as [x0, y0, x1, y1] corners. A rect at
+        // x=410 width=614 must emit x1=1024, not 614 — the bug that squished the
+        // content pane to a third of its width because [x,y,w,h] was read as
+        // corners. At the origin the two conventions coincide (which is why it
+        // hid), so test a NON-origin rect.
+        let r = Rect::new(410.0, 0.0, 614.0, 600.0);
+        assert_eq!(r.dest(), [410.0, 0.0, 1024.0, 600.0]);
+        // Origin rect: corners and offset+size coincide, as the old full-window
+        // placements relied on.
+        assert_eq!(Rect::full(800, 600).dest(), [0.0, 0.0, 800.0, 600.0]);
     }
 
     #[test]

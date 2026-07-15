@@ -101,11 +101,19 @@ same list. `App` holds `focus`; `observe::Snapshot` reports `surfaces` and
 `focus`; the scenario grammar has `assert surface` / `assert focus`. The rung-4
 occlusion bug is fixed (content is inset, canvas visible beside it). Receipts: 29
 unit tests, and `scenarios/rung5_surfaces.scn` headed with RESULT ok (surfaces=2
-at rest, 3 once content is live). One deferral to slice B: the WHITE content clear
-is transparent on the vello path, so the pane paints narrower than its rect;
-exact fidelity lands with content input. `hit_test` / `focus_for_press` are built
-and tested but not yet wired to pointer events (also slice B). Original scope
-below.
+at rest, 3 once content is live; capture measured at [410,1023], the full pane).
+`hit_test` / `focus_for_press` are built and tested but not yet wired to pointer
+events (slice B). Original scope below.
+
+Follow-up (same day): the first headed capture showed content painting only a
+third of its rect with canvas bleeding through, and the commit wrongly blamed a
+transparent clear on the vello path. It was a placement bug: `ExternalTexturePlacement`'s
+`dest_rect` is `[x0, y0, x1, y1]` corners (the compositor shader reads
+`mix(dest.xy, dest.zw, local)`), and `Rect::dest` emitted `[x, y, w, h]`. Every
+prior placement was the full window at the origin, where the two conventions
+coincide, so slice A was the first non-origin placement to hit it. Fixed in
+`Rect::dest`, pinned by a regression test, re-verified headed. The clear was never
+the problem.
 
 Build the seam the ladder says rung 3 already built. Replace the three hardcoded
 locals and the one shared `full` placement in `Shell::render` with an ordered
