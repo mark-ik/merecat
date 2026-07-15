@@ -90,7 +90,22 @@ renderer half is blocked, and it is blocked outside merecat.
 
 Ordered. Each is independently landable. The toolkit decision comes last on purpose.
 
-### A. The surface plan
+### A. The surface plan — LANDED 2026-07-14 (3f043d9)
+
+The seam exists: `surface.rs` holds `Rect`, `Surface { id, kind, rect }`,
+`SurfaceId` (content folded from the node uuid so a node keeps its id across
+frames), `FocusTarget`, and the pure `plan` / `hit_test` / `focus_for_press`.
+`Shell::render` builds the plan, rasterizes each surface at its rect size keyed
+by its surface id, and composes each at its rect; `capture_composed` composes the
+same list. `App` holds `focus`; `observe::Snapshot` reports `surfaces` and
+`focus`; the scenario grammar has `assert surface` / `assert focus`. The rung-4
+occlusion bug is fixed (content is inset, canvas visible beside it). Receipts: 29
+unit tests, and `scenarios/rung5_surfaces.scn` headed with RESULT ok (surfaces=2
+at rest, 3 once content is live). One deferral to slice B: the WHITE content clear
+is transparent on the vello path, so the pane paints narrower than its rect;
+exact fidelity lands with content input. `hit_test` / `focus_for_press` are built
+and tested but not yet wired to pointer events (also slice B). Original scope
+below.
 
 Build the seam the ladder says rung 3 already built. Replace the three hardcoded
 locals and the one shared `full` placement in `Shell::render` with an ordered
