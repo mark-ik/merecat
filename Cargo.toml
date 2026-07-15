@@ -27,7 +27,7 @@ mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # web lane, consumed as an individual crate from mere's workspace while it
 # still lives there — per the boundary pass, fetch is app-side material that
 # moves into this repo with the port.
-fetch = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Session persistence: the flat single-session `graph.json` beside the data
 # root (session_graph_store's blessed single-session shape). App-side
 # material that moves here with the port, like fetch.
