@@ -1,0 +1,40 @@
+# Rung 5 slice A receipt, self-driven: the surface plan. The old render bound one
+# full-window placement for every layer, so a live content page composited opaque
+# over the whole canvas and there was no surface list or focus target to observe.
+# This drives the seam: open the omnibar (chrome takes focus), commit an address
+# (focus returns to the canvas, a node appears), toggle live content (the content
+# surface joins the plan beside the canvas, which stays visible), and assert the
+# surface list and focus target the shell now reports. Network-dependent by design
+# (the static session loads https through the shell's LocalFetcher); run on a
+# FRESH profile so the script owns the state.
+settle 30
+
+# At rest: canvas only, canvas focused.
+key escape
+assert surface canvas
+assert focus canvas
+
+# Chrome takes focus when the omnibar opens.
+omnibar find
+assert omnibar open
+assert surface chrome
+assert focus chrome
+
+# Committing an address returns focus to the canvas and grows the graph.
+type https://example.com/
+key enter
+settle 40
+assert omnibar closed
+assert focus canvas
+assert visible
+capture 01_node_at_rest
+
+# Toggling live content adds the content surface to the plan. The canvas surface
+# is STILL in the plan (composited beside it, not replaced): the occlusion fix.
+act Toggle live content
+settle 40
+assert content-live
+assert surface content
+assert surface canvas
+capture 02_content_beside_canvas
+log rung 5 slice A self-drive complete

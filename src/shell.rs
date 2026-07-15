@@ -25,7 +25,33 @@ use winit::window::{Window, WindowId};
 
 use crate::action::{Action, CaretMove, Effect, Update};
 use crate::app::App;
+use crate::surface::SurfaceKind;
 use crate::{browse, session};
+
+use netrender::Scene;
+
+/// One surface's scene, produced by render's mutable first pass and consumed by
+/// its immutable rasterization pass. Splitting the two keeps a content session's
+/// mutable borrow off the immutable `host` borrow.
+struct PlannedScene {
+    id: u64,
+    kind: SurfaceKind,
+    placement: ExternalTexturePlacement,
+    dims: (u32, u32),
+    scene: Scene,
+    // Stored as the `Copy` clear color (netrender's `ColorLoad` derives nothing,
+    // so it cannot be moved out of the collected vec); wrapped at the call.
+    clear: wgpu::Color,
+}
+
+/// A rasterized surface ready to compose: its view and where it lands in the
+/// frame. The self-capture path composes the same list, so the receipt is the
+/// presented frame.
+struct CompositeLayer {
+    kind: SurfaceKind,
+    view: wgpu::TextureView,
+    placement: ExternalTexturePlacement,
+}
 
 /// The merecat shell: app state plus the window, present stack, and ports
 /// that drive it.
@@ -201,57 +227,99 @@ impl Shell {
                 PhysicalSize::new(size.0, size.1),
             );
         }
-        let (mut needs_redraw, canvas_scene) = {
-            let (scene, animating) = self.app.canvas.frame(w, h);
-            (animating, scene)
-        };
-        // The focused node's live content session (rung 4/5): pump its clock,
-        // take a frame, and let an unsettled session chain another redraw
-        // (static lanes settle immediately; scripted rungs will not).
-        let mut content_scene = None;
-        let mut content_settled = true;
-        if let Some(session) = self
+        // The surface plan (rung 5 slice A): the ordered list of composited
+        // surfaces, each with its own rect. This replaces the three hardcoded
+        // full-window placements that occluded the canvas.
+        let content_node = self
             .app
             .canvas
             .focused_member()
-            .and_then(|id| self.content_sessions.get_mut(&id))
-        {
-            let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
-            session.pump(now_ms);
-            content_scene = Some(session.frame(w, h));
-            content_settled = session.settled();
-        }
-        if !content_settled {
-            needs_redraw = true;
-        }
+            .filter(|id| self.content_sessions.contains_key(id));
         let caption = crate::app::focused_caption(&self.app.canvas);
-        let chrome_scene = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref())
-            .then(|| crate::ui::chrome_scene(&self.app.omnibar, caption.as_deref(), w, h));
+        let chrome_present =
+            crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref());
+        let surfaces = crate::surface::plan(&crate::surface::Layout {
+            width: w,
+            height: h,
+            content_node,
+            chrome_present,
+            focus: self.app.focus,
+        });
 
+        // Pass 1 (mutable): produce each surface's scene at ITS rect size. Kept
+        // separate from rasterization so pumping a content session (which
+        // borrows `content_sessions` mutably) never overlaps the immutable
+        // `host` borrow the second pass holds.
+        let mut needs_redraw = false;
+        let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
+        let mut scenes: Vec<PlannedScene> = Vec::with_capacity(surfaces.len());
+        for surface in &surfaces {
+            let rect = surface.rect;
+            let (rw, rh) = (rect.w.round().max(1.0) as u32, rect.h.round().max(1.0) as u32);
+            let (scene, clear) = match surface.kind {
+                crate::surface::SurfaceKind::Canvas => {
+                    let (scene, animating) = self.app.canvas.frame(rw, rh);
+                    needs_redraw |= animating;
+                    (scene, wgpu::Color::WHITE)
+                }
+                crate::surface::SurfaceKind::Content(node) => {
+                    let Some(session) = self.content_sessions.get_mut(&node) else {
+                        continue;
+                    };
+                    session.pump(now_ms);
+                    let scene = session.frame(rw, rh);
+                    if !session.settled() {
+                        needs_redraw = true;
+                    }
+                    (scene, wgpu::Color::WHITE)
+                }
+                crate::surface::SurfaceKind::Chrome => {
+                    let scene =
+                        crate::ui::chrome_scene(&self.app.omnibar, caption.as_deref(), rw, rh);
+                    (scene, wgpu::Color::TRANSPARENT)
+                }
+            };
+            scenes.push(PlannedScene {
+                id: surface.id.0,
+                kind: surface.kind,
+                placement: ExternalTexturePlacement::new(rect.dest()),
+                dims: (rw, rh),
+                scene,
+                clear,
+            });
+        }
+
+        // Pass 2 (immutable): rasterize each scene keyed by its surface id (so
+        // an unchanged surface reuses its tile instead of rebuilding every
+        // frame) and compose the layers in order.
         let host = self.host.as_ref().unwrap();
-        let (_tex, canvas_view) =
-            host.rasterize(&canvas_scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE));
-        let content_view = content_scene.as_ref().map(|scene| {
-            host.rasterize(scene, w, h, ColorLoad::Clear(wgpu::Color::WHITE)).1
-        });
-        let chrome_view = chrome_scene.as_ref().map(|scene| {
-            host.rasterize(&scene, w, h, ColorLoad::Clear(wgpu::Color::TRANSPARENT))
-                .1
-        });
+        let layers: Vec<CompositeLayer> = scenes
+            .iter()
+            .map(|s| {
+                let (_tex, view) =
+                    host.core()
+                    .rasterize_for(s.id, &s.scene, s.dims.0, s.dims.1, ColorLoad::Clear(s.clear));
+                CompositeLayer {
+                    kind: s.kind,
+                    view,
+                    placement: s.placement,
+                }
+            })
+            .collect();
+
         let Some(frame) = host.acquire() else { return };
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let full = ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]);
-        host.renderer()
-            .compose_external_texture(&canvas_view, &target, host.format(), w, h, full);
-        if let Some(view) = content_view.as_ref() {
-            host.renderer()
-                .compose_external_texture(view, &target, host.format(), w, h, full);
-        }
-        if let Some(view) = chrome_view.as_ref() {
-            host.renderer()
-                .compose_external_texture(view, &target, host.format(), w, h, full);
+        for layer in &layers {
+            host.renderer().compose_external_texture(
+                &layer.view,
+                &target,
+                host.format(),
+                w,
+                h,
+                layer.placement,
+            );
         }
         frame.present();
 
@@ -265,19 +333,14 @@ impl Shell {
                 open = self.app.omnibar.open,
                 text = %self.app.omnibar.text,
                 suggestions = self.app.omnibar.suggestions.len(),
-                chrome = chrome_view.is_some(),
+                surfaces = layers.len(),
+                chrome = layers
+                    .iter()
+                    .any(|l| matches!(l.kind, crate::surface::SurfaceKind::Chrome)),
                 nodes = self.app.canvas.graph().nodes().count(),
                 "capture state"
             );
-            let ok = capture_composed(
-                host,
-                &canvas_view,
-                content_view.as_ref(),
-                chrome_view.as_ref(),
-                w,
-                h,
-                &path,
-            );
+            let ok = capture_composed(host, &layers, w, h, &path);
             if let Some(scenario) = self.scenario.as_mut() {
                 scenario.note_capture(&path, ok);
             }
@@ -330,17 +393,11 @@ impl Shell {
 
 }
 
-/// Compose the frame's already-rasterized layer views into an owned
-/// `COPY_SRC` target, read the pixels back, and encode a PNG at `path`.
-fn capture_composed(
-    host: &SurfaceHost,
-    canvas_view: &wgpu::TextureView,
-    content_view: Option<&wgpu::TextureView>,
-    chrome_view: Option<&wgpu::TextureView>,
-    w: u32,
-    h: u32,
-    path: &Path,
-) -> bool {
+/// Compose the frame's already-rasterized layers into an owned `COPY_SRC`
+/// target, read the pixels back, and encode a PNG at `path`. Composes the same
+/// layer list, each at its own placement, that the presented frame did, so the
+/// receipt matches what was shown (occlusion and all).
+fn capture_composed(host: &SurfaceHost, layers: &[CompositeLayer], w: u32, h: u32, path: &Path) -> bool {
     let target = host.device().create_texture(&wgpu::TextureDescriptor {
         label: Some("merecat scenario capture"),
         size: wgpu::Extent3d {
@@ -356,33 +413,14 @@ fn capture_composed(
         view_formats: &[],
     });
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let full = ExternalTexturePlacement::new([0.0, 0.0, w as f32, h as f32]);
-    host.renderer().compose_external_texture(
-        canvas_view,
-        &target_view,
-        wgpu::TextureFormat::Rgba8Unorm,
-        w,
-        h,
-        full,
-    );
-    if let Some(view) = content_view {
+    for layer in layers {
         host.renderer().compose_external_texture(
-            view,
+            &layer.view,
             &target_view,
             wgpu::TextureFormat::Rgba8Unorm,
             w,
             h,
-            full,
-        );
-    }
-    if let Some(view) = chrome_view {
-        host.renderer().compose_external_texture(
-            view,
-            &target_view,
-            wgpu::TextureFormat::Rgba8Unorm,
-            w,
-            h,
-            full,
+            layer.placement,
         );
     }
     let rgba = read_texture_rgba(host.device(), host.queue(), &target, w, h);

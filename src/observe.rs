@@ -30,6 +30,15 @@ pub struct Snapshot {
     pub node_count: usize,
     /// Whether at least one node lies inside the viewport.
     pub graph_visible: bool,
+    /// The composited surfaces present this frame, as kind labels in z-order
+    /// (rung 5 slice A). Derived from app truth: canvas is always present,
+    /// content when the focused node is live, chrome when it has content.
+    /// The window size lives in the shell, so this is the surface LIST, not
+    /// pixel rects.
+    pub surfaces: Vec<String>,
+    /// Which surface holds semantic input, as a label ("canvas" / "chrome" /
+    /// "content").
+    pub focus: String,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -103,6 +112,22 @@ pub fn snapshot(app: &App) -> Snapshot {
             Some((n.id, state))
         })
         .collect();
+    // The surface list, derived from app truth (the shell owns the live
+    // sessions and the window size; observe reports what a frame would compose).
+    // Canvas always; content when the focused node is Live; chrome on top when
+    // it has something to show.
+    let mut surfaces = vec!["canvas".to_string()];
+    let focused_live = app
+        .canvas
+        .focused_member()
+        .is_some_and(|m| matches!(app.content.get(m), Some(NodeContent::Live)));
+    if focused_live {
+        surfaces.push("content".to_string());
+    }
+    if crate::ui::chrome_has_content(&app.omnibar, crate::app::focused_caption(&app.canvas).as_deref())
+    {
+        surfaces.push("chrome".to_string());
+    }
     Snapshot {
         focused,
         omnibar: OmnibarView {
@@ -115,6 +140,8 @@ pub fn snapshot(app: &App) -> Snapshot {
         content,
         node_count: app.canvas.graph().nodes().count(),
         graph_visible: app.canvas.graph_visible(),
+        surfaces,
+        focus: app.focus.label().to_string(),
     }
 }
 

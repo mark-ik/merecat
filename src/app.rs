@@ -10,6 +10,7 @@ use mere::canvas::Canvas;
 use crate::action::{Action, Effect, Update};
 use crate::content::ContentStates;
 use crate::observe::AppEvent;
+use crate::surface::FocusTarget;
 use crate::ui::{OmnibarState, Suggestion, normalize_address, recompute_suggestions};
 use crate::{browse, session};
 
@@ -40,6 +41,12 @@ pub struct App {
     /// Per-node content lifecycle (rung 4). Data only: the live session
     /// handles live in the shell's content port, keyed by the same ids.
     pub content: ContentStates,
+    /// Which surface receives semantic input (rung 5 slice A). The explicit
+    /// replacement for the old `omnibar.open` routing boolean: a third surface
+    /// class (panes) joins by adding a `FocusTarget` variant rather than
+    /// threading another bool through the shell. `omnibar.open` stays the
+    /// omnibar's own display state; opening/closing it keeps this in sync.
+    pub focus: FocusTarget,
     /// Semantic events since the last drain (the observation pair's stream
     /// half; the shell drains each frame). Data, like everything else here.
     events: Vec<AppEvent>,
@@ -82,8 +89,10 @@ impl App {
         // discoverable without documentation; a bare relaunch restores the
         // canvas quietly (Ctrl+L / Ctrl+K summon).
         let mut omnibar = OmnibarState::default();
+        let mut focus = FocusTarget::Canvas;
         if first_run {
             omnibar.open = true;
+            focus = FocusTarget::Chrome;
             recompute_suggestions(&mut omnibar, &canvas);
         }
         (
@@ -92,6 +101,7 @@ impl App {
                 omnibar,
                 data_root,
                 content: ContentStates::default(),
+                focus,
                 events: Vec::new(),
             },
             effects,
@@ -180,12 +190,19 @@ impl App {
                     ..OmnibarState::default()
                 };
                 self.omnibar.cursor = self.omnibar.text.len();
+                self.focus = FocusTarget::Chrome;
                 recompute_suggestions(&mut self.omnibar, &self.canvas);
                 self.events.push(AppEvent::OmnibarOpened);
                 vec![Effect::Redraw]
             }
             Action::OmnibarClose => {
                 self.omnibar = OmnibarState::default();
+                // Chrome relinquishes focus back to the canvas. Content focus
+                // is slice B (content takes input); slice A only distinguishes
+                // canvas from chrome.
+                if self.focus == FocusTarget::Chrome {
+                    self.focus = FocusTarget::Canvas;
+                }
                 self.events.push(AppEvent::OmnibarClosed);
                 vec![Effect::Redraw]
             }
@@ -230,6 +247,12 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::OmnibarCommit => {
+                // Commit always ends with the omnibar closed, so chrome hands
+                // focus back to the canvas. (A committed OpenAddress may later
+                // spawn content; routing focus onto it is slice B.)
+                if self.focus == FocusTarget::Chrome {
+                    self.focus = FocusTarget::Canvas;
+                }
                 let committed = self.omnibar.selection().cloned().or_else(|| {
                     normalize_address(self.omnibar.text.trim())
                         .map(|url| Suggestion::Go { url })
@@ -280,6 +303,7 @@ impl App {
             omnibar: OmnibarState::default(),
             data_root: std::env::temp_dir().join("merecat-app-test"),
             content: ContentStates::default(),
+            focus: FocusTarget::Canvas,
             events: Vec::new(),
         }
     }

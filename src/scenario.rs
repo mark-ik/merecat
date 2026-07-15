@@ -27,6 +27,8 @@
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
+//! assert surface <kind>     # a surface of that kind (canvas|content|chrome) is composited
+//! assert focus <kind>       # semantic input goes to that surface kind
 //! assert suggestions ==|>=|<= <n>
 //! assert visible            # at least one node inside the viewport
 //! assert event <substr>     # a semantic event matching <substr> was emitted
@@ -70,6 +72,10 @@ enum Step {
     AssertOmnibar(bool),
     AssertText(String),
     AssertFocused(String),
+    /// A named surface kind ("canvas" / "content" / "chrome") is in the plan.
+    AssertSurface(String),
+    /// The focus target is a named surface kind.
+    AssertFocus(String),
     AssertSuggestions(CmpOp, usize),
     AssertVisible,
     /// The focused node's content lifecycle is Live (the phase-4 receipt's
@@ -241,6 +247,26 @@ impl Scenario {
                 }
                 Tick::Wait
             }
+            Step::AssertSurface(kind) => {
+                let snap = crate::observe::snapshot(app);
+                if !snap.surfaces.iter().any(|s| s == kind) {
+                    self.fail(format!(
+                        "assert surface '{kind}': the plan is {:?}",
+                        snap.surfaces
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertFocus(kind) => {
+                let snap = crate::observe::snapshot(app);
+                if snap.focus != *kind {
+                    self.fail(format!(
+                        "assert focus '{kind}': focus is '{}'",
+                        snap.focus
+                    ));
+                }
+                Tick::Wait
+            }
             Step::AssertSuggestions(op, n) => {
                 let snap = crate::observe::snapshot(app);
                 let len = snap.omnibar.suggestions.len();
@@ -385,6 +411,8 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "text" => Step::AssertText(arg.to_string()),
                     "event" if !arg.is_empty() => Step::AssertEvent(arg.to_string()),
                     "focused" if !arg.is_empty() => Step::AssertFocused(arg.to_string()),
+                    "surface" if !arg.is_empty() => Step::AssertSurface(arg.to_string()),
+                    "focus" if !arg.is_empty() => Step::AssertFocus(arg.to_string()),
                     "suggestions" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)
