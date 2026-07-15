@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
-use inker::{DocumentSession, SessionRegistry, SessionSpawnRequest};
+use inker::{DocumentSession, SessionClick, SessionRegistry, SessionSpawnRequest};
 use genet_documents::{LocalFetcher, StaticSessionEngine};
 use image::ImageEncoder;
 use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
@@ -29,6 +29,17 @@ use crate::surface::SurfaceKind;
 use crate::{browse, session};
 
 use netrender::Scene;
+
+/// The canvas's `PointerButton` for a winit `MouseButton`, or `None` for
+/// buttons the canvas does not handle.
+fn pointer_button(button: MouseButton) -> Option<PointerButton> {
+    match button {
+        MouseButton::Left => Some(PointerButton::Left),
+        MouseButton::Middle => Some(PointerButton::Middle),
+        MouseButton::Right => Some(PointerButton::Right),
+        _ => None,
+    }
+}
 
 /// One surface's scene, produced by render's mutable first pass and consumed by
 /// its immutable rasterization pass. Splitting the two keeps a content session's
@@ -91,6 +102,11 @@ pub struct Shell {
     /// In-flight fetch correlation: which node asked for each URL, noted
     /// before commanding the actor, reattached by the adapter on completion.
     pending_fetches: browse::PendingFetches,
+    /// The surface a pointer press landed on, held until release (rung 5 slice
+    /// B). Pointer routing captures on press so a press-drag-release stays with
+    /// one surface: the canvas needs paired `pointer_down`/`pointer_up`, and a
+    /// content click must not leak its release to the canvas beneath.
+    pointer_capture: Option<crate::surface::SurfaceKind>,
 }
 
 impl Shell {
@@ -129,6 +145,7 @@ impl Shell {
             route_policy: mere::routing::route_policy(),
             epoch: std::time::Instant::now(),
             pending_fetches: browse::PendingFetches::default(),
+            pointer_capture: None,
         };
         shell.run_effects(boot_effects);
         shell
@@ -205,6 +222,106 @@ impl Shell {
         }
     }
 
+    /// The current surface plan, from app truth plus the window size. The one
+    /// place render and input agree on which surfaces exist and where, so a
+    /// pointer always hits exactly what the last frame drew.
+    fn surface_plan(&self) -> Vec<crate::surface::Surface> {
+        let content_node = self
+            .app
+            .canvas
+            .focused_member()
+            .filter(|id| self.content_sessions.contains_key(id));
+        let caption = crate::app::focused_caption(&self.app.canvas);
+        let chrome_present = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref());
+        crate::surface::plan(&crate::surface::Layout {
+            width: self.width.max(1),
+            height: self.height.max(1),
+            content_node,
+            chrome_present,
+            focus: self.app.focus,
+        })
+    }
+
+    /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
+    /// page scrolls when the pointer is on it, the canvas pans when it is not.
+    /// Ephemeral, so it drives the session's semantic method directly (the
+    /// gesture law), never an Action. Shared by winit and the scenario runner.
+    fn deliver_wheel(&mut self, x: f32, y: f32, dx: f32, dy: f32) {
+        let plan = self.surface_plan();
+        if let Some(hit) = crate::surface::hit_test(&plan, self.app.focus, x, y)
+            && let crate::surface::SurfaceKind::Content(node) = hit.kind
+            && let Some(session) = self.content_sessions.get_mut(&node)
+        {
+            if session.scroll_at(hit.local.0, hit.local.1, dx, dy) {
+                self.request_redraw();
+            }
+            return;
+        }
+        if self.app.canvas.wheel(dx, dy) {
+            self.request_redraw();
+        }
+    }
+
+    /// Route a pointer press to the surface under `(x, y)` and capture it until
+    /// release (rung 5 slice B). A press on content focuses it and delivers the
+    /// click: a link resolves to a durable navigation and goes through
+    /// `Action::OpenAddress`, growing the graph; a press on the canvas begins a
+    /// canvas gesture. Shared by winit and the scenario runner.
+    fn deliver_press(&mut self, x: f32, y: f32, button: MouseButton) {
+        // A press while the omnibar is open dismisses it and is swallowed, so
+        // the surface beneath never also reacts to the same press.
+        if self.app.omnibar.open {
+            self.act(Action::OmnibarClose);
+            self.pointer_capture = None;
+            return;
+        }
+        let plan = self.surface_plan();
+        let hit = crate::surface::hit_test(&plan, self.app.focus, x, y);
+        self.pointer_capture = hit.map(|h| h.kind);
+        if let Some(hit) = hit
+            && let crate::surface::SurfaceKind::Content(node) = hit.kind
+        {
+            self.app.focus = crate::surface::FocusTarget::Content(node);
+            if button == MouseButton::Left
+                && let Some(session) = self.content_sessions.get_mut(&node)
+                && let SessionClick::Navigate(url) = session.click_at(hit.local.0, hit.local.1)
+            {
+                self.act(Action::OpenAddress(url));
+            }
+            self.request_redraw();
+            return;
+        }
+        // Any surviving hit is the canvas (content returned above; chrome is
+        // unreachable — an open omnibar was handled above). Pressing it focuses
+        // it and begins the canvas gesture.
+        if hit.is_some() {
+            self.app.focus = crate::surface::FocusTarget::Canvas;
+            if let Some(button) = pointer_button(button)
+                && self.app.canvas.pointer_down(button, x, y)
+            {
+                self.request_redraw();
+            }
+        }
+    }
+
+    /// Route a pointer release to whatever the matching press captured (rung 5
+    /// slice B). The canvas gets a release only if its own press began the
+    /// gesture, so a content click never ends a canvas drag. Shared by winit
+    /// and the scenario runner.
+    fn deliver_release(&mut self, x: f32, y: f32, button: MouseButton) {
+        let to_canvas = matches!(
+            self.pointer_capture,
+            Some(crate::surface::SurfaceKind::Canvas)
+        );
+        self.pointer_capture = None;
+        if to_canvas
+            && let Some(button) = pointer_button(button)
+            && self.app.canvas.pointer_up(button, x, y)
+        {
+            self.request_redraw();
+        }
+    }
+
     /// The layered present (born minimal at rung 3, grows into the surface
     /// plan at rung 5): rasterize each surface's scene to its own texture and
     /// compose them in order onto the frame — the canvas below, the chrome
@@ -228,30 +345,29 @@ impl Shell {
             );
         }
         // The surface plan (rung 5 slice A): the ordered list of composited
-        // surfaces, each with its own rect. This replaces the three hardcoded
-        // full-window placements that occluded the canvas.
-        let content_node = self
-            .app
-            .canvas
-            .focused_member()
-            .filter(|id| self.content_sessions.contains_key(id));
+        // surfaces, each with its own rect. Built by the same helper input
+        // routing uses, so what a frame draws and what a pointer hits agree.
+        let surfaces = self.surface_plan();
         let caption = crate::app::focused_caption(&self.app.canvas);
-        let chrome_present =
-            crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref());
-        let surfaces = crate::surface::plan(&crate::surface::Layout {
-            width: w,
-            height: h,
-            content_node,
-            chrome_present,
-            focus: self.app.focus,
-        });
+
+        // Bug #2 (rung-4 debt): keep EVERY live session's clock advancing, not
+        // just the framed one. Before this, a session lost focus and stopped
+        // pumping, so `Live` was a lie for every non-focused node. Pumping is
+        // cheap for the settled static lane and correct for future animated
+        // ones; only the framed surface is rasterized below.
+        let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
+        let mut needs_redraw = false;
+        for session in self.content_sessions.values_mut() {
+            session.pump(now_ms);
+            if !session.settled() {
+                needs_redraw = true;
+            }
+        }
 
         // Pass 1 (mutable): produce each surface's scene at ITS rect size. Kept
-        // separate from rasterization so pumping a content session (which
+        // separate from rasterization so framing a content session (which
         // borrows `content_sessions` mutably) never overlaps the immutable
         // `host` borrow the second pass holds.
-        let mut needs_redraw = false;
-        let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
         let mut scenes: Vec<PlannedScene> = Vec::with_capacity(surfaces.len());
         for surface in &surfaces {
             let rect = surface.rect;
@@ -266,11 +382,8 @@ impl Shell {
                     let Some(session) = self.content_sessions.get_mut(&node) else {
                         continue;
                     };
-                    session.pump(now_ms);
+                    // Already pumped above; just frame it at the pane size.
                     let scene = session.frame(rw, rh);
-                    if !session.settled() {
-                        needs_redraw = true;
-                    }
                     (scene, wgpu::Color::WHITE)
                 }
                 crate::surface::SurfaceKind::Chrome => {
@@ -375,6 +488,17 @@ impl Shell {
                 for action in actions {
                     self.act(action);
                 }
+                self.request_redraw();
+            }
+            // Pointer ticks drive the SAME surface-routed path winit does (one
+            // description, two runners): a synthetic click is a press+release.
+            crate::scenario::Tick::Click { x, y } => {
+                self.deliver_press(x, y, MouseButton::Left);
+                self.deliver_release(x, y, MouseButton::Left);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::Scroll { x, y, dx, dy } => {
+                self.deliver_wheel(x, y, dx, dy);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),
@@ -602,39 +726,20 @@ impl ApplicationHandler for Shell {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // Lines-to-pixels: the canvas pan scale doubles as the content
+                // scroll scale (both want ~40px per wheel line).
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (x * WHEEL_PAN_SCALE, y * WHEEL_PAN_SCALE),
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
                 };
-                if self.app.canvas.wheel(dx, dy) {
-                    self.request_redraw();
-                }
+                let (cx, cy) = self.cursor;
+                self.deliver_wheel(cx, cy, dx, dy);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                // Click-away: a press while the omnibar is open dismisses it
-                // and is swallowed (the palette has focus; the canvas should
-                // not also react to the same press).
-                if self.app.omnibar.open {
-                    if state == ElementState::Pressed {
-                        self.act(Action::OmnibarClose);
-                    }
-                    return;
-                }
-                let button = match button {
-                    MouseButton::Left => Some(PointerButton::Left),
-                    MouseButton::Middle => Some(PointerButton::Middle),
-                    MouseButton::Right => Some(PointerButton::Right),
-                    _ => None,
-                };
-                if let Some(button) = button {
-                    let (x, y) = self.cursor;
-                    let redraw = match state {
-                        ElementState::Pressed => self.app.canvas.pointer_down(button, x, y),
-                        ElementState::Released => self.app.canvas.pointer_up(button, x, y),
-                    };
-                    if redraw {
-                        self.request_redraw();
-                    }
+                let (x, y) = self.cursor;
+                match state {
+                    ElementState::Pressed => self.deliver_press(x, y, button),
+                    ElementState::Released => self.deliver_release(x, y, button),
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {

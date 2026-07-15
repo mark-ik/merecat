@@ -24,6 +24,8 @@
 //! insert <text>             # Action::OmnibarInsert (the IME-commit path)
 //! key enter|escape|backspace|delete|up|down|left|right|home|end
 //! act <palette label>       # commit a palette_actions() entry by label
+//! click <x> <y>             # pointer click at window px (content links, canvas)
+//! scroll <x> <y> <dy>       # wheel at window px (page scroll / canvas pan)
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -67,6 +69,12 @@ enum Step {
     Insert(String),
     Key(EditKey),
     Act(String),
+    /// A pointer press+release at window pixel coordinates (rung 5 slice B).
+    /// Drives the same surface-routed path winit does; a click on content
+    /// resolves links, a click on the canvas is a canvas gesture.
+    Click(f32, f32),
+    /// A wheel event at window pixel coordinates: content scrolls, canvas pans.
+    Scroll(f32, f32, f32, f32),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
@@ -112,6 +120,11 @@ enum CmpOp {
 pub enum Tick {
     /// Lower these actions through the spine, then keep pumping frames.
     Act(Vec<Action>),
+    /// A pointer click at window coordinates, routed through the shell's shared
+    /// surface path (the shell owns the sessions the scenario cannot see).
+    Click { x: f32, y: f32 },
+    /// A wheel event at window coordinates, routed the same way.
+    Scroll { x: f32, y: f32, dx: f32, dy: f32 },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -214,6 +227,13 @@ impl Scenario {
                 self.settle = *frames;
                 Tick::Wait
             }
+            Step::Click(x, y) => Tick::Click { x: *x, y: *y },
+            Step::Scroll(x, y, dx, dy) => Tick::Scroll {
+                x: *x,
+                y: *y,
+                dx: *dx,
+                dy: *dy,
+            },
             Step::Capture(name) => Tick::Capture(self.out_dir.join(format!("{name}.png"))),
             // Asserts read the observation surface — the same snapshot the
             // a11y/automation lanes consume — never app fields directly.
@@ -356,6 +376,14 @@ impl Scenario {
     }
 }
 
+/// Parse "`<x> <y>`" into a pair of f32 window coordinates.
+fn parse_xy(s: &str) -> Option<(f32, f32)> {
+    let mut it = s.split_whitespace();
+    let x = it.next()?.parse().ok()?;
+    let y = it.next()?.parse().ok()?;
+    Some((x, y))
+}
+
 fn parse(body: &str) -> Result<Vec<Step>, String> {
     let mut steps = Vec::new();
     for (i, raw) in body.lines().enumerate() {
@@ -398,6 +426,22 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
             } else {
                 rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
             }),
+            "click" => {
+                let (x, y) = parse_xy(rest).ok_or_else(|| {
+                    format!("line {}: click wants '<x> <y>': '{line}'", i + 1)
+                })?;
+                Step::Click(x, y)
+            }
+            "scroll" => {
+                let mut it = rest.split_whitespace();
+                let vals: Vec<f32> = it.by_ref().filter_map(|t| t.parse().ok()).collect();
+                match vals.as_slice() {
+                    // `scroll <x> <y> <dy>` (horizontal delta defaults to 0).
+                    [x, y, dy] => Step::Scroll(*x, *y, 0.0, *dy),
+                    [x, y, dx, dy] => Step::Scroll(*x, *y, *dx, *dy),
+                    _ => return err("scroll wants '<x> <y> <dy>' or '<x> <y> <dx> <dy>'"),
+                }
+            }
             "capture" if !rest.is_empty() => Step::Capture(rest.to_string()),
             "assert" => {
                 let (what, arg) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
@@ -471,6 +515,10 @@ mod tests {
                     sc.note_events(&app.take_events());
                 }
                 Tick::Wait => {}
+                // Pointer ticks route through the shell's surface plan + live
+                // sessions, which this App-only driver has not got; the headed
+                // scenario exercises them. No-op here.
+                Tick::Click { .. } | Tick::Scroll { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }

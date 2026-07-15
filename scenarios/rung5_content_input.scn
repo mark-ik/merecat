@@ -1,0 +1,38 @@
+# Rung 5 slice B receipt, self-driven: content gets input. The surface plan
+# (slice A) routes pointer and wheel to the surface under the cursor; a click on
+# a live page's link resolves to a durable navigation and grows the graph, while
+# a wheel over the page scrolls it. Ephemeral pointer/wheel bypass Action (the
+# gesture law); the link navigation surfaces as Action::OpenAddress. The pointer
+# ticks drive the SAME shell path winit does (one description, two runners).
+# Network-dependent by design (loads example.com, then follows its link to
+# iana.org); run on a FRESH profile so the script owns the state.
+settle 30
+key escape
+
+# Open example.com and make its content live (slice A ground).
+open https://example.com/
+settle 40
+assert visible
+act Toggle live content
+settle 40
+assert content-live
+assert surface content
+
+# Scroll the page: the wheel is over the content pane (window x=573 is inside the
+# right-hand content rect), so the page scrolls rather than the canvas panning.
+# No occlusion regression: the surface list is unchanged by scrolling.
+scroll 573 300 -120
+settle 10
+assert surface content
+assert surface canvas
+capture 01_content_scrolled
+
+# Click example.com's "More information" link, measured at window (573, 238) in
+# the content pane (example.com is the canonical stable test domain). The click
+# routes to the content surface, resolves to a Navigate, and lowers through
+# Action::OpenAddress, so a new iana.org node joins the graph and takes focus.
+click 573 238
+settle 50
+assert focused iana
+capture 02_followed_link
+log rung 5 slice B self-drive complete
