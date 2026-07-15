@@ -1,0 +1,144 @@
+//! The Trail pane's rows: real recent + history rows off graph truth, with the
+//! host affordances a click lowers. Rung 5 slice D — the first non-canvas pane
+//! with real content.
+//!
+//! `mere::trail` is the neutral vocabulary (`TrailInput` in, `TrailItem` out, on
+//! the P8 pattern); this host half gathers the inputs from the canvas graph and
+//! maps the items onto rows the pane renders and a click acts on. meerkat maps
+//! its Row items inert; merecat makes them navigable, attaching the full url each
+//! row came from (the neutral `Row` item carries only display text). Recover rows
+//! carry a node id and await the deletion log (rung 6); until then the graph has
+//! no removed nodes, so no Recover rows appear.
+
+use mere::trail::{TrailInput, TrailItem, build_trail_items};
+
+use crate::app::App;
+
+/// How the pane renders a row and what a click on it does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    /// A section header ("Recent" / "This node" / "Removed"). Inert.
+    Title,
+    /// A muted empty-state hint. Inert.
+    Muted,
+    /// A visited url; a click navigates to it (through `Action::OpenAddress`).
+    Navigate(String),
+    /// A removed node's recovery row, keyed by node id. Awaits the deletion log.
+    Recover(String),
+}
+
+/// One Trail row: its display text and the affordance behind it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrailRow {
+    pub text: String,
+    pub action: RowAction,
+}
+
+/// Fixed row geometry, shared by the renderer (row y-positions) and the click
+/// router (window-y to row index) so a pointer hits exactly the row it looks at.
+pub const ROW_HEIGHT: f32 = 26.0;
+/// Top inset before the first row.
+pub const TOP_INSET: f32 = 8.0;
+
+/// Gather the Trail pane's rows from the canvas graph: the graph-wide
+/// recently-visited urls, then the focused node's own url history. Pure over the
+/// app's read-only graph.
+pub fn trail_rows(app: &App) -> Vec<TrailRow> {
+    let graph = app.canvas.graph();
+    let recent: Vec<String> = graph
+        .recent_visited(8)
+        .into_iter()
+        .map(|rv| rv.url)
+        .collect();
+    let history: Vec<String> = app
+        .canvas
+        .focused_member()
+        .and_then(|m| graph.get_node_by_id(m).map(|(key, _)| key))
+        .map(|key| graph.node_history_projection(key).entries)
+        .unwrap_or_default();
+
+    let items = build_trail_items(&TrailInput {
+        recent_urls: recent.clone(),
+        history_urls: history.clone(),
+        removed: Vec::new(),
+    });
+
+    // Attach the full url to each Row for navigation. build_trail_items emits the
+    // Recent rows then the This-node rows, each in input order, so consuming the
+    // two url lists in step recovers the target the neutral `Row` item dropped.
+    let mut recent_it = recent.into_iter();
+    let mut history_it = history.into_iter();
+    let mut in_history = false;
+    items
+        .into_iter()
+        .map(|item| match item {
+            TrailItem::SectionTitle(title) => {
+                in_history = title == "This node";
+                TrailRow {
+                    text: title.to_string(),
+                    action: RowAction::Title,
+                }
+            }
+            TrailItem::MutedRow(text) => TrailRow {
+                text: text.to_string(),
+                action: RowAction::Muted,
+            },
+            TrailItem::Row(text) => {
+                let url = if in_history {
+                    history_it.next()
+                } else {
+                    recent_it.next()
+                };
+                TrailRow {
+                    text,
+                    action: url.map(RowAction::Navigate).unwrap_or(RowAction::Muted),
+                }
+            }
+            TrailItem::Recover { text, node_id } => TrailRow {
+                text,
+                action: RowAction::Recover(node_id),
+            },
+        })
+        .collect()
+}
+
+/// The row a point at pane-local `y` falls on, or `None` above the first row or
+/// below the last. Mirrors the renderer's fixed geometry.
+pub fn row_at(rows: &[TrailRow], local_y: f32) -> Option<usize> {
+    if local_y < TOP_INSET {
+        return None;
+    }
+    let idx = ((local_y - TOP_INSET) / ROW_HEIGHT).floor() as usize;
+    (idx < rows.len()).then_some(idx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_at_maps_local_y_to_the_right_row() {
+        let rows = vec![
+            TrailRow {
+                text: "Recent".into(),
+                action: RowAction::Title,
+            },
+            TrailRow {
+                text: "a".into(),
+                action: RowAction::Navigate("https://a/".into()),
+            },
+            TrailRow {
+                text: "b".into(),
+                action: RowAction::Navigate("https://b/".into()),
+            },
+        ];
+        // Above the first row: nothing.
+        assert_eq!(row_at(&rows, 2.0), None);
+        // The title row.
+        assert_eq!(row_at(&rows, TOP_INSET + 1.0), Some(0));
+        // The second data row.
+        assert_eq!(row_at(&rows, TOP_INSET + ROW_HEIGHT * 2.0 + 1.0), Some(2));
+        // Below the last row: nothing.
+        assert_eq!(row_at(&rows, TOP_INSET + ROW_HEIGHT * 5.0), None);
+    }
+}

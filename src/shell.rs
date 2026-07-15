@@ -275,13 +275,19 @@ impl Shell {
         crate::surface::assemble(&base, content, chrome)
     }
 
-    /// A pane's display label, looked up from the frisket tree by id.
-    fn pane_label(&self, id: frisket::PaneId) -> String {
+    /// A pane's `PaneContent`, looked up from the frisket tree by id.
+    fn pane_content(&self, id: frisket::PaneId) -> Option<PaneContent> {
         self.app
             .frisket
             .iter_leaves()
             .find(|(pid, _, _)| *pid == id)
-            .map(|(_, content, _)| pane_display_label(content))
+            .map(|(_, content, _)| content.clone())
+    }
+
+    /// A pane's display label, looked up from the frisket tree by id.
+    fn pane_label(&self, id: frisket::PaneId) -> String {
+        self.pane_content(id)
+            .map(|content| pane_display_label(&content))
             .unwrap_or_default()
     }
 
@@ -336,10 +342,23 @@ impl Shell {
                     return;
                 }
                 // A press on a pane makes it the active pane (the anchor for
-                // close/maximize/divider), and is swallowed — slice C panes are
-                // placeholders with no interior interaction.
+                // close/maximize/divider). A Trail pane also routes the click to
+                // its row (slice D): a navigable row lowers Action::OpenAddress
+                // through the same spine as a keypress. Other panes are still
+                // placeholders (slice C), so the press is otherwise swallowed.
                 crate::surface::SurfaceKind::Pane(id) => {
                     self.app.active_pane = Some(id);
+                    if button == MouseButton::Left
+                        && matches!(self.pane_content(id), Some(PaneContent::Trail))
+                    {
+                        let rows = crate::trail_view::trail_rows(&self.app);
+                        if let Some(idx) = crate::trail_view::row_at(&rows, hit.local.1)
+                            && let crate::trail_view::RowAction::Navigate(url) = &rows[idx].action
+                        {
+                            let url = url.clone();
+                            self.act(Action::OpenAddress(url));
+                        }
+                    }
                     self.request_redraw();
                     return;
                 }
@@ -440,10 +459,15 @@ impl Shell {
                     (scene, wgpu::Color::WHITE)
                 }
                 crate::surface::SurfaceKind::Pane(id) => {
-                    // A placeholder panel with the pane's label (slice C); real
-                    // pane content is slice D. Opaque panel, so a transparent
-                    // clear is fine — the panel fills the rect.
-                    let scene = crate::ui::pane_scene(&self.pane_label(id), rw, rh);
+                    // Trail renders real rows off graph truth (slice D); the
+                    // other kinds are still labeled placeholders (slice C).
+                    // Opaque panel, so a transparent clear is fine.
+                    let scene = match self.pane_content(id) {
+                        Some(PaneContent::Trail) => {
+                            crate::ui::trail_scene(&crate::trail_view::trail_rows(&self.app), rw, rh)
+                        }
+                        _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
+                    };
                     (scene, wgpu::Color::TRANSPARENT)
                 }
                 crate::surface::SurfaceKind::Chrome => {

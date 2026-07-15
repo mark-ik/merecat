@@ -236,7 +236,17 @@ const CHROME_SHEET: &str = "\
                 border: 1px solid rgb(52, 62, 86); white-space: nowrap; } \
     .pane { position: absolute; background-color: rgb(22, 27, 40); } \
     .pane-label { position: absolute; color: rgb(190, 198, 214); \
-                  font-size: 14px; padding: 10px 14px; white-space: nowrap; }";
+                  font-size: 14px; padding: 10px 14px; white-space: nowrap; } \
+    .trail-title { position: absolute; color: rgb(150, 160, 180); \
+                   font-size: 12px; padding: 4px 14px; white-space: nowrap; } \
+    .trail-row { position: absolute; color: rgb(210, 216, 230); \
+                 font-size: 13px; padding: 4px 18px; white-space: nowrap; \
+                 overflow: hidden; } \
+    .trail-nav { position: absolute; color: rgb(150, 190, 250); \
+                 font-size: 13px; padding: 4px 18px; white-space: nowrap; \
+                 overflow: hidden; } \
+    .trail-muted { position: absolute; color: rgb(120, 128, 145); \
+                   font-size: 13px; padding: 4px 18px; white-space: nowrap; }";
 
 /// Where the omnibar caret roughly sits on screen, as `(position, size)` in
 /// physical px — for the host to aim the IME candidate window
@@ -364,6 +374,44 @@ pub fn pane_scene(label: &str, w: u32, h: u32) -> netrender::Scene {
     let text = dom.create_text(label);
     dom.append_child(name, text);
     dom.append_child(root, name);
+
+    finish_scene(&dom, w, h)
+}
+
+/// The Trail pane (rung 5 slice D): its rows rendered as a panel of absolutely
+/// positioned rows at the fixed geometry the click router shares, so a pointer
+/// hits exactly the row it sees. Navigable rows read in a link color; muted
+/// hints and section titles are dimmed. Built on the same `ScriptedDom` +
+/// genet-layout path the chrome runs.
+pub fn trail_scene(rows: &[crate::trail_view::TrailRow], w: u32, h: u32) -> netrender::Scene {
+    use crate::trail_view::{ROW_HEIGHT, RowAction, TOP_INSET};
+
+    let mut dom = ScriptedDom::new();
+    let root = dom.document();
+
+    let panel = dom.create_element(qual("div"));
+    dom.set_attribute(panel, qual("class"), "pane");
+    dom.set_attribute(
+        panel,
+        qual("style"),
+        &format!("transform: translate(0px, 0px); width: {w}px; height: {h}px;"),
+    );
+    dom.append_child(root, panel);
+
+    for (i, row) in rows.iter().enumerate() {
+        let y = TOP_INSET + i as f32 * ROW_HEIGHT;
+        let class = match row.action {
+            RowAction::Title => "trail-title",
+            RowAction::Muted => "trail-muted",
+            RowAction::Navigate(_) | RowAction::Recover(_) => "trail-nav",
+        };
+        let el = dom.create_element(qual("div"));
+        dom.set_attribute(el, qual("class"), class);
+        dom.set_attribute(el, qual("style"), &format!("transform: translate(0px, {y}px);"));
+        let text = dom.create_text(&row.text);
+        dom.append_child(el, text);
+        dom.append_child(root, el);
+    }
 
     finish_scene(&dom, w, h)
 }

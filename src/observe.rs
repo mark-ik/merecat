@@ -47,6 +47,9 @@ pub struct Snapshot {
     pub active_pane: Option<String>,
     /// Whether a pane is maximized.
     pub maximized: bool,
+    /// When a Trail pane is in the tree, its row texts (rung 5 slice D), so a
+    /// scenario can assert a row's content. Empty when no Trail pane is open.
+    pub trail_rows: Vec<String>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -179,6 +182,17 @@ pub fn snapshot(app: &App) -> Snapshot {
                 .map(|(_, content, _)| content.tag().to_string())
         }),
         maximized: app.maximized.is_some(),
+        trail_rows: app
+            .frisket
+            .iter_leaves()
+            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Trail))
+            .then(|| {
+                crate::trail_view::trail_rows(app)
+                    .into_iter()
+                    .map(|r| r.text)
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

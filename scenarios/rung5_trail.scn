@@ -1,0 +1,37 @@
+# Rung 5 slice D receipt, self-driven: the first non-canvas pane with real
+# content. The Trail pane lists real recently-visited rows off graph truth (the
+# graph's navigation history, recorded when each address is opened), and a click
+# on a row lowers Action::OpenAddress through the same spine as a keypress. The
+# rows come from mere::trail (the neutral vocabulary); the host attaches the full
+# url each navigable row navigates to. Network-dependent (opens example.com then
+# example.org); run on a FRESH profile so this run owns the state.
+settle 30
+key escape
+
+# Visit two pages: each mints a node and records a visit, so the graph's
+# recent-visited history has both, newest first.
+open https://example.com/
+settle 30
+open https://example.org/
+settle 30
+
+# Open the Trail pane. It renders real rows off the graph: a "Recent" section
+# with the two visited urls.
+act Open Trail pane
+settle 5
+assert pane trail
+assert surface pane
+# The rows are real: both visited urls appear (short_url strips the scheme).
+assert row example.com
+assert row example.org
+capture 01_trail_rows
+
+# Click the example.com row. The Trail pane is the right half (summon Right-split
+# off the Orrery at 0.5, so x>=512); "Recent" is row 0, example.org row 1,
+# example.com row 2. Row y = 8 + index*26, so example.com sits at y=60. The click
+# routes to the row, lowers Action::OpenAddress, and focuses that node.
+click 600 60
+settle 30
+assert focused example.com
+capture 02_row_followed
+log rung 5 slice D self-drive complete

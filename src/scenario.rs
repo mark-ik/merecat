@@ -29,6 +29,7 @@
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
 //! assert pane <tag>         # a pane with that PaneContent tag is in the tree
 //! assert maximized | not-maximized
+//! assert row <substr>       # a Trail pane row's text contains substr
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -91,6 +92,8 @@ enum Step {
     AssertPane(String),
     /// Whether a pane is maximized.
     AssertMaximized(bool),
+    /// A Trail pane row's text contains this substring.
+    AssertRow(String),
     /// Set the active pane's divider ratio (drag the seam).
     Divider(f32),
     AssertSuggestions(CmpOp, usize),
@@ -314,6 +317,16 @@ impl Scenario {
                 }
                 Tick::Wait
             }
+            Step::AssertRow(substr) => {
+                let snap = crate::observe::snapshot(app);
+                if !snap.trail_rows.iter().any(|r| r.contains(substr)) {
+                    self.fail(format!(
+                        "assert row '{substr}': the Trail rows are {:?}",
+                        snap.trail_rows
+                    ));
+                }
+                Tick::Wait
+            }
             Step::Divider(ratio) => {
                 Tick::Act(vec![Action::SetActivePaneDivider(*ratio)])
             }
@@ -496,6 +509,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "pane" if !arg.is_empty() => Step::AssertPane(arg.to_string()),
                     "maximized" => Step::AssertMaximized(true),
                     "not-maximized" => Step::AssertMaximized(false),
+                    "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "suggestions" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)

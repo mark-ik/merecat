@@ -34,6 +34,7 @@ mod scenario;
 mod session;
 mod shell;
 mod surface;
+mod trail_view;
 mod ui;
 
 use winit::event_loop::EventLoop;
