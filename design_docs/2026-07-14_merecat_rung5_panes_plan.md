@@ -251,7 +251,22 @@ on the way over is legitimate, but it is a named step, not a silent one.
   session-runtime already ships (`PaneNode::Leaf` even carries `#[serde(default)] graph_id`
   to keep pre-graph_id layouts loadable, so the format already has a migration history).
 
-### D. The first non-canvas panes, on the DOM path rung 3 proved
+### D. The first non-canvas panes, on the DOM path rung 3 proved — TRAIL LANDED 2026-07-15 (caa55fb)
+
+The Trail pane renders real content. `trail_view.rs` gathers rows from the canvas
+graph (`recent_visited` + `node_history_projection`) through
+`mere::trail::build_trail_items`, re-attaching the full url each navigable row
+navigates to. `ui::trail_scene` renders them on the chrome's ScriptedDom path;
+the render Pane arm dispatches on PaneContent (Trail real, others placeholder); a
+left click routes through the shared surface path to the row under it and lowers
+`Action::OpenAddress`. Fixed row geometry is shared by renderer and click router
+(`row_at` unit-tested). observe reports `trail_rows`; the grammar gains `assert
+row <substr>`. Receipts: 36 unit tests, and `rung5_trail.scn` headed (RESULT ok):
+opens two pages, opens Trail, asserts both urls appear as real rows, clicks the
+example.com row and lands on it (`assert focused example.com`). Recover rows await
+the deletion log (rung 6) — no removed nodes yet, so none appear; the arm is
+wired. **Still to do in this slice: roster, then inspector, then gloss** (the
+dependency-weight order below). Original scope follows.
 
 Render a pane's content as a `ScriptedDom` subtree laid out by genet-layout into a paint
 list and composited at its surface rect. That is exactly the path `ui::chrome_scene`
