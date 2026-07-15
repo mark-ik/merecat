@@ -405,28 +405,10 @@ pub fn trail_scene(rows: &[crate::trail_view::TrailRow], w: u32, h: u32) -> netr
     finish_scene(&dom, w, h)
 }
 
-/// The Roster pane (rung 5 slice D): the graph's node manifest as rows —
-/// content-bucketed section headers and node rows in a link color, the selected
-/// node highlighted. A click on a node row navigates to it. Same ScriptedDom
-/// path and shared row geometry as the Trail pane.
-pub fn roster_scene(rows: &[crate::roster_view::RosterViewRow], w: u32, h: u32) -> netrender::Scene {
-    use crate::roster_view::RosterRowAction;
-
-    let mut dom = ScriptedDom::new();
-    let root = dom.document();
-    pane_panel(&mut dom, root, w, h);
-
-    for (i, row) in rows.iter().enumerate() {
-        let class = match row.action {
-            RosterRowAction::Header => "trail-title",
-            RosterRowAction::Node(_) if row.selected => "trail-sel",
-            RosterRowAction::Node(_) => "trail-nav",
-        };
-        pane_row(&mut dom, root, class, &row.text, crate::pane_rows::row_y(i));
-    }
-
-    finish_scene(&dom, w, h)
-}
+// The Roster pane renders as a cambium `data_grid` (rung 5 slice D toolkit
+// adoption; see `crate::cambium_pane`), so the hand-DOM `roster_scene` that
+// mirrored the Trail list is retired. Trail is still hand-DOM until it migrates
+// onto cambium too.
 
 /// The full-size panel background a list pane draws its rows over.
 fn pane_panel(dom: &mut ScriptedDom, root: DomNodeId, w: u32, h: u32) {
@@ -451,7 +433,16 @@ fn pane_row(dom: &mut ScriptedDom, root: DomNodeId, class: &str, text: &str, y: 
 }
 
 fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
-    let layout = IncrementalLayout::new(dom, &[CHROME_SHEET], w as f32, h as f32);
+    scene_from_dom(dom, CHROME_SHEET, w, h)
+}
+
+/// Lay out a `ScriptedDom` under `sheet` and composite its paint list into a
+/// scene — the genet-layout path the chrome runs, generalized over the sheet so
+/// a cambium-built DOM (rung 5 slice D toolkit adoption) renders the same way,
+/// under its own class stylesheet. Text-only DOM; custom-paint leaves (the Gloss
+/// swatch) inject through the leaf registry, a follow-on.
+pub fn scene_from_dom(dom: &ScriptedDom, sheet: &str, w: u32, h: u32) -> netrender::Scene {
+    let layout = IncrementalLayout::new(dom, &[sheet], w as f32, h as f32);
     let scroll = ScrollOffsets::<DomNodeId>::default();
     let viewport = DeviceIntSize::new(w as i32, h as i32);
     let plist = layout.emit_paint_list(dom, &scroll, viewport);
@@ -462,6 +453,26 @@ fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
     }];
     composite_paint_layers(viewport, &layers).scene
 }
+
+/// The host stylesheet for cambium's classes (rung 5 slice D). cambium ships no
+/// sheet — it names classes a host themes. This styles the data grid (Roster's
+/// home): a sticky header over zebra rows, the selected row highlighted. Geometry
+/// (row/column placement) rides inline styles cambium emits; this is only color,
+/// type, and the panel fill.
+pub const CAMBIUM_SHEET: &str = "\
+    .grid { position: absolute; background-color: rgb(22, 27, 40); \
+            color: rgb(210, 216, 230); font-size: 13px; } \
+    .grid-header { position: absolute; background-color: rgb(28, 34, 50); } \
+    .grid-header-cell { position: absolute; color: rgb(150, 160, 180); \
+                        font-size: 12px; padding: 6px 10px; white-space: nowrap; \
+                        overflow: hidden; } \
+    .grid-body { position: absolute; } \
+    .grid-row { position: absolute; } \
+    .grid-row-odd { background-color: rgb(25, 30, 44); } \
+    .grid-row-sel { background-color: rgb(232, 150, 40); } \
+    .grid-cell { position: absolute; color: rgb(200, 208, 224); \
+                 padding: 5px 10px; white-space: nowrap; overflow: hidden; } \
+    .grid-row-sel .grid-cell { color: rgb(28, 22, 10); }";
 
 fn qual(local: &str) -> QualName {
     QualName::new(None, Namespace::from(""), LocalName::from(local))

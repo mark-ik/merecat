@@ -27,6 +27,7 @@
 mod action;
 mod app;
 mod browse;
+mod cambium_pane;
 mod content;
 mod observe;
 mod pane;

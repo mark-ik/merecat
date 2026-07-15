@@ -513,7 +513,7 @@ impl Shell {
                             crate::ui::trail_scene(&crate::trail_view::trail_rows(&self.app), rw, rh)
                         }
                         Some(PaneContent::Roster) => {
-                            crate::ui::roster_scene(&crate::roster_view::roster_rows(&self.app), rw, rh)
+                            crate::cambium_pane::roster_grid_scene(&self.app, rw, rh)
                         }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };

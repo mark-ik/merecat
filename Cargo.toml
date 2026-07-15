@@ -71,6 +71,14 @@ url = "2.5"
 # Rasterize + composite the canvas Scene through the shared present stack.
 netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+# The view toolkit (rung 5 slice D, the toolkit adoption): cambium (the xilem
+# fork) + sprigging (its custom-paint leaves, incl. the data_grid and GraphCanvas
+# a Roster grid and a Gloss minimap swatch need). Git dep on cambium.git so the
+# gitignored local patch applies, like genet. Rung 3's hand-built ScriptedDom
+# chrome migrates onto this over time; panes that need a grid or a paint leaf
+# adopt it first.
+cambium = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
+sprigging = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
 # Pins match mere's workspace so the shared subtrees unify.
 winit = "0.30.13"
 # PNG encode for the scenario lane's GPU self-capture (composed-frame
