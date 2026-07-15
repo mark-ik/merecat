@@ -1,0 +1,36 @@
+# Rung 5 slice D receipt (Roster): the graph's node manifest as a pane. The
+# Roster lists every node off graph truth, content-bucketed, the focused node
+# highlighted; a click on a node row lowers Action::OpenAddress and lands on it.
+# Rows come from mere::roster (build_node_rows); RosterRow carries the url, so the
+# host attaches navigation directly. Network-dependent (opens example.com so a
+# real titled node appears among the sample graph); FRESH profile.
+settle 30
+key escape
+
+# Open example.com so a node with a real title ("Example Domain") joins the
+# sample graph.
+open https://example.com/
+settle 30
+
+# Open the Roster pane: it lists the graph's nodes.
+act Open Roster pane
+settle 5
+assert pane roster
+assert surface pane
+# Real rows off graph truth: the example.com node's title appears, and so do the
+# sample graph's "node" rows.
+assert row Example Domain
+assert row node
+capture 01_roster_rows
+
+# Move focus off example.com first (open a different page), so clicking the
+# Example Domain row is a real re-navigation we can assert.
+open https://example.org/
+settle 30
+# Click the Example Domain row by name (the shell resolves its position). It
+# lowers Action::OpenAddress and focuses that node.
+click-row Example Domain
+settle 20
+assert focused example.com
+capture 02_roster_row_followed
+log rung 5 slice D (Roster) self-drive complete

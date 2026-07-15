@@ -291,6 +291,38 @@ impl Shell {
             .unwrap_or_default()
     }
 
+    /// Click the list-pane (Trail/Roster) row whose text contains `substr`
+    /// (scenario `click-row`). The shell owns the pane rects and rows, so it
+    /// resolves the row's window position and delivers a real click through the
+    /// shared pointer path — a receipt names a row by text, not pixels.
+    fn click_pane_row(&mut self, substr: &str) {
+        let plan = self.surface_plan();
+        for surface in &plan {
+            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
+                continue;
+            };
+            let texts: Vec<String> = match self.pane_content(id) {
+                Some(PaneContent::Trail) => crate::trail_view::trail_rows(&self.app)
+                    .into_iter()
+                    .map(|r| r.text)
+                    .collect(),
+                Some(PaneContent::Roster) => crate::roster_view::roster_rows(&self.app)
+                    .into_iter()
+                    .map(|r| r.text)
+                    .collect(),
+                _ => continue,
+            };
+            if let Some(idx) = texts.iter().position(|t| t.contains(substr)) {
+                let x = surface.rect.x + 20.0;
+                let y = surface.rect.y + crate::pane_rows::row_y(idx) + crate::pane_rows::ROW_HEIGHT / 2.0;
+                self.deliver_press(x, y, MouseButton::Left);
+                self.deliver_release(x, y, MouseButton::Left);
+                return;
+            }
+        }
+        tracing::warn!(%substr, "click-row: no list-pane row matched");
+    }
+
     /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
     /// page scrolls when the pointer is on it, the canvas pans when it is not.
     /// Ephemeral, so it drives the session's semantic method directly (the
@@ -348,15 +380,29 @@ impl Shell {
                 // placeholders (slice C), so the press is otherwise swallowed.
                 crate::surface::SurfaceKind::Pane(id) => {
                     self.app.active_pane = Some(id);
-                    if button == MouseButton::Left
-                        && matches!(self.pane_content(id), Some(PaneContent::Trail))
-                    {
-                        let rows = crate::trail_view::trail_rows(&self.app);
-                        if let Some(idx) = crate::trail_view::row_at(&rows, hit.local.1)
-                            && let crate::trail_view::RowAction::Navigate(url) = &rows[idx].action
-                        {
-                            let url = url.clone();
-                            self.act(Action::OpenAddress(url));
+                    if button == MouseButton::Left {
+                        match self.pane_content(id) {
+                            Some(PaneContent::Trail) => {
+                                let rows = crate::trail_view::trail_rows(&self.app);
+                                if let Some(idx) = crate::trail_view::row_at(&rows, hit.local.1)
+                                    && let crate::trail_view::RowAction::Navigate(url) =
+                                        &rows[idx].action
+                                {
+                                    let url = url.clone();
+                                    self.act(Action::OpenAddress(url));
+                                }
+                            }
+                            Some(PaneContent::Roster) => {
+                                let rows = crate::roster_view::roster_rows(&self.app);
+                                if let Some(idx) = crate::roster_view::row_at(&rows, hit.local.1)
+                                    && let crate::roster_view::RosterRowAction::Node(url) =
+                                        &rows[idx].action
+                                {
+                                    let url = url.clone();
+                                    self.act(Action::OpenAddress(url));
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     self.request_redraw();
@@ -465,6 +511,9 @@ impl Shell {
                     let scene = match self.pane_content(id) {
                         Some(PaneContent::Trail) => {
                             crate::ui::trail_scene(&crate::trail_view::trail_rows(&self.app), rw, rh)
+                        }
+                        Some(PaneContent::Roster) => {
+                            crate::ui::roster_scene(&crate::roster_view::roster_rows(&self.app), rw, rh)
                         }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };
@@ -583,6 +632,10 @@ impl Shell {
             }
             crate::scenario::Tick::Scroll { x, y, dx, dy } => {
                 self.deliver_wheel(x, y, dx, dy);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::ClickRow { substr } => {
+                self.click_pane_row(&substr);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),

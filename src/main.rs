@@ -30,6 +30,8 @@ mod browse;
 mod content;
 mod observe;
 mod pane;
+mod pane_rows;
+mod roster_view;
 mod scenario;
 mod session;
 mod shell;

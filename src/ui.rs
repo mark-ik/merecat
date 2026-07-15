@@ -246,7 +246,10 @@ const CHROME_SHEET: &str = "\
                  font-size: 13px; padding: 4px 18px; white-space: nowrap; \
                  overflow: hidden; } \
     .trail-muted { position: absolute; color: rgb(120, 128, 145); \
-                   font-size: 13px; padding: 4px 18px; white-space: nowrap; }";
+                   font-size: 13px; padding: 4px 18px; white-space: nowrap; } \
+    .trail-sel { position: absolute; color: rgb(28, 22, 10); font-size: 13px; \
+                 padding: 4px 18px; white-space: nowrap; overflow: hidden; \
+                 background-color: rgb(232, 150, 40); border-radius: 6px; }";
 
 /// Where the omnibar caret roughly sits on screen, as `(position, size)` in
 /// physical px — for the host to aim the IME candidate window
@@ -384,11 +387,49 @@ pub fn pane_scene(label: &str, w: u32, h: u32) -> netrender::Scene {
 /// hints and section titles are dimmed. Built on the same `ScriptedDom` +
 /// genet-layout path the chrome runs.
 pub fn trail_scene(rows: &[crate::trail_view::TrailRow], w: u32, h: u32) -> netrender::Scene {
-    use crate::trail_view::{ROW_HEIGHT, RowAction, TOP_INSET};
+    use crate::trail_view::RowAction;
 
     let mut dom = ScriptedDom::new();
     let root = dom.document();
+    pane_panel(&mut dom, root, w, h);
 
+    for (i, row) in rows.iter().enumerate() {
+        let class = match row.action {
+            RowAction::Title => "trail-title",
+            RowAction::Muted => "trail-muted",
+            RowAction::Navigate(_) | RowAction::Recover(_) => "trail-nav",
+        };
+        pane_row(&mut dom, root, class, &row.text, crate::pane_rows::row_y(i));
+    }
+
+    finish_scene(&dom, w, h)
+}
+
+/// The Roster pane (rung 5 slice D): the graph's node manifest as rows —
+/// content-bucketed section headers and node rows in a link color, the selected
+/// node highlighted. A click on a node row navigates to it. Same ScriptedDom
+/// path and shared row geometry as the Trail pane.
+pub fn roster_scene(rows: &[crate::roster_view::RosterViewRow], w: u32, h: u32) -> netrender::Scene {
+    use crate::roster_view::RosterRowAction;
+
+    let mut dom = ScriptedDom::new();
+    let root = dom.document();
+    pane_panel(&mut dom, root, w, h);
+
+    for (i, row) in rows.iter().enumerate() {
+        let class = match row.action {
+            RosterRowAction::Header => "trail-title",
+            RosterRowAction::Node(_) if row.selected => "trail-sel",
+            RosterRowAction::Node(_) => "trail-nav",
+        };
+        pane_row(&mut dom, root, class, &row.text, crate::pane_rows::row_y(i));
+    }
+
+    finish_scene(&dom, w, h)
+}
+
+/// The full-size panel background a list pane draws its rows over.
+fn pane_panel(dom: &mut ScriptedDom, root: DomNodeId, w: u32, h: u32) {
     let panel = dom.create_element(qual("div"));
     dom.set_attribute(panel, qual("class"), "pane");
     dom.set_attribute(
@@ -397,23 +438,16 @@ pub fn trail_scene(rows: &[crate::trail_view::TrailRow], w: u32, h: u32) -> netr
         &format!("transform: translate(0px, 0px); width: {w}px; height: {h}px;"),
     );
     dom.append_child(root, panel);
+}
 
-    for (i, row) in rows.iter().enumerate() {
-        let y = TOP_INSET + i as f32 * ROW_HEIGHT;
-        let class = match row.action {
-            RowAction::Title => "trail-title",
-            RowAction::Muted => "trail-muted",
-            RowAction::Navigate(_) | RowAction::Recover(_) => "trail-nav",
-        };
-        let el = dom.create_element(qual("div"));
-        dom.set_attribute(el, qual("class"), class);
-        dom.set_attribute(el, qual("style"), &format!("transform: translate(0px, {y}px);"));
-        let text = dom.create_text(&row.text);
-        dom.append_child(el, text);
-        dom.append_child(root, el);
-    }
-
-    finish_scene(&dom, w, h)
+/// One absolutely-positioned list-pane row at `y`.
+fn pane_row(dom: &mut ScriptedDom, root: DomNodeId, class: &str, text: &str, y: f32) {
+    let el = dom.create_element(qual("div"));
+    dom.set_attribute(el, qual("class"), class);
+    dom.set_attribute(el, qual("style"), &format!("transform: translate(0px, {y}px);"));
+    let node = dom.create_text(text);
+    dom.append_child(el, node);
+    dom.append_child(root, el);
 }
 
 fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {

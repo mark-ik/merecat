@@ -34,12 +34,6 @@ pub struct TrailRow {
     pub action: RowAction,
 }
 
-/// Fixed row geometry, shared by the renderer (row y-positions) and the click
-/// router (window-y to row index) so a pointer hits exactly the row it looks at.
-pub const ROW_HEIGHT: f32 = 26.0;
-/// Top inset before the first row.
-pub const TOP_INSET: f32 = 8.0;
-
 /// Gather the Trail pane's rows from the canvas graph: the graph-wide
 /// recently-visited urls, then the focused node's own url history. Pure over the
 /// app's read-only graph.
@@ -102,43 +96,8 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
         .collect()
 }
 
-/// The row a point at pane-local `y` falls on, or `None` above the first row or
-/// below the last. Mirrors the renderer's fixed geometry.
+/// The row a point at pane-local `y` falls on. Delegates to the shared row
+/// geometry (`pane_rows`).
 pub fn row_at(rows: &[TrailRow], local_y: f32) -> Option<usize> {
-    if local_y < TOP_INSET {
-        return None;
-    }
-    let idx = ((local_y - TOP_INSET) / ROW_HEIGHT).floor() as usize;
-    (idx < rows.len()).then_some(idx)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn row_at_maps_local_y_to_the_right_row() {
-        let rows = vec![
-            TrailRow {
-                text: "Recent".into(),
-                action: RowAction::Title,
-            },
-            TrailRow {
-                text: "a".into(),
-                action: RowAction::Navigate("https://a/".into()),
-            },
-            TrailRow {
-                text: "b".into(),
-                action: RowAction::Navigate("https://b/".into()),
-            },
-        ];
-        // Above the first row: nothing.
-        assert_eq!(row_at(&rows, 2.0), None);
-        // The title row.
-        assert_eq!(row_at(&rows, TOP_INSET + 1.0), Some(0));
-        // The second data row.
-        assert_eq!(row_at(&rows, TOP_INSET + ROW_HEIGHT * 2.0 + 1.0), Some(2));
-        // Below the last row: nothing.
-        assert_eq!(row_at(&rows, TOP_INSET + ROW_HEIGHT * 5.0), None);
-    }
+    crate::pane_rows::row_index_at(rows.len(), local_y)
 }

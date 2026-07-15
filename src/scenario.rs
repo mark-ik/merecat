@@ -25,6 +25,7 @@
 //! key enter|escape|backspace|delete|up|down|left|right|home|end
 //! act <palette label>       # commit a palette_actions() entry by label
 //! click <x> <y>             # pointer click at window px (content links, canvas)
+//! click-row <substr>       # click the list-pane row whose text contains substr
 //! scroll <x> <y> <dy>       # wheel at window px (page scroll / canvas pan)
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
 //! assert pane <tag>         # a pane with that PaneContent tag is in the tree
@@ -79,6 +80,10 @@ enum Step {
     Click(f32, f32),
     /// A wheel event at window pixel coordinates: content scrolls, canvas pans.
     Scroll(f32, f32, f32, f32),
+    /// Click the list-pane (Trail/Roster) row whose text contains this substring.
+    /// The shell resolves the row's window position (it owns the pane rects and
+    /// rows), so the receipt names a row by text, not pixels.
+    ClickRow(String),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
@@ -137,6 +142,8 @@ pub enum Tick {
     Click { x: f32, y: f32 },
     /// A wheel event at window coordinates, routed the same way.
     Scroll { x: f32, y: f32, dx: f32, dy: f32 },
+    /// Click the list-pane row containing this substring; the shell resolves it.
+    ClickRow { substr: String },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -240,6 +247,9 @@ impl Scenario {
                 Tick::Wait
             }
             Step::Click(x, y) => Tick::Click { x: *x, y: *y },
+            Step::ClickRow(substr) => Tick::ClickRow {
+                substr: substr.clone(),
+            },
             Step::Scroll(x, y, dx, dy) => Tick::Scroll {
                 x: *x,
                 y: *y,
@@ -319,10 +329,15 @@ impl Scenario {
             }
             Step::AssertRow(substr) => {
                 let snap = crate::observe::snapshot(app);
-                if !snap.trail_rows.iter().any(|r| r.contains(substr)) {
+                let hit = snap
+                    .trail_rows
+                    .iter()
+                    .chain(snap.roster_rows.iter())
+                    .any(|r| r.contains(substr));
+                if !hit {
                     self.fail(format!(
-                        "assert row '{substr}': the Trail rows are {:?}",
-                        snap.trail_rows
+                        "assert row '{substr}': trail {:?} roster {:?}",
+                        snap.trail_rows, snap.roster_rows
                     ));
                 }
                 Tick::Wait
@@ -469,6 +484,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
             } else {
                 rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
             }),
+            "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
             "click" => {
                 let (x, y) = parse_xy(rest).ok_or_else(|| {
                     format!("line {}: click wants '<x> <y>': '{line}'", i + 1)
@@ -571,7 +587,7 @@ mod tests {
                 // Pointer ticks route through the shell's surface plan + live
                 // sessions, which this App-only driver has not got; the headed
                 // scenario exercises them. No-op here.
-                Tick::Click { .. } | Tick::Scroll { .. } => {}
+                Tick::Click { .. } | Tick::Scroll { .. } | Tick::ClickRow { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }
