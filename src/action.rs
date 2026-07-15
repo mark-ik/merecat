@@ -63,6 +63,48 @@ pub enum Action {
     /// Commit the highlighted suggestion (or literal-go on address-shaped
     /// text with nothing highlighted).
     OmnibarCommit,
+    /// Summon a pane beside the active one, splitting the frisket tree (rung 5
+    /// slice C). Meerkat's fixed Right-split off the graph pane, generalized to
+    /// the active pane.
+    SummonPane(PaneKind),
+    /// Close the active pane, collapsing its split back into its sibling.
+    CloseActivePane,
+    /// Set the divider ratio of the active pane's split (drag the seam). Clamped
+    /// by the geometry walker so neither side collapses.
+    SetActivePaneDivider(f32),
+    /// Toggle maximize on the active pane (a host view state; frisket has no
+    /// maximize op). A maximized pane takes the whole pane area.
+    ToggleMaximizePane,
+}
+
+/// A summonable pane kind. A small Copy vocabulary the app maps to
+/// `frisket::PaneContent`, so this module stays free of the pane-model crate
+/// (like the port-agnostic boundary above). Slice C summons placeholders; slice
+/// D gives each real content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneKind {
+    Roster,
+    Trail,
+    Gloss,
+    Inspector,
+    Steward,
+    Comms,
+    Apparatus,
+}
+
+impl PaneKind {
+    /// The pane's display label (placeholder text and accessible name).
+    pub fn label(self) -> &'static str {
+        match self {
+            PaneKind::Roster => "Roster",
+            PaneKind::Trail => "Trail",
+            PaneKind::Gloss => "Gloss",
+            PaneKind::Inspector => "Inspector",
+            PaneKind::Steward => "Steward",
+            PaneKind::Comms => "Comms",
+            PaneKind::Apparatus => "Apparatus",
+        }
+    }
 }
 
 /// A caret movement within the omnibar's single line.
@@ -87,6 +129,11 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Orbit right", Action::OrbitBy(0.15)),
         ("Toggle live content", Action::ToggleNodeContent),
         ("Save session", Action::SaveSession),
+        ("Open Roster pane", Action::SummonPane(PaneKind::Roster)),
+        ("Open Trail pane", Action::SummonPane(PaneKind::Trail)),
+        ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
+        ("Close pane", Action::CloseActivePane),
+        ("Maximize pane", Action::ToggleMaximizePane),
     ]
 }
 

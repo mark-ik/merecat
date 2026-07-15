@@ -26,6 +26,9 @@
 //! act <palette label>       # commit a palette_actions() entry by label
 //! click <x> <y>             # pointer click at window px (content links, canvas)
 //! scroll <x> <y> <dy>       # wheel at window px (page scroll / canvas pan)
+//! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
+//! assert pane <tag>         # a pane with that PaneContent tag is in the tree
+//! assert maximized | not-maximized
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -80,10 +83,16 @@ enum Step {
     AssertOmnibar(bool),
     AssertText(String),
     AssertFocused(String),
-    /// A named surface kind ("canvas" / "content" / "chrome") is in the plan.
+    /// A named surface kind ("canvas" / "content" / "chrome" / "pane") is in the plan.
     AssertSurface(String),
     /// The focus target is a named surface kind.
     AssertFocus(String),
+    /// A pane with the given `PaneContent` tag is in the frisket tree.
+    AssertPane(String),
+    /// Whether a pane is maximized.
+    AssertMaximized(bool),
+    /// Set the active pane's divider ratio (drag the seam).
+    Divider(f32),
     AssertSuggestions(CmpOp, usize),
     AssertVisible,
     /// The focused node's content lifecycle is Live (the phase-4 receipt's
@@ -287,6 +296,27 @@ impl Scenario {
                 }
                 Tick::Wait
             }
+            Step::AssertPane(tag) => {
+                let snap = crate::observe::snapshot(app);
+                if !snap.panes.iter().any(|p| p == tag) {
+                    self.fail(format!(
+                        "assert pane '{tag}': the tree holds {:?}",
+                        snap.panes
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertMaximized(want) => {
+                let snap = crate::observe::snapshot(app);
+                if snap.maximized != *want {
+                    let state = if *want { "maximized" } else { "not maximized" };
+                    self.fail(format!("assert {state}: it is not"));
+                }
+                Tick::Wait
+            }
+            Step::Divider(ratio) => {
+                Tick::Act(vec![Action::SetActivePaneDivider(*ratio)])
+            }
             Step::AssertSuggestions(op, n) => {
                 let snap = crate::observe::snapshot(app);
                 let len = snap.omnibar.suggestions.len();
@@ -442,6 +472,12 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     _ => return err("scroll wants '<x> <y> <dy>' or '<x> <y> <dx> <dy>'"),
                 }
             }
+            "divider" => {
+                let ratio = rest
+                    .parse()
+                    .map_err(|_| format!("line {}: divider wants a ratio: '{line}'", i + 1))?;
+                Step::Divider(ratio)
+            }
             "capture" if !rest.is_empty() => Step::Capture(rest.to_string()),
             "assert" => {
                 let (what, arg) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
@@ -457,6 +493,9 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "focused" if !arg.is_empty() => Step::AssertFocused(arg.to_string()),
                     "surface" if !arg.is_empty() => Step::AssertSurface(arg.to_string()),
                     "focus" if !arg.is_empty() => Step::AssertFocus(arg.to_string()),
+                    "pane" if !arg.is_empty() => Step::AssertPane(arg.to_string()),
+                    "maximized" => Step::AssertMaximized(true),
+                    "not-maximized" => Step::AssertMaximized(false),
                     "suggestions" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)

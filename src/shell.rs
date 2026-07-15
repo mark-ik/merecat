@@ -23,12 +23,26 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
+use frisket::PaneContent;
+
 use crate::action::{Action, CaretMove, Effect, Update};
 use crate::app::App;
-use crate::surface::SurfaceKind;
+use crate::surface::{Rect, SurfaceKind};
 use crate::{browse, session};
 
 use netrender::Scene;
+
+/// A pane's placeholder display label from its `PaneContent`. Title-cased tag
+/// (the tags are single lowercase words); slice D replaces the placeholder with
+/// the pane's real content.
+fn pane_display_label(content: &PaneContent) -> String {
+    let tag = content.tag();
+    let mut chars = tag.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
 
 /// The canvas's `PointerButton` for a winit `MouseButton`, or `None` for
 /// buttons the canvas does not handle.
@@ -174,7 +188,10 @@ impl Shell {
             }
             match effect {
                 Effect::SaveSession => {
-                    session::save_session_graph(&self.app.data_root, self.app.canvas.graph())
+                    session::save_session_graph(&self.app.data_root, self.app.canvas.graph());
+                    // The pane layout persists to frame.json alongside the graph
+                    // (rung 5 slice C), so summon/close/divider survive a restart.
+                    session::save_frisket_layout(&self.app.data_root, &self.app.frisket);
                 }
                 // The content port (rung 4, live since genet-documents
                 // landed): route the address to an engine id, spawn through
@@ -224,22 +241,48 @@ impl Shell {
 
     /// The current surface plan, from app truth plus the window size. The one
     /// place render and input agree on which surfaces exist and where, so a
-    /// pointer always hits exactly what the last frame drew.
+    /// pointer always hits exactly what the last frame drew. The base layer is
+    /// the frisket pane tree (rung 5 slice C): the Orrery leaf is the canvas,
+    /// every other leaf a pane. Content insets over the canvas; chrome sits on
+    /// top.
     fn surface_plan(&self) -> Vec<crate::surface::Surface> {
-        let content_node = self
-            .app
-            .canvas
-            .focused_member()
-            .filter(|id| self.content_sessions.contains_key(id));
+        let area = Rect::full(self.width.max(1), self.height.max(1));
+        let placements = crate::pane::place_panes(&self.app.frisket, area, self.app.maximized);
+        let mut canvas_rect = None;
+        let base: Vec<(SurfaceKind, Rect)> = placements
+            .iter()
+            .map(|p| {
+                if matches!(p.content, PaneContent::Orrery) {
+                    canvas_rect = Some(p.rect);
+                    (SurfaceKind::Canvas, p.rect)
+                } else {
+                    (SurfaceKind::Pane(p.id), p.rect)
+                }
+            })
+            .collect();
+        // Content overlays the canvas pane (when it is shown); a live node's
+        // document insets within the graph, not over a maximized pane.
+        let content = canvas_rect.and_then(|cr| {
+            self.app
+                .canvas
+                .focused_member()
+                .filter(|id| self.content_sessions.contains_key(id))
+                .map(|node| (node, crate::surface::content_rect(cr)))
+        });
         let caption = crate::app::focused_caption(&self.app.canvas);
-        let chrome_present = crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref());
-        crate::surface::plan(&crate::surface::Layout {
-            width: self.width.max(1),
-            height: self.height.max(1),
-            content_node,
-            chrome_present,
-            focus: self.app.focus,
-        })
+        let chrome =
+            crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref()).then_some(area);
+        crate::surface::assemble(&base, content, chrome)
+    }
+
+    /// A pane's display label, looked up from the frisket tree by id.
+    fn pane_label(&self, id: frisket::PaneId) -> String {
+        self.app
+            .frisket
+            .iter_leaves()
+            .find(|(pid, _, _)| *pid == id)
+            .map(|(_, content, _)| pane_display_label(content))
+            .unwrap_or_default()
     }
 
     /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
@@ -278,28 +321,38 @@ impl Shell {
         let plan = self.surface_plan();
         let hit = crate::surface::hit_test(&plan, self.app.focus, x, y);
         self.pointer_capture = hit.map(|h| h.kind);
-        if let Some(hit) = hit
-            && let crate::surface::SurfaceKind::Content(node) = hit.kind
-        {
-            self.app.focus = crate::surface::FocusTarget::Content(node);
-            if button == MouseButton::Left
-                && let Some(session) = self.content_sessions.get_mut(&node)
-                && let SessionClick::Navigate(url) = session.click_at(hit.local.0, hit.local.1)
-            {
-                self.act(Action::OpenAddress(url));
-            }
-            self.request_redraw();
-            return;
-        }
-        // Any surviving hit is the canvas (content returned above; chrome is
-        // unreachable — an open omnibar was handled above). Pressing it focuses
-        // it and begins the canvas gesture.
-        if hit.is_some() {
-            self.app.focus = crate::surface::FocusTarget::Canvas;
-            if let Some(button) = pointer_button(button)
-                && self.app.canvas.pointer_down(button, x, y)
-            {
-                self.request_redraw();
+        if let Some(hit) = hit {
+            match hit.kind {
+                crate::surface::SurfaceKind::Content(node) => {
+                    self.app.focus = crate::surface::FocusTarget::Content(node);
+                    if button == MouseButton::Left
+                        && let Some(session) = self.content_sessions.get_mut(&node)
+                        && let SessionClick::Navigate(url) =
+                            session.click_at(hit.local.0, hit.local.1)
+                    {
+                        self.act(Action::OpenAddress(url));
+                    }
+                    self.request_redraw();
+                    return;
+                }
+                // A press on a pane makes it the active pane (the anchor for
+                // close/maximize/divider), and is swallowed — slice C panes are
+                // placeholders with no interior interaction.
+                crate::surface::SurfaceKind::Pane(id) => {
+                    self.app.active_pane = Some(id);
+                    self.request_redraw();
+                    return;
+                }
+                // The canvas (chrome is unreachable — an open omnibar was handled
+                // above). Pressing it focuses it and begins the canvas gesture.
+                crate::surface::SurfaceKind::Canvas | crate::surface::SurfaceKind::Chrome => {
+                    self.app.focus = crate::surface::FocusTarget::Canvas;
+                    if let Some(button) = pointer_button(button)
+                        && self.app.canvas.pointer_down(button, x, y)
+                    {
+                        self.request_redraw();
+                    }
+                }
             }
         }
     }
@@ -385,6 +438,13 @@ impl Shell {
                     // Already pumped above; just frame it at the pane size.
                     let scene = session.frame(rw, rh);
                     (scene, wgpu::Color::WHITE)
+                }
+                crate::surface::SurfaceKind::Pane(id) => {
+                    // A placeholder panel with the pane's label (slice C); real
+                    // pane content is slice D. Opaque panel, so a transparent
+                    // clear is fine — the panel fills the rect.
+                    let scene = crate::ui::pane_scene(&self.pane_label(id), rw, rh);
+                    (scene, wgpu::Color::TRANSPARENT)
                 }
                 crate::surface::SurfaceKind::Chrome => {
                     let scene =

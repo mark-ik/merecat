@@ -29,6 +29,7 @@ mod app;
 mod browse;
 mod content;
 mod observe;
+mod pane;
 mod scenario;
 mod session;
 mod shell;

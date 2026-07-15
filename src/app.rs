@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use mere::canvas::Canvas;
 
-use crate::action::{Action, Effect, Update};
+use frisket::{FrisketLayout, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
+
+use crate::action::{Action, Effect, PaneKind, Update};
 use crate::content::ContentStates;
 use crate::observe::AppEvent;
 use crate::surface::FocusTarget;
@@ -24,6 +26,22 @@ pub fn focused_caption(canvas: &Canvas) -> Option<String> {
     match node.cached_host.as_deref() {
         Some(host) if !label.contains(host) => Some(format!("{label}  \u{00b7}  {host}")),
         _ => Some(label),
+    }
+}
+
+/// The `frisket::PaneContent` a summonable `PaneKind` maps to. The mapping
+/// lives here (not in `action`) so the vocabulary module stays free of the
+/// pane-model crate. Slice C summons these as placeholders; slice D gives each
+/// its real content.
+fn pane_content(kind: PaneKind) -> PaneContent {
+    match kind {
+        PaneKind::Roster => PaneContent::Roster,
+        PaneKind::Trail => PaneContent::Trail,
+        PaneKind::Gloss => PaneContent::Gloss,
+        PaneKind::Inspector => PaneContent::Inspector,
+        PaneKind::Steward => PaneContent::Steward,
+        PaneKind::Comms => PaneContent::Comms,
+        PaneKind::Apparatus => PaneContent::Apparatus,
     }
 }
 
@@ -47,6 +65,19 @@ pub struct App {
     /// threading another bool through the shell. `omnibar.open` stays the
     /// omnibar's own display state; opening/closing it keeps this in sync.
     pub focus: FocusTarget,
+    /// The pane tree (rung 5 slice C): frisket's split tree of `PaneContent`
+    /// leaves. The Orrery leaf is the graph canvas; summoning a pane splits it.
+    /// Persisted to `frame.json` through the session port.
+    pub frisket: FrisketLayout,
+    /// The active pane — the anchor a summon splits from and a close removes.
+    /// `None` means the canvas (the Orrery leaf).
+    pub active_pane: Option<PaneId>,
+    /// A maximized pane takes the whole pane area (a host view state; frisket
+    /// has no maximize op). Not persisted; resets on restart.
+    pub maximized: Option<PaneId>,
+    /// Next pane id to mint. Kept above every id in the layout so a summon after
+    /// a restore never collides with a persisted pane.
+    next_pane_id: u64,
     /// Semantic events since the last drain (the observation pair's stream
     /// half; the shell drains each frame). Data, like everything else here.
     events: Vec<AppEvent>,
@@ -95,6 +126,11 @@ impl App {
             focus = FocusTarget::Chrome;
             recompute_suggestions(&mut omnibar, &canvas);
         }
+        // Restore the pane layout (rung 5 slice C), else start on the default
+        // single-pane (Orrery) tree. `next_pane_id` clears every restored id so a
+        // later summon cannot collide with a persisted pane.
+        let frisket = session::load_frisket_layout(&data_root).unwrap_or_default();
+        let next_pane_id = frisket.iter_leaves().map(|(id, _, _)| id.0).max().unwrap_or(0) + 1;
         (
             Self {
                 canvas,
@@ -102,6 +138,10 @@ impl App {
                 data_root,
                 content: ContentStates::default(),
                 focus,
+                frisket,
+                active_pane: None,
+                maximized: None,
+                next_pane_id,
                 events: Vec::new(),
             },
             effects,
@@ -293,6 +333,77 @@ impl App {
                 effects.push(Effect::Redraw);
                 effects
             }
+            // Pane tree ops (rung 5 slice C). Each mutates the frisket layout and
+            // persists it (SaveSession writes frame.json), so the arrangement
+            // survives a restart. Maximize is view state, not persisted.
+            Action::SummonPane(kind) => {
+                let content = pane_content(kind);
+                let id = PaneId(self.next_pane_id);
+                // Anchor on the active pane, else the Orrery (graph) leaf —
+                // meerkat's fixed Right-split off the graph pane, generalized.
+                let anchor = self.active_pane.or_else(|| {
+                    self.frisket
+                        .iter_leaves()
+                        .find(|(_, c, _)| matches!(c, PaneContent::Orrery))
+                        .map(|(id, _, _)| id)
+                });
+                let anchor_path = anchor
+                    .and_then(|a| crate::pane::path_of(&self.frisket, a))
+                    .unwrap_or_default();
+                let new_leaf = PaneNode::Leaf {
+                    pane_id: id,
+                    content,
+                    graph_id: GraphId::nil(),
+                };
+                if self.frisket.summon_leaf(&anchor_path, InsertSide::Right, new_leaf) {
+                    self.next_pane_id += 1;
+                    self.active_pane = Some(id);
+                    self.events.push(AppEvent::PaneSummoned(kind.label()));
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::CloseActivePane => {
+                // The canvas (no active pane) has nothing to close.
+                let Some(active) = self.active_pane else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(path) = crate::pane::path_of(&self.frisket, active) else {
+                    return vec![Effect::Redraw];
+                };
+                if self.frisket.close_leaf(&path) {
+                    if self.maximized == Some(active) {
+                        self.maximized = None;
+                    }
+                    self.active_pane = None;
+                    self.events.push(AppEvent::PaneClosed);
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::SetActivePaneDivider(ratio) => {
+                let Some(active) = self.active_pane else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(mut path) = crate::pane::path_of(&self.frisket, active) else {
+                    return vec![Effect::Redraw];
+                };
+                // The active leaf's parent split holds the divider.
+                path.pop();
+                if self.frisket.set_split_ratio(&path, ratio) {
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::ToggleMaximizePane => {
+                if let Some(active) = self.active_pane {
+                    self.maximized = (self.maximized != Some(active)).then_some(active);
+                }
+                vec![Effect::Redraw]
+            }
         }
     }
 
@@ -304,6 +415,10 @@ impl App {
             data_root: std::env::temp_dir().join("merecat-app-test"),
             content: ContentStates::default(),
             focus: FocusTarget::Canvas,
+            frisket: FrisketLayout::default(),
+            active_pane: None,
+            maximized: None,
+            next_pane_id: 1,
             events: Vec::new(),
         }
     }

@@ -32,6 +32,12 @@ fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", b
 # root (session_graph_store's blessed single-session shape). App-side
 # material that moves here with the port, like fetch.
 session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
+# split tree. Already in the lock transitively through session-runtime (which
+# persists it via frisket_store to frame.json); this names it. Destined for
+# merecat with the port, so a direct git dep now, like fetch. The crates.io
+# `frisket` is a name-hold stub; this uses mere's real one from the workspace.
+frisket = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The actor-kernel runtime: the physics + fetch actors wake this shell's
 # event loop through an `armillary::Wake`.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }

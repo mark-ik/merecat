@@ -233,7 +233,10 @@ const CHROME_SHEET: &str = "\
     .whereami { position: absolute; color: rgb(170, 178, 195); \
                 background-color: rgb(20, 25, 38); font-size: 12px; \
                 padding: 3px 10px; border-radius: 10px; \
-                border: 1px solid rgb(52, 62, 86); white-space: nowrap; }";
+                border: 1px solid rgb(52, 62, 86); white-space: nowrap; } \
+    .pane { position: absolute; background-color: rgb(22, 27, 40); } \
+    .pane-label { position: absolute; color: rgb(190, 198, 214); \
+                  font-size: 14px; padding: 10px 14px; white-space: nowrap; }";
 
 /// Where the omnibar caret roughly sits on screen, as `(position, size)` in
 /// physical px — for the host to aim the IME candidate window
@@ -338,6 +341,33 @@ pub fn chrome_scene(
 }
 
 /// Lay out the chrome document and composite its paint list into a scene.
+/// A pane placeholder (rung 5 slice C): a panel filling the pane's rect with its
+/// kind label. The pane tree, geometry, and persistence are what slice C proves;
+/// each pane's real content (Roster rows, Trail history, ...) is slice D. Built
+/// on the same `ScriptedDom` + genet-layout path the chrome runs, sized to the
+/// pane rect (the shell rasterizes each surface at its own size).
+pub fn pane_scene(label: &str, w: u32, h: u32) -> netrender::Scene {
+    let mut dom = ScriptedDom::new();
+    let root = dom.document();
+
+    let panel = dom.create_element(qual("div"));
+    dom.set_attribute(panel, qual("class"), "pane");
+    dom.set_attribute(
+        panel,
+        qual("style"),
+        &format!("transform: translate(0px, 0px); width: {w}px; height: {h}px;"),
+    );
+    dom.append_child(root, panel);
+
+    let name = dom.create_element(qual("div"));
+    dom.set_attribute(name, qual("class"), "pane-label");
+    let text = dom.create_text(label);
+    dom.append_child(name, text);
+    dom.append_child(root, name);
+
+    finish_scene(&dom, w, h)
+}
+
 fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
     let layout = IncrementalLayout::new(dom, &[CHROME_SHEET], w as f32, h as f32);
     let scroll = ScrollOffsets::<DomNodeId>::default();

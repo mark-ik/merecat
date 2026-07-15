@@ -14,6 +14,7 @@
 //! computes; the geometry itself is testable headless, which is the whole point
 //! of separating it from `shell.rs`.
 
+use frisket::PaneId;
 use uuid::Uuid;
 
 /// A rectangle in physical window pixels. `x`/`y` are the top-left corner.
@@ -67,10 +68,14 @@ impl Rect {
 /// holding its scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceKind {
-    /// The graph canvas. Always present, always the bottom layer.
+    /// The graph canvas: the `PaneContent::Orrery` leaf of the frisket tree.
     Canvas,
     /// A node's live content session (rung 4). Carries the node id it renders.
     Content(Uuid),
+    /// A non-canvas frisket pane (rung 5 slice C), by its `PaneId`. What it
+    /// shows (Roster, Trail, ...) lives in the layout; the surface only needs
+    /// the id to key its tile and its hit.
+    Pane(PaneId),
     /// The chrome layer: the omnibar and caption, composited on top.
     Chrome,
 }
@@ -94,6 +99,7 @@ impl SurfaceKind {
         match self {
             SurfaceKind::Canvas => "canvas",
             SurfaceKind::Content(_) => "content",
+            SurfaceKind::Pane(_) => "pane",
             SurfaceKind::Chrome => "chrome",
         }
     }
@@ -116,6 +122,23 @@ impl SurfaceId {
     pub fn content(node: Uuid) -> Self {
         let (hi, lo) = node.as_u64_pair();
         SurfaceId(hi ^ lo)
+    }
+
+    /// A non-canvas pane's id, offset past the reserved canvas(0)/chrome(1). A
+    /// pane keeps this id across frames (its `PaneId` is stable), so the tile
+    /// cache reuses its texture.
+    pub fn pane(id: PaneId) -> Self {
+        SurfaceId(id.0.wrapping_add(2))
+    }
+
+    /// The id for a surface of `kind`.
+    pub fn for_kind(kind: SurfaceKind) -> Self {
+        match kind {
+            SurfaceKind::Canvas => Self::CANVAS,
+            SurfaceKind::Chrome => Self::CHROME,
+            SurfaceKind::Content(node) => Self::content(node),
+            SurfaceKind::Pane(id) => Self::pane(id),
+        }
     }
 }
 
@@ -146,56 +169,42 @@ impl FocusTarget {
     }
 }
 
-/// Inputs the surface plan is a pure function of. The shell fills this from app
-/// truth each frame; keeping it a plain struct is what lets the planner be
-/// tested without a `Shell`, a GPU, or a window.
-#[derive(Clone, Copy, Debug)]
-pub struct Layout {
-    pub width: u32,
-    pub height: u32,
-    /// The focused node with a live content session, if any. `Some` is what
-    /// promotes a content surface into the plan.
-    pub content_node: Option<Uuid>,
-    /// Whether the chrome layer has anything to show (omnibar open or a
-    /// caption present). `false` drops chrome from the plan entirely.
-    pub chrome_present: bool,
-    pub focus: FocusTarget,
-}
-
-/// Build the ordered surface plan for a frame. Bottom-to-top: canvas always;
-/// then the content surface when a focused node is live; then chrome on top
-/// when it has something to show.
+/// Assemble the ordered surface plan for a frame, bottom-to-top: the frisket
+/// panes (canvas and any summoned panes) as the base layer at the rects the
+/// pane walker computed, then the focused node's live content inset over the
+/// canvas, then chrome on top.
 ///
-/// Content is placed at a rect inset from the full window rather than
-/// full-bleed, so the canvas stays visible beside it. This is the concrete fix
-/// for the rung-4 occlusion bug: at full window an opaque content layer hid the
-/// whole graph. The inset is a placeholder for the pane geometry that arrives
-/// with `frisket` at slice C; until then it proves the seam by not covering the
-/// canvas.
-pub fn plan(layout: &Layout) -> Vec<Surface> {
-    let full = Rect::full(layout.width, layout.height);
-    let mut surfaces = vec![Surface {
-        id: SurfaceId::CANVAS,
-        kind: SurfaceKind::Canvas,
-        rect: full,
-    }];
-
-    if let Some(node) = layout.content_node {
+/// Pure: the shell walks the frisket tree (`crate::pane`) and passes the placed
+/// base panes plus the two overlays; this only orders them and assigns ids.
+/// Keeping it a function of plain data is what lets the plan be tested without a
+/// `Shell`, a GPU, or a window.
+pub fn assemble(
+    base: &[(SurfaceKind, Rect)],
+    content: Option<(Uuid, Rect)>,
+    chrome: Option<Rect>,
+) -> Vec<Surface> {
+    let mut surfaces: Vec<Surface> = base
+        .iter()
+        .map(|&(kind, rect)| Surface {
+            id: SurfaceId::for_kind(kind),
+            kind,
+            rect,
+        })
+        .collect();
+    if let Some((node, rect)) = content {
         surfaces.push(Surface {
             id: SurfaceId::content(node),
             kind: SurfaceKind::Content(node),
-            rect: content_rect(full),
+            rect,
         });
     }
-
-    if layout.chrome_present {
+    if let Some(rect) = chrome {
         surfaces.push(Surface {
             id: SurfaceId::CHROME,
             kind: SurfaceKind::Chrome,
-            rect: full,
+            rect,
         });
     }
-
     surfaces
 }
 
@@ -251,6 +260,9 @@ pub fn focus_for_press(surfaces: &[Surface], focus: FocusTarget, px: f32, py: f3
             SurfaceKind::Canvas => FocusTarget::Canvas,
             SurfaceKind::Chrome => FocusTarget::Chrome,
             SurfaceKind::Content(node) => FocusTarget::Content(node),
+            // A pane press makes it the active pane (App state); keyboard focus
+            // stays with the canvas for slice C (panes are placeholders).
+            SurfaceKind::Pane(_) => FocusTarget::Canvas,
         },
         None => focus,
     }
@@ -264,15 +276,20 @@ mod tests {
         Uuid::from_u128(n)
     }
 
+    /// Assemble a single-canvas plan the way the shell does when no panes are
+    /// summoned: canvas full-window, content inset over it, chrome full.
+    fn plan(w: u32, h: u32, content_node: Option<Uuid>, chrome_present: bool) -> Vec<Surface> {
+        let full = Rect::full(w, h);
+        assemble(
+            &[(SurfaceKind::Canvas, full)],
+            content_node.map(|n| (n, content_rect(full))),
+            chrome_present.then_some(full),
+        )
+    }
+
     #[test]
     fn canvas_only_when_nothing_else_present() {
-        let plan = plan(&Layout {
-            width: 800,
-            height: 600,
-            content_node: None,
-            chrome_present: false,
-            focus: FocusTarget::Canvas,
-        });
+        let plan = plan(800, 600, None, false);
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].kind, SurfaceKind::Canvas);
         assert_eq!(plan[0].rect, Rect::full(800, 600));
@@ -291,13 +308,7 @@ mod tests {
 
     #[test]
     fn z_order_is_canvas_then_content_then_chrome() {
-        let plan = plan(&Layout {
-            width: 800,
-            height: 600,
-            content_node: Some(node(7)),
-            chrome_present: true,
-            focus: FocusTarget::Canvas,
-        });
+        let plan = plan(800, 600, Some(node(7)), true);
         let kinds: Vec<_> = plan.iter().map(|s| s.kind).collect();
         assert_eq!(
             kinds,
@@ -328,13 +339,7 @@ mod tests {
     #[test]
     fn pointer_over_content_hits_content_in_local_space() {
         let full = Rect::full(1000, 800);
-        let plan = plan(&Layout {
-            width: 1000,
-            height: 800,
-            content_node: Some(node(1)),
-            chrome_present: false,
-            focus: FocusTarget::Canvas,
-        });
+        let plan = plan(1000, 800, Some(node(1)), false);
         // The content pane starts at x=400; a point at x=500 is 100px into it.
         let hit = hit_test(&plan, FocusTarget::Canvas, 500.0, 300.0).expect("hit");
         assert_eq!(hit.kind, SurfaceKind::Content(node(1)));
@@ -347,13 +352,7 @@ mod tests {
 
     #[test]
     fn chrome_swallows_input_only_when_focused() {
-        let plan = plan(&Layout {
-            width: 800,
-            height: 600,
-            content_node: None,
-            chrome_present: true,
-            focus: FocusTarget::Canvas,
-        });
+        let plan = plan(800, 600, None, true);
         // Chrome present but not focused: the click reaches the canvas beneath.
         let hit = hit_test(&plan, FocusTarget::Canvas, 400.0, 300.0).expect("hit");
         assert_eq!(hit.kind, SurfaceKind::Canvas);
@@ -364,13 +363,7 @@ mod tests {
 
     #[test]
     fn pressing_a_surface_focuses_it() {
-        let plan = plan(&Layout {
-            width: 1000,
-            height: 800,
-            content_node: Some(node(5)),
-            chrome_present: false,
-            focus: FocusTarget::Canvas,
-        });
+        let plan = plan(1000, 800, Some(node(5)), false);
         // Press inside the content pane -> content focus.
         assert_eq!(
             focus_for_press(&plan, FocusTarget::Canvas, 700.0, 400.0),

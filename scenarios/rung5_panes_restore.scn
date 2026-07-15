@@ -1,0 +1,13 @@
+# Rung 5 slice C receipt, run 2 of 2: restart-restore. Run on the SAME profile as
+# rung5_panes.scn (do NOT wipe MERECAT_ROOT between the two). At boot merecat
+# loads frame.json through the session port, so the Roster pane summoned in run 1
+# is back in the tree without any action here. This is the done-condition's
+# "restart and the arrangement comes back off frame.json".
+settle 30
+
+# The Roster pane summoned last run is restored from frame.json.
+assert pane orrery
+assert pane roster
+assert surface pane
+capture 05_restored
+log rung 5 slice C run 2 (restore) complete

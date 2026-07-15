@@ -1,0 +1,51 @@
+# Rung 5 slice C receipt, run 1 of 2: the pane tree. frisket owns the pane MODEL
+# (the PaneNode split tree, PaneContent, FrisketLayout); this drives the tree
+# through the Action spine and persists it to frame.json. Open a pane (split the
+# canvas), drag its divider, maximize it, and close one — every op lowers through
+# update() and, being durable, saves the layout. Run 2 (rung5_panes_restore.scn)
+# on the SAME profile proves the arrangement comes back after a restart. Run on a
+# FRESH profile so this run owns the state.
+settle 30
+key escape
+
+# At rest: a single-pane tree, the Orrery (canvas). No summoned panes yet.
+assert pane orrery
+assert surface canvas
+
+# Open a Roster pane: the canvas splits, the Roster takes half.
+act Open Roster pane
+settle 5
+assert pane roster
+assert surface pane
+capture 01_roster_pane
+
+# Drag its divider: the seam moves to 0.7 (Orrery 70%, Roster 30%).
+divider 0.7
+settle 5
+capture 02_divider_dragged
+
+# Maximize it: the Roster takes the whole pane area.
+act Maximize pane
+settle 5
+assert maximized
+capture 03_maximized
+
+# Un-maximize: back to the split.
+act Maximize pane
+settle 5
+assert not-maximized
+
+# Close is exercised on a second pane, so the Roster survives for the restore
+# run: summon a Trail, then close it (the active pane), leaving the Roster.
+act Open Trail pane
+settle 5
+assert pane trail
+act Close pane
+settle 5
+assert pane roster
+
+# The summon/divider/close all saved the layout; save once more to be sure.
+act Save session
+settle 5
+capture 04_roster_persisted
+log rung 5 slice C run 1 complete

@@ -39,6 +39,14 @@ pub struct Snapshot {
     /// Which surface holds semantic input, as a label ("canvas" / "chrome" /
     /// "content").
     pub focus: String,
+    /// The panes in the frisket tree, as `PaneContent` tags (rung 5 slice C).
+    /// A single-pane layout reads `["orrery"]`; summoning a Roster adds
+    /// `"roster"`. The active pane, if any, is `active_pane`.
+    pub panes: Vec<String>,
+    /// The active pane's tag, or `None` when the canvas (Orrery) is active.
+    pub active_pane: Option<String>,
+    /// Whether a pane is maximized.
+    pub maximized: bool,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -72,6 +80,10 @@ pub enum AppEvent {
     OmnibarCommitted(String),
     LayoutReseeded,
     ContentState { node: Uuid, state: String },
+    /// A pane of the named kind was summoned into the tree (rung 5 slice C).
+    PaneSummoned(&'static str),
+    /// The active pane was closed.
+    PaneClosed,
 }
 
 impl AppEvent {
@@ -84,6 +96,8 @@ impl AppEvent {
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
             AppEvent::LayoutReseeded => "layout-reseeded".to_string(),
             AppEvent::ContentState { node, state } => format!("content {node} {state}"),
+            AppEvent::PaneSummoned(kind) => format!("pane-summoned {kind}"),
+            AppEvent::PaneClosed => "pane-closed".to_string(),
         }
     }
 }
@@ -112,11 +126,22 @@ pub fn snapshot(app: &App) -> Snapshot {
             Some((n.id, state))
         })
         .collect();
-    // The surface list, derived from app truth (the shell owns the live
-    // sessions and the window size; observe reports what a frame would compose).
-    // Canvas always; content when the focused node is Live; chrome on top when
-    // it has something to show.
-    let mut surfaces = vec!["canvas".to_string()];
+    // The surface list, derived from app truth (the shell owns the live sessions
+    // and the window size; observe reports what a frame would compose). The base
+    // is the frisket tree — the Orrery leaf is the canvas, every other leaf a
+    // pane — then content over the canvas when the focused node is Live, then
+    // chrome on top when it has something to show.
+    let mut surfaces: Vec<String> = app
+        .frisket
+        .iter_leaves()
+        .map(|(_, content, _)| {
+            if matches!(content, frisket::PaneContent::Orrery) {
+                "canvas".to_string()
+            } else {
+                "pane".to_string()
+            }
+        })
+        .collect();
     let focused_live = app
         .canvas
         .focused_member()
@@ -142,6 +167,18 @@ pub fn snapshot(app: &App) -> Snapshot {
         graph_visible: app.canvas.graph_visible(),
         surfaces,
         focus: app.focus.label().to_string(),
+        panes: app
+            .frisket
+            .iter_leaves()
+            .map(|(_, content, _)| content.tag().to_string())
+            .collect(),
+        active_pane: app.active_pane.and_then(|id| {
+            app.frisket
+                .iter_leaves()
+                .find(|(pid, _, _)| *pid == id)
+                .map(|(_, content, _)| content.tag().to_string())
+        }),
+        maximized: app.maximized.is_some(),
     }
 }
 
