@@ -267,14 +267,20 @@ example.com row and lands on it (`assert focused example.com`). Recover rows awa
 the deletion log (rung 6) — no removed nodes yet, so none appear; the arm is
 wired.
 
-**Roster LANDED 2026-07-15 (bbf3b24):** the Roster pane lists the graph's node
-manifest (the Nodes tab), content-bucketed, the focused node highlighted, node
-rows navigable. `roster_view.rs` gathers `NodeRowInput` through
-`mere::roster::build_node_rows`; `pane_rows.rs` now holds the row geometry Trail
-and Roster share; the scenario grammar gained `click-row <substr>` (the shell
-resolves a row by text). Receipt `rung5_roster.scn` (RESULT ok): the manifest
-renders in Documents/Unknown sections, and a row click navigates. Links,
-Graphlets, and Fields tabs are a follow-on.
+**Roster LANDED 2026-07-15 (bbf3b24), then MOVED TO CAMBIUM (d05f24d):** first
+built as a hand-DOM sectioned list, then rebuilt as a cambium `data_grid` — the
+honest form, and the toolkit-adoption pilot. `roster_view.rs` gathers the rows
+(`roster_grid_rows`, flat/columned) through `mere::roster::build_node_rows`;
+`cambium_pane.rs` holds a `GenetAppRunner` that renders the grid DOM; `ui`'s
+`scene_from_dom(dom, sheet, w, h)` + `CAMBIUM_SHEET` composite it the same way the
+chrome renders. Receipt `rung5_roster.scn` (RESULT ok); the capture shows a
+Node/Address grid with the selected node highlighted. **Toolkit question
+answered: merecat adopts cambium** (the blocker — genet's duplicate toolkit — is
+gone; cambium builds; the crates.io `servo-malloc-size-of` chain is patched local,
+so committed-manifest PUBLISH still waits on the genet-side fork rename). Open on
+Roster: grid event dispatch (`runner.dispatch_click`) replaces the hand-DOM
+click stopgap and enables sort/scroll; then Links/Graphlets/Fields tabs. Trail and
+the chrome migrate onto cambium after.
 
 **Still to do in this slice: inspector, then gloss** (the dependency-weight order
 below). Original scope follows.
