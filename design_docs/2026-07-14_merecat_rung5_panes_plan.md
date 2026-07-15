@@ -265,8 +265,19 @@ row <substr>`. Receipts: 36 unit tests, and `rung5_trail.scn` headed (RESULT ok)
 opens two pages, opens Trail, asserts both urls appear as real rows, clicks the
 example.com row and lands on it (`assert focused example.com`). Recover rows await
 the deletion log (rung 6) — no removed nodes yet, so none appear; the arm is
-wired. **Still to do in this slice: roster, then inspector, then gloss** (the
-dependency-weight order below). Original scope follows.
+wired.
+
+**Roster LANDED 2026-07-15 (bbf3b24):** the Roster pane lists the graph's node
+manifest (the Nodes tab), content-bucketed, the focused node highlighted, node
+rows navigable. `roster_view.rs` gathers `NodeRowInput` through
+`mere::roster::build_node_rows`; `pane_rows.rs` now holds the row geometry Trail
+and Roster share; the scenario grammar gained `click-row <substr>` (the shell
+resolves a row by text). Receipt `rung5_roster.scn` (RESULT ok): the manifest
+renders in Documents/Unknown sections, and a row click navigates. Links,
+Graphlets, and Fields tabs are a follow-on.
+
+**Still to do in this slice: inspector, then gloss** (the dependency-weight order
+below). Original scope follows.
 
 Render a pane's content as a `ScriptedDom` subtree laid out by genet-layout into a paint
 list and composited at its surface rect. That is exactly the path `ui::chrome_scene`
