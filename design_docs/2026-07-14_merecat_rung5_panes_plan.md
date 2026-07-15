@@ -148,7 +148,23 @@ u64 key it wants.
   and capture. Rung 5 adds rect math, hit-testing, and focus dispatch to exactly that
   file. Split before adding (the 600-LOC ceiling applies).
 
-### B. Content gets input, and stops occluding
+### B. Content gets input, and stops occluding — LANDED 2026-07-15 (29b9447)
+
+Input routes through the surface plan. `deliver_wheel` / `deliver_press` /
+`deliver_release` on the shell are driven by both winit and the scenario runner
+(one description, two runners); the wheel goes to the surface under the pointer
+(page scrolls / canvas pans), and a press captures its surface until release so
+the canvas keeps paired down/up and a content click never leaks its release. A
+link click resolves via `click_at` and lowers through `Action::OpenAddress`,
+growing the graph. `surface_plan()` is shared by render and input. Bug #2 fixed:
+every live session is pumped each frame, not just the focused one. The scenario
+grammar gained `click <x> <y>` and `scroll <x> <y> <dy>`. Receipts: 30 unit
+tests, and `scenarios/rung5_content_input.scn` headed with RESULT ok — a click on
+example.com's link fetches iana.org and focuses the new node (`assert focused
+iana`), with the canvas not panning under a content scroll. The static lane's
+`links()` is empty by design, so link positions are clicked by pixel, not
+queried. Keyboard-to-content (scroll keys via `scroll_for_key`) is not wired;
+pointer and wheel are. Original scope below.
 
 Rung-4 debt, and it must clear before panes.
 
