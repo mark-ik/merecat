@@ -121,6 +121,11 @@ pub struct Shell {
     /// one surface: the canvas needs paired `pointer_down`/`pointer_up`, and a
     /// content click must not leak its release to the canvas beneath.
     pointer_capture: Option<crate::surface::SurfaceKind>,
+    /// The Roster pane's cambium grid (rung 5 slice D): a retained
+    /// `GenetAppRunner` whose state and DOM persist between the frame that draws
+    /// it and the click that hits it. `!Send`, like the content sessions, so it
+    /// lives here rather than in App.
+    roster_grid: Option<crate::cambium_pane::RosterGrid>,
 }
 
 impl Shell {
@@ -160,6 +165,7 @@ impl Shell {
             epoch: std::time::Instant::now(),
             pending_fetches: browse::PendingFetches::default(),
             pointer_capture: None,
+            roster_grid: None,
         };
         shell.run_effects(boot_effects);
         shell
@@ -301,20 +307,23 @@ impl Shell {
             let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
                 continue;
             };
-            let texts: Vec<String> = match self.pane_content(id) {
+            // Each list pane resolves a row by ITS OWN geometry: Trail's
+            // hand-DOM rows, the Roster's cambium grid (header + row height).
+            let found = match self.pane_content(id) {
                 Some(PaneContent::Trail) => crate::trail_view::trail_rows(&self.app)
-                    .into_iter()
-                    .map(|r| r.text)
-                    .collect(),
-                Some(PaneContent::Roster) => crate::roster_view::roster_rows(&self.app)
-                    .into_iter()
-                    .map(|r| r.text)
-                    .collect(),
+                    .iter()
+                    .position(|r| r.text.contains(substr))
+                    .map(crate::pane_rows::row_y)
+                    .map(|y| y + crate::pane_rows::ROW_HEIGHT / 2.0),
+                Some(PaneContent::Roster) => crate::roster_view::roster_grid_rows(&self.app)
+                    .iter()
+                    .position(|r| r.title.contains(substr) || r.url.contains(substr))
+                    .map(crate::cambium_pane::grid_row_center_y),
                 _ => continue,
             };
-            if let Some(idx) = texts.iter().position(|t| t.contains(substr)) {
+            if let Some(local_y) = found {
                 let x = surface.rect.x + 20.0;
-                let y = surface.rect.y + crate::pane_rows::row_y(idx) + crate::pane_rows::ROW_HEIGHT / 2.0;
+                let y = surface.rect.y + local_y;
                 self.deliver_press(x, y, MouseButton::Left);
                 self.deliver_release(x, y, MouseButton::Left);
                 return;
@@ -393,13 +402,27 @@ impl Shell {
                                 }
                             }
                             Some(PaneContent::Roster) => {
-                                let rows = crate::roster_view::roster_rows(&self.app);
-                                if let Some(idx) = crate::roster_view::row_at(&rows, hit.local.1)
-                                    && let crate::roster_view::RosterRowAction::Node(url) =
-                                        &rows[idx].action
-                                {
-                                    let url = url.clone();
-                                    self.act(Action::OpenAddress(url));
+                                // Route into the cambium grid: hit-test its DOM
+                                // at the pane's size and dispatch, then lower
+                                // whatever the view emitted through the spine —
+                                // the same path a keypress takes. This is the
+                                // general cambium pane-event round trip.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let actions = match (dims, self.roster_grid.as_mut()) {
+                                    (Some((rw, rh)), Some(grid)) => {
+                                        grid.click(hit.local.0, hit.local.1, rw, rh)
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for action in actions {
+                                    match action {
+                                        crate::cambium_pane::RosterAction::Navigate(url) => {
+                                            self.act(Action::OpenAddress(url))
+                                        }
+                                    }
                                 }
                             }
                             _ => {}
@@ -513,7 +536,13 @@ impl Shell {
                             crate::ui::trail_scene(&crate::trail_view::trail_rows(&self.app), rw, rh)
                         }
                         Some(PaneContent::Roster) => {
-                            crate::cambium_pane::roster_grid_scene(&self.app, rw, rh)
+                            // The retained cambium grid: refresh it from graph
+                            // truth at the pane's size, then draw its DOM.
+                            let grid = self
+                                .roster_grid
+                                .get_or_insert_with(crate::cambium_pane::RosterGrid::new);
+                            grid.sync(&self.app, rh as f32);
+                            grid.scene(rw, rh)
                         }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };

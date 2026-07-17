@@ -455,24 +455,26 @@ pub fn scene_from_dom(dom: &ScriptedDom, sheet: &str, w: u32, h: u32) -> netrend
 }
 
 /// The host stylesheet for cambium's classes (rung 5 slice D). cambium ships no
-/// sheet — it names classes a host themes. This styles the data grid (Roster's
-/// home): a sticky header over zebra rows, the selected row highlighted. Geometry
-/// (row/column placement) rides inline styles cambium emits; this is only color,
-/// type, and the panel fill.
+/// sheet — it names classes a host themes, and its own reference sheet
+/// (`component_catalog.css`) sets no `position` on any of them.
+///
+/// **Theming only.** cambium's inline styles carry ALL the geometry: the grid
+/// root is a block, the body is the `position: relative` containing block, and
+/// the rows/cells are absolutely placed inside it by `Placement`. A host rule
+/// that sets `position` overrides that structure — it still paints, but the
+/// fragment tree genet-layout hit-tests goes with it, and every pane click
+/// misses. Colour, type, padding, and fills only.
 pub const CAMBIUM_SHEET: &str = "\
-    .grid { position: absolute; background-color: rgb(22, 27, 40); \
-            color: rgb(210, 216, 230); font-size: 13px; } \
-    .grid-header { position: absolute; background-color: rgb(28, 34, 50); } \
-    .grid-header-cell { position: absolute; color: rgb(150, 160, 180); \
-                        font-size: 12px; padding: 6px 10px; white-space: nowrap; \
-                        overflow: hidden; } \
-    .grid-body { position: absolute; } \
-    .grid-row { position: absolute; } \
+    .grid { background-color: rgb(22, 27, 40); color: rgb(210, 216, 230); \
+            font-size: 13px; } \
+    .grid-header { background-color: rgb(28, 34, 50); } \
+    .grid-header-cell { color: rgb(150, 160, 180); font-size: 12px; \
+                        padding: 6px 10px; white-space: nowrap; overflow: hidden; } \
     .grid-row-odd { background-color: rgb(25, 30, 44); } \
-    .grid-row-sel { background-color: rgb(232, 150, 40); } \
-    .grid-cell { position: absolute; color: rgb(200, 208, 224); \
-                 padding: 5px 10px; white-space: nowrap; overflow: hidden; } \
-    .grid-row-sel .grid-cell { color: rgb(28, 22, 10); }";
+    .grid-row-selected { background-color: rgb(232, 150, 40); } \
+    .grid-cell { color: rgb(200, 208, 224); padding: 5px 10px; \
+                 white-space: nowrap; overflow: hidden; } \
+    .grid-row-selected .grid-cell { color: rgb(28, 22, 10); }";
 
 fn qual(local: &str) -> QualName {
     QualName::new(None, Namespace::from(""), LocalName::from(local))
