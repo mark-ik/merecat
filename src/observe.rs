@@ -94,6 +94,16 @@ pub enum AppEvent {
     PaneSummoned(&'static str),
     /// The active pane was closed.
     PaneClosed,
+    /// A pane interaction named a target that is not on screen — a
+    /// `click-row`/`click-tab`/`click-node` that resolved to nothing. Divergence
+    /// a driving script or model must be able to see: the aim missed, and a
+    /// receipt that only checks the end state would call the miss a pass. `what`
+    /// is the interaction kind, `target` the name that did not resolve.
+    InteractionMissed { what: &'static str, target: String },
+    /// An affordance fired that is not wired yet — today only Trail's Recover,
+    /// which awaits the deletion log (rung 6). A known-not-yet state, emitted so
+    /// a scenario asserts the gap explicitly rather than a silent no-op.
+    AffordanceUnavailable { what: &'static str, target: String },
 }
 
 impl AppEvent {
@@ -108,6 +118,12 @@ impl AppEvent {
             AppEvent::ContentState { node, state } => format!("content {node} {state}"),
             AppEvent::PaneSummoned(kind) => format!("pane-summoned {kind}"),
             AppEvent::PaneClosed => "pane-closed".to_string(),
+            AppEvent::InteractionMissed { what, target } => {
+                format!("interaction-missed {what} {target}")
+            }
+            AppEvent::AffordanceUnavailable { what, target } => {
+                format!("affordance-unavailable {what} {target}")
+            }
         }
     }
 }

@@ -368,6 +368,10 @@ impl Shell {
                 return;
             }
         }
+        self.app.note(crate::observe::AppEvent::InteractionMissed {
+            what: "click-row",
+            target: substr.to_string(),
+        });
         tracing::warn!(%substr, "click-row: no list-pane row matched");
     }
 
@@ -399,6 +403,10 @@ impl Shell {
             self.deliver_release(x, y, MouseButton::Left);
             return;
         }
+        self.app.note(crate::observe::AppEvent::InteractionMissed {
+            what: "click-tab",
+            target: label.to_string(),
+        });
         tracing::warn!(%label, "click-tab: no Roster tab matched");
     }
 
@@ -430,6 +438,10 @@ impl Shell {
             self.deliver_release(x, y, MouseButton::Left);
             return;
         }
+        self.app.note(crate::observe::AppEvent::InteractionMissed {
+            what: "click-node",
+            target: substr.to_string(),
+        });
         tracing::warn!(%substr, "click-node: no Gloss node matched");
     }
 
@@ -510,8 +522,15 @@ impl Shell {
                                             self.act(Action::OpenAddress(url))
                                         }
                                         crate::trail_pane::TrailPaneAction::Recover(id) => {
-                                            // Awaits the deletion log (rung 6);
-                                            // loud, not silent.
+                                            // Awaits the deletion log (rung 6):
+                                            // loud (warn) AND attributable (an
+                                            // event a scenario can assert).
+                                            self.app.note(
+                                                crate::observe::AppEvent::AffordanceUnavailable {
+                                                    what: "recover",
+                                                    target: id.clone(),
+                                                },
+                                            );
                                             tracing::warn!(%id, "Recover row: no deletion log yet");
                                         }
                                     }

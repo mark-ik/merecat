@@ -1,0 +1,23 @@
+# The divergence-is-attributable receipt: an interaction that misses now emits a
+# typed event a script can assert, not just a stderr warn. This is the
+# automatability property — a driver (test, model, script) learns its aim missed
+# instead of a receipt calling the miss a pass. No network; FRESH profile.
+settle 30
+key escape
+
+# Summon the Roster (Nodes tab live).
+act Open Roster pane
+settle 5
+assert pane roster
+
+# Click a row that does not exist. The click resolves to nothing; the shell emits
+# interaction-missed rather than silently doing nothing.
+click-row this-node-does-not-exist
+settle 5
+assert event interaction-missed click-row this-node-does-not-exist
+
+# And a tab that does not exist.
+click-tab NoSuchTab
+settle 5
+assert event interaction-missed click-tab NoSuchTab
+log divergence is attributable (interaction-missed events) self-drive complete

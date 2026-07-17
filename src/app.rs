@@ -162,6 +162,13 @@ impl App {
         std::mem::take(&mut self.events)
     }
 
+    /// Note a semantic event from outside `update` — the shell's own divergence
+    /// (an interaction that missed, an affordance not yet wired) joins the same
+    /// drained stream the update path feeds, so automation reads one channel.
+    pub fn note(&mut self, event: AppEvent) {
+        self.events.push(event);
+    }
+
     /// Consume one app intent. Never blocks; anything slow leaves as an effect.
     pub fn update(&mut self, action: Action) -> Vec<Effect> {
         match action {
