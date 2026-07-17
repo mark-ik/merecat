@@ -76,6 +76,10 @@ pub enum SurfaceKind {
     /// shows (Roster, Trail, ...) lives in the layout; the surface only needs
     /// the id to key its tile and its hit.
     Pane(PaneId),
+    /// A pane-tiling divider band (the split's seam), by its walk-order index
+    /// in the current tiling. The index is stable within a layout (the walk is
+    /// deterministic); a press resolves it back through the same walk.
+    Divider(u32),
     /// The chrome layer: the omnibar and caption, composited on top.
     Chrome,
 }
@@ -100,6 +104,7 @@ impl SurfaceKind {
             SurfaceKind::Canvas => "canvas",
             SurfaceKind::Content(_) => "content",
             SurfaceKind::Pane(_) => "pane",
+            SurfaceKind::Divider(_) => "divider",
             SurfaceKind::Chrome => "chrome",
         }
     }
@@ -131,6 +136,12 @@ impl SurfaceId {
         SurfaceId(id.0.wrapping_add(2))
     }
 
+    /// A divider surface's id, in a high band ("DIV" << 32) clear of the small
+    /// counter-derived pane ids.
+    pub fn divider(index: u32) -> Self {
+        SurfaceId(0x0044_4956_0000_0000 | index as u64)
+    }
+
     /// The id for a surface of `kind`.
     pub fn for_kind(kind: SurfaceKind) -> Self {
         match kind {
@@ -138,6 +149,7 @@ impl SurfaceId {
             SurfaceKind::Chrome => Self::CHROME,
             SurfaceKind::Content(node) => Self::content(node),
             SurfaceKind::Pane(id) => Self::pane(id),
+            SurfaceKind::Divider(i) => Self::divider(i),
         }
     }
 }
@@ -262,7 +274,9 @@ pub fn focus_for_press(surfaces: &[Surface], focus: FocusTarget, px: f32, py: f3
             SurfaceKind::Content(node) => FocusTarget::Content(node),
             // A pane press makes it the active pane (App state); keyboard focus
             // stays with the canvas for slice C (panes are placeholders).
-            SurfaceKind::Pane(_) => FocusTarget::Canvas,
+            // A seam press likewise: the drag is a pointer gesture, not a
+            // keyboard-focus change.
+            SurfaceKind::Pane(_) | SurfaceKind::Divider(_) => FocusTarget::Canvas,
         },
         None => focus,
     }

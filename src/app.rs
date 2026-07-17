@@ -391,6 +391,10 @@ impl App {
                     vec![Effect::Redraw]
                 }
             }
+            Action::SetSplitRatio { path, ratio } => {
+                self.frisket.set_split_ratio(&path, ratio);
+                vec![Effect::Redraw]
+            }
             Action::SetActivePaneDivider(ratio) => {
                 let Some(active) = self.active_pane else {
                     return vec![Effect::Redraw];

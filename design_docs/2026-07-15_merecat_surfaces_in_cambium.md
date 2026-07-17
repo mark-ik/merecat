@@ -138,8 +138,17 @@ The order follows pull and dependency, not pane-by-pane:
    Id)` mutators, so the pane records intents in its own state and the shell
    drains them after dispatch — the tab strip's shape, not the grid's. The
    outline half still pulls **tree** when outline data lands.
-4. **Split** — migrate the pane furniture; `pane.rs` becomes a walk over cambium
-   splits, and divider drag arrives for free.
+4. **Split** — DONE 2026-07-17: `pane.rs` walks cambium's `Split::slots` /
+   `divider_rect` (the component's pure state math is the geometry truth), each
+   seam is a thin divider surface (empty scene over the seam clear), and drag
+   works: press captures the seam, moves become ratios through
+   `Split::ratio_at`, release persists once. NOTE merecat consumes the
+   component's MATH, not its view — a surface-compositing host needs the rects
+   before layout and keeps one hit-test authority (the surface plan). The
+   split's VIEW (slots + ARIA separator + keyboard resize + on_pointer drag)
+   is built and tested in cambium for the in-tree consumers: the Workbench's
+   platen tiling and stacked frisket panes pull it when they land. Both
+   postures are deliberate; the module docs on both sides say which and why.
 5. **Sectioned list** — Trail migrates onto it; Steward/Alembic/Apparatus follow.
 6. **Inspector** (detail panel), **Comms** (message list) as their data lands.
 7. **Chrome/omnibar** onto `text_field_typed` + `command_surface` — the last

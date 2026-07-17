@@ -129,6 +129,11 @@ pub struct Shell {
     /// The Gloss pane (minimap): the first pane whose cambium view carries a
     /// custom-paint leaf, so it owns a leaf registry beside its runner.
     gloss_pane: Option<crate::gloss_pane::GlossPane>,
+    /// The divider drag in flight: the pressed seam's placement, held from
+    /// press to release (like `pointer_capture`, which also points at it).
+    /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
+    /// the component owns the gesture math; the shell only feeds it points.
+    divider_drag: Option<crate::pane::DividerPlacement>,
 }
 
 impl Shell {
@@ -170,6 +175,7 @@ impl Shell {
             pointer_capture: None,
             roster_grid: None,
             gloss_pane: None,
+            divider_drag: None,
         };
         shell.run_effects(boot_effects);
         shell
@@ -257,9 +263,10 @@ impl Shell {
     /// top.
     fn surface_plan(&self) -> Vec<crate::surface::Surface> {
         let area = Rect::full(self.width.max(1), self.height.max(1));
-        let placements = crate::pane::place_panes(&self.app.frisket, area, self.app.maximized);
+        let tiling = crate::pane::place_panes(&self.app.frisket, area, self.app.maximized);
         let mut canvas_rect = None;
-        let base: Vec<(SurfaceKind, Rect)> = placements
+        let mut base: Vec<(SurfaceKind, Rect)> = tiling
+            .panes
             .iter()
             .map(|p| {
                 if matches!(p.content, PaneContent::Orrery) {
@@ -270,6 +277,14 @@ impl Shell {
                 }
             })
             .collect();
+        // Each seam is its own thin surface, so it paints (an empty scene over
+        // the seam clear colour) and takes the divider drag.
+        base.extend(
+            tiling
+                .dividers
+                .iter()
+                .map(|d| (SurfaceKind::Divider(d.index), d.rect)),
+        );
         // Content overlays the canvas pane (when it is shown); a live node's
         // document insets within the graph, not over a maximized pane.
         let content = canvas_rect.and_then(|cr| {
@@ -539,6 +554,17 @@ impl Shell {
                     self.request_redraw();
                     return;
                 }
+                crate::surface::SurfaceKind::Divider(index) => {
+                    let area = Rect::full(self.width.max(1), self.height.max(1));
+                    let tiling =
+                        crate::pane::place_panes(&self.app.frisket, area, self.app.maximized);
+                    self.divider_drag = tiling
+                        .dividers
+                        .into_iter()
+                        .find(|d| d.index == index);
+                    self.request_redraw();
+                    return;
+                }
                 // The canvas (chrome is unreachable — an open omnibar was handled
                 // above). Pressing it focuses it and begins the canvas gesture.
                 crate::surface::SurfaceKind::Canvas | crate::surface::SurfaceKind::Chrome => {
@@ -557,12 +583,40 @@ impl Shell {
     /// slice B). The canvas gets a release only if its own press began the
     /// gesture, so a content click never ends a canvas drag. Shared by winit
     /// and the scenario runner.
+
+    /// Route a pointer move. Today only the divider drag consumes moves: while
+    /// a seam is captured, each move becomes a ratio through cambium's
+    /// `Split::ratio_at` over the split's own container rect, lowered as an
+    /// ordinary Action — the same spine as everything else.
+    fn deliver_move(&mut self, x: f32, y: f32) {
+        let Some(drag) = self.divider_drag.clone() else {
+            return;
+        };
+        let split = crate::pane::cambium_split(drag.axis, drag.ratio);
+        let ratio = split.ratio_at(
+            drag.area.w,
+            drag.area.h,
+            x - drag.area.x,
+            y - drag.area.y,
+        );
+        self.act(Action::SetSplitRatio {
+            path: drag.path,
+            ratio,
+        });
+    }
+
     fn deliver_release(&mut self, x: f32, y: f32, button: MouseButton) {
         let to_canvas = matches!(
             self.pointer_capture,
             Some(crate::surface::SurfaceKind::Canvas)
         );
         self.pointer_capture = None;
+        if self.divider_drag.take().is_some() {
+            // The drag's ratio moves rode Redraw only; the settled layout
+            // persists once, on release.
+            self.act(Action::SaveSession);
+            return;
+        }
         if to_canvas
             && let Some(button) = pointer_button(button)
             && self.app.canvas.pointer_up(button, x, y)
@@ -664,6 +718,10 @@ impl Shell {
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };
                     (scene, wgpu::Color::TRANSPARENT)
+                }
+                crate::surface::SurfaceKind::Divider(_) => {
+                    // The band is the clear colour; nothing to draw over it.
+                    (Scene::default(), crate::ui::SEAM_CLEAR)
                 }
                 crate::surface::SurfaceKind::Chrome => {
                     let scene =
@@ -790,6 +848,16 @@ impl Shell {
             }
             crate::scenario::Tick::ClickNode { substr } => {
                 self.click_pane_node(&substr);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::Drag { from, to } => {
+                // A real gesture through the same methods winit drives: press,
+                // a mid step and the endpoint as moves, release.
+                self.deliver_press(from.0, from.1, MouseButton::Left);
+                let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+                self.deliver_move(mid.0, mid.1);
+                self.deliver_move(to.0, to.1);
+                self.deliver_release(to.0, to.1, MouseButton::Left);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),
@@ -1012,6 +1080,7 @@ impl ApplicationHandler for Shell {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+                self.deliver_move(self.cursor.0, self.cursor.1);
                 if self.app.canvas.cursor_moved(self.cursor.0, self.cursor.1) {
                     self.request_redraw();
                 }

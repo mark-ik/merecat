@@ -537,6 +537,16 @@ pub const CAMBIUM_SHEET: &str = "\
                                   background-color: rgb(28, 34, 50); border: 0; \
                                   border-radius: 4px; padding: 2px 5px; }";
 
+/// The divider band's clear colour: the chrome border tone (rgb(52, 62, 86)),
+/// srgb-to-linear'd for the wgpu clear. An empty scene over this clear IS the
+/// divider's paint.
+pub const SEAM_CLEAR: wgpu::Color = wgpu::Color {
+    r: 0.0343,
+    g: 0.0483,
+    b: 0.0930,
+    a: 1.0,
+};
+
 /// The height `.tablist` occupies in [`CAMBIUM_SHEET`], above a tabbed pane's
 /// body. The host owns the strip's geometry (cambium's strip sets none), so the
 /// host must also state its height: the Roster subtracts it from the grid's

@@ -54,6 +54,9 @@ pub struct Snapshot {
     pub roster_rows: Vec<String>,
     /// The Roster's active tab label, mirrored out of the strip's own state.
     pub roster_tab: &'static str,
+    /// The root split's ratio, when the pane tree is split at all. The divider
+    /// receipts assert against this after a drag.
+    pub split_ratio: Option<f32>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -149,6 +152,10 @@ pub fn snapshot(app: &App) -> Snapshot {
             }
         })
         .collect();
+    // A split tree has seams: one divider surface per split node.
+    if matches!(app.frisket.root, frisket::PaneNode::Split { .. }) && app.maximized.is_none() {
+        surfaces.push("divider".to_string());
+    }
     let focused_live = app
         .canvas
         .focused_member()
@@ -209,6 +216,10 @@ pub fn snapshot(app: &App) -> Snapshot {
             })
             .unwrap_or_default(),
         roster_tab: crate::cambium_pane::tab_label(app.roster_tab),
+        split_ratio: match &app.frisket.root {
+            frisket::PaneNode::Split { ratio, .. } => Some(*ratio),
+            frisket::PaneNode::Leaf { .. } => None,
+        },
     }
 }
 

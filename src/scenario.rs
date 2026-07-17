@@ -88,6 +88,10 @@ enum Step {
     ClickTab(String),
     /// Click the Gloss minimap's node by label/url substring.
     ClickNode(String),
+    /// Press at the first point, move through it, release at the second.
+    Drag((f32, f32), (f32, f32)),
+    /// The root split's ratio compares as given.
+    AssertRatio(CmpOp, f32),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
@@ -151,6 +155,7 @@ pub enum Tick {
     ClickRow { substr: String },
     ClickTab { label: String },
     ClickNode { substr: String },
+    Drag { from: (f32, f32), to: (f32, f32) },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -263,6 +268,10 @@ impl Scenario {
             Step::ClickNode(substr) => Tick::ClickNode {
                 substr: substr.clone(),
             },
+            Step::Drag(from, to) => Tick::Drag {
+                from: *from,
+                to: *to,
+            },
             Step::Scroll(x, y, dx, dy) => Tick::Scroll {
                 x: *x,
                 y: *y,
@@ -351,6 +360,21 @@ impl Scenario {
                     self.fail(format!(
                         "assert row '{substr}': trail {:?} roster {:?}",
                         snap.trail_rows, snap.roster_rows
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertRatio(op, want) => {
+                let snap = crate::observe::snapshot(app);
+                let ok = snap.split_ratio.is_some_and(|r| match op {
+                    CmpOp::Eq => (r - want).abs() < 1e-3,
+                    CmpOp::Ge => r >= *want,
+                    CmpOp::Le => r <= *want,
+                });
+                if !ok {
+                    self.fail(format!(
+                        "assert ratio {op:?} {want}: the root split is {:?}",
+                        snap.split_ratio
                     ));
                 }
                 Tick::Wait
@@ -510,6 +534,16 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
             "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
             "click-tab" if !rest.is_empty() => Step::ClickTab(rest.to_string()),
             "click-node" if !rest.is_empty() => Step::ClickNode(rest.to_string()),
+            "drag" => {
+                let nums: Vec<f32> = rest
+                    .split_whitespace()
+                    .filter_map(|t| t.parse().ok())
+                    .collect();
+                match nums[..] {
+                    [x1, y1, x2, y2] => Step::Drag((x1, y1), (x2, y2)),
+                    _ => return err("drag wants 'x1 y1 x2 y2'"),
+                }
+            }
             "click" => {
                 let (x, y) = parse_xy(rest).ok_or_else(|| {
                     format!("line {}: click wants '<x> <y>': '{line}'", i + 1)
@@ -552,6 +586,22 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "not-maximized" => Step::AssertMaximized(false),
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
+                    "ratio" => {
+                        let (op, n) = arg
+                            .split_once(char::is_whitespace)
+                            .ok_or_else(|| format!("line {}: assert ratio wants '<op> <r>'", i + 1))?;
+                        let op = match op {
+                            "==" => CmpOp::Eq,
+                            ">=" => CmpOp::Ge,
+                            "<=" => CmpOp::Le,
+                            _ => return err("assert ratio op wants ==|>=|<="),
+                        };
+                        let n = n
+                            .trim()
+                            .parse()
+                            .map_err(|_| format!("line {}: bad ratio", i + 1))?;
+                        Step::AssertRatio(op, n)
+                    }
                     "suggestions" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)
@@ -617,7 +667,8 @@ mod tests {
                 | Tick::Scroll { .. }
                 | Tick::ClickRow { .. }
                 | Tick::ClickTab { .. }
-                | Tick::ClickNode { .. } => {}
+                | Tick::ClickNode { .. }
+                | Tick::Drag { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }

@@ -1,0 +1,22 @@
+# The divider receipt: pane seams are cambium split geometry, and dragging one
+# resizes the tiling. Each seam is a thin surface (empty scene over the seam
+# clear); a press captures it, moves become ratios through cambium's
+# Split::ratio_at, release persists the session once. FRESH profile; no network.
+settle 30
+key escape
+
+# Split the window: Orrery left, Roster right, at the default 0.5.
+act Open Roster pane
+settle 5
+assert pane roster
+assert surface divider
+assert ratio == 0.5
+capture 01_divider_at_half
+
+# Drag the seam right (window 1024 wide: the band sits at ~509..515). The
+# canvas pane grows to ~0.68 of the width.
+drag 512 300 700 300
+settle 5
+assert ratio >= 0.65
+capture 02_divider_dragged
+log divider drag (cambium split furniture) self-drive complete

@@ -72,6 +72,12 @@ pub enum Action {
     /// Set the divider ratio of the active pane's split (drag the seam). Clamped
     /// by the geometry walker so neither side collapses.
     SetActivePaneDivider(f32),
+    /// Set a split's ratio by its path — the divider drag's lowering. Redraw
+    /// only; the shell saves the session once, on release.
+    SetSplitRatio {
+        path: Vec<frisket::SplitChoice>,
+        ratio: f32,
+    },
     /// Toggle maximize on the active pane (a host view state; frisket has no
     /// maximize op). A maximized pane takes the whole pane area.
     ToggleMaximizePane,
