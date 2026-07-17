@@ -84,6 +84,8 @@ enum Step {
     /// The shell resolves the row's window position (it owns the pane rects and
     /// rows), so the receipt names a row by text, not pixels.
     ClickRow(String),
+    /// Click the Roster's tab by label; the shell asks the strip where it is.
+    ClickTab(String),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
@@ -99,6 +101,7 @@ enum Step {
     AssertMaximized(bool),
     /// A Trail pane row's text contains this substring.
     AssertRow(String),
+    AssertTab(String),
     /// Set the active pane's divider ratio (drag the seam).
     Divider(f32),
     AssertSuggestions(CmpOp, usize),
@@ -144,6 +147,7 @@ pub enum Tick {
     Scroll { x: f32, y: f32, dx: f32, dy: f32 },
     /// Click the list-pane row containing this substring; the shell resolves it.
     ClickRow { substr: String },
+    ClickTab { label: String },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -250,6 +254,9 @@ impl Scenario {
             Step::ClickRow(substr) => Tick::ClickRow {
                 substr: substr.clone(),
             },
+            Step::ClickTab(label) => Tick::ClickTab {
+                label: label.clone(),
+            },
             Step::Scroll(x, y, dx, dy) => Tick::Scroll {
                 x: *x,
                 y: *y,
@@ -338,6 +345,16 @@ impl Scenario {
                     self.fail(format!(
                         "assert row '{substr}': trail {:?} roster {:?}",
                         snap.trail_rows, snap.roster_rows
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertTab(want) => {
+                let snap = crate::observe::snapshot(app);
+                if snap.roster_tab != want {
+                    self.fail(format!(
+                        "assert tab '{want}': the Roster is on '{}'",
+                        snap.roster_tab
                     ));
                 }
                 Tick::Wait
@@ -485,6 +502,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                 rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
             }),
             "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
+            "click-tab" if !rest.is_empty() => Step::ClickTab(rest.to_string()),
             "click" => {
                 let (x, y) = parse_xy(rest).ok_or_else(|| {
                     format!("line {}: click wants '<x> <y>': '{line}'", i + 1)
@@ -526,6 +544,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "maximized" => Step::AssertMaximized(true),
                     "not-maximized" => Step::AssertMaximized(false),
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
+                    "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
                     "suggestions" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)
@@ -587,7 +606,10 @@ mod tests {
                 // Pointer ticks route through the shell's surface plan + live
                 // sessions, which this App-only driver has not got; the headed
                 // scenario exercises them. No-op here.
-                Tick::Click { .. } | Tick::Scroll { .. } | Tick::ClickRow { .. } => {}
+                Tick::Click { .. }
+                | Tick::Scroll { .. }
+                | Tick::ClickRow { .. }
+                | Tick::ClickTab { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }

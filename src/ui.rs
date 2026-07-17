@@ -474,7 +474,20 @@ pub const CAMBIUM_SHEET: &str = "\
     .grid-row-selected { background-color: rgb(232, 150, 40); } \
     .grid-cell { color: rgb(200, 208, 224); padding: 5px 10px; \
                  white-space: nowrap; overflow: hidden; } \
-    .grid-row-selected .grid-cell { color: rgb(28, 22, 10); }";
+    .grid-row-selected .grid-cell { color: rgb(28, 22, 10); } \
+    .pane { background-color: rgb(22, 27, 40); } \n    .tablist { display: flex; height: 30px; background-color: rgb(18, 22, 33); } \
+    .tab { color: rgb(150, 160, 180); font-size: 12px; padding: 8px 14px; \
+           white-space: nowrap; } \
+    .tab.selected { color: rgb(232, 150, 40); \
+                    background-color: rgb(22, 27, 40); } \
+    .pane-empty { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; }";
+
+/// The height `.tablist` occupies in [`CAMBIUM_SHEET`], above a tabbed pane's
+/// body. The host owns the strip's geometry (cambium's strip sets none), so the
+/// host must also state its height: the Roster subtracts it from the grid's
+/// viewport and adds it to a row's y. `tablist_height_matches_the_sheet` holds
+/// this to what the sheet actually lays out.
+pub const TABLIST_HEIGHT: f32 = 30.0;
 
 fn qual(local: &str) -> QualName {
     QualName::new(None, Namespace::from(""), LocalName::from(local))

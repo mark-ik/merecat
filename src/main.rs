@@ -34,6 +34,8 @@ mod pane;
 mod pane_rows;
 mod roster_view;
 mod scenario;
+#[cfg(feature = "piccolo")]
+mod script;
 mod session;
 mod shell;
 mod surface;

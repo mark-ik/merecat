@@ -315,10 +315,20 @@ impl Shell {
                     .position(|r| r.text.contains(substr))
                     .map(crate::pane_rows::row_y)
                     .map(|y| y + crate::pane_rows::ROW_HEIGHT / 2.0),
-                Some(PaneContent::Roster) => crate::roster_view::roster_grid_rows(&self.app)
-                    .iter()
-                    .position(|r| r.title.contains(substr) || r.url.contains(substr))
-                    .map(crate::cambium_pane::grid_row_center_y),
+                // Only the Nodes tab draws rows. On another tab the row exists in
+                // the graph but not on screen, so refuse rather than click a row
+                // that isn't there and report the miss as a hit.
+                Some(PaneContent::Roster)
+                    if self
+                        .roster_grid
+                        .as_ref()
+                        .is_none_or(|g| g.selected_tab().0 == 0) =>
+                {
+                    crate::roster_view::roster_grid_rows(&self.app)
+                        .iter()
+                        .position(|r| r.title.contains(substr) || r.url.contains(substr))
+                        .map(crate::cambium_pane::grid_row_center_y)
+                }
                 _ => continue,
             };
             if let Some(local_y) = found {
@@ -330,6 +340,37 @@ impl Shell {
             }
         }
         tracing::warn!(%substr, "click-row: no list-pane row matched");
+    }
+
+    /// Click the Roster's tab labelled `label` (the scenario's `click-tab`). The
+    /// strip is a flex row of text-sized tabs, so the host cannot compute a tab's
+    /// x — it asks the layout, then presses at the tab the strip actually drew.
+    fn click_pane_tab(&mut self, label: &str) {
+        let plan = self.surface_plan();
+        for surface in &plan {
+            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
+                continue;
+            };
+            if self.pane_content(id) != Some(PaneContent::Roster) {
+                continue;
+            }
+            let dims = (
+                surface.rect.w.round().max(1.0) as u32,
+                surface.rect.h.round().max(1.0) as u32,
+            );
+            let Some(center) = self
+                .roster_grid
+                .as_ref()
+                .and_then(|g| g.tab_center(label, dims.0, dims.1))
+            else {
+                continue;
+            };
+            let (x, y) = (surface.rect.x + center.0, surface.rect.y + center.1);
+            self.deliver_press(x, y, MouseButton::Left);
+            self.deliver_release(x, y, MouseButton::Left);
+            return;
+        }
+        tracing::warn!(%label, "click-tab: no Roster tab matched");
     }
 
     /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
@@ -413,7 +454,13 @@ impl Shell {
                                     .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
                                 let actions = match (dims, self.roster_grid.as_mut()) {
                                     (Some((rw, rh)), Some(grid)) => {
-                                        grid.click(hit.local.0, hit.local.1, rw, rh)
+                                        let actions = grid.click(hit.local.0, hit.local.1, rw, rh);
+                                        // The strip emits no action — switching a
+                                        // tab is a state change in the widget's
+                                        // own state. Mirror it out so the rest of
+                                        // the host can see which tab is showing.
+                                        self.app.roster_tab = grid.selected_tab().0;
+                                        actions
                                     }
                                     _ => Vec::new(),
                                 };
@@ -541,7 +588,7 @@ impl Shell {
                             let grid = self
                                 .roster_grid
                                 .get_or_insert_with(crate::cambium_pane::RosterGrid::new);
-                            grid.sync(&self.app, rh as f32);
+                            grid.sync(&self.app, rw as f32, rh as f32);
                             grid.scene(rw, rh)
                         }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
@@ -665,6 +712,10 @@ impl Shell {
             }
             crate::scenario::Tick::ClickRow { substr } => {
                 self.click_pane_row(&substr);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::ClickTab { label } => {
+                self.click_pane_tab(&label);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),

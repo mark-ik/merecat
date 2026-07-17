@@ -75,6 +75,13 @@ pub struct App {
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
+    /// Which Roster tab is showing. A MIRROR, not the truth: cambium's tab strip
+    /// owns its selection (the widget's state, in the shell's runner), and the
+    /// shell copies it here after each dispatch so observation can see it — the
+    /// inverse of `content`, where the app holds the data and the shell holds the
+    /// live handle. Not persisted yet; restoring a pane's tab wants this on the
+    /// frisket leaf rather than on App, once a second pane grows tabs.
+    pub roster_tab: usize,
     /// Next pane id to mint. Kept above every id in the layout so a summon after
     /// a restore never collides with a persisted pane.
     next_pane_id: u64,
@@ -141,6 +148,7 @@ impl App {
                 frisket,
                 active_pane: None,
                 maximized: None,
+                roster_tab: 0,
                 next_pane_id,
                 events: Vec::new(),
             },
@@ -418,6 +426,7 @@ impl App {
             frisket: FrisketLayout::default(),
             active_pane: None,
             maximized: None,
+            roster_tab: 0,
             next_pane_id: 1,
             events: Vec::new(),
         }

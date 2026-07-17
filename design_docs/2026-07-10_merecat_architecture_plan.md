@@ -139,6 +139,7 @@ them in the meantime:
 | `surface` | surface list, rect math, hit-test, focus resolution | absent | rung 5 slice A births it |
 | `pane` | `FrisketLayout` in app truth, summon/close/divider Actions | absent | rung 5 slice C, if `frisket` is adopted |
 | `observe` | `snapshot(app)` + the `AppEvent` stream | landed (175 LOC) | AccessKit or automation consume it out-of-process |
+| `script` | capability-scoped Piccolo control scripts that read an app snapshot and emit `Action`s | landed (feature-gated first slice; host API only) | an explicit command/automation consumer or a second host appears |
 | `scenario` | the self-drive grammar + GPU self-capture | landed (517 LOC) | test-only builds change the dep graph |
 | `ui` | chrome DOM (omnibar, caption chip); pane tiles later | landed (rung 3; 534 LOC, 6 tests; hand-built `ScriptedDom` laid out by genet-layout, emitted as a paint list, composited as the chrome layer; no view framework) | a second chrome consumer appears, or a toolkit adoption changes the dep graph |
 
@@ -154,6 +155,33 @@ headless automation wanting `action + app`, a second shell, another app
 consuming a port, or feature isolation that changes the dependency graph.
 The likely eventual shape is `merecat-core` / `merecat-desktop` /
 `merecat-web`; until a gate fires, modules are correct.
+
+## Portable app-control scripts
+
+Piccolo belongs in Merecat for user-authored commands, workflows, and small
+pieces of portable glue that need Rust-native host bindings. It is not the
+browser-page JavaScript lane. Genet's Vano/Nova backend remains the primary
+64-bit JavaScript engine, with Boa as the pure-Rust and wasm/conformance lane;
+Piccolo is the stackless-Lua mod/control option.
+
+The first Merecat slice is deliberately narrow and feature-gated behind
+`piccolo`. A host supplies a snapshot and the script can call:
+
+- `mere.snapshot()` — read a JSON app summary;
+- `mere.open(address)` — emit `Action::OpenAddress`;
+- `mere.dispatch(name)` — emit an existing named `Action`;
+- `mere.summon(kind)` — emit `Action::SummonPane`.
+
+The host applies those actions through the existing `App::update` spine. The
+script receives no `App` reference and has no filesystem, network, process, DOM,
+or page-JavaScript binding. Read, dispatch, navigation, and pane capabilities
+are separate, and execution has a step budget. This is a host seam, not yet a
+user-facing omnibar or command-registry binding.
+
+The next surfaces are separate decisions: a richer read-only graph query
+snapshot, graph mutations lowered to new Actions, pane/chrome extension
+registration, and an explicit user-configurable workflow entry point. They
+should not be smuggled in as arbitrary Lua access to app state.
 
 ## Supply reachable today
 
@@ -258,7 +286,7 @@ daily-driver value, not by meerkat's module sizes.
    Gate: rung 3.
 8. **The long tail**. Comms and community services (Murm direct exchange +
    Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
-   scripting (rhai + document-host), theming (register-theme/tinct). Each is a
+   scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a
    port + Actions. A11y projection is NOT here: it is rung 5 (see this plan's own
    "recorded for later", which pulled it out of the long tail; the 2026-07-10 text
    contradicted itself by leaving it in this row). Gate, which this rung lacked:
@@ -301,9 +329,11 @@ how a rung-5 receipt came to read as rung-4-completable.
   settings under `session`, gated on rung 6, so the matrix demanded at rung 4 what the
   map delivered at rung 6. Settings now have their own module-map row.
 - (r5) Run the same scenario through keyboard input and through automation Actions (one
-  description, two runners). Merecat has **one** runner. The grammar also cannot drive
-  panes: no pointer verbs, no element verbs, no surface targeting. `settle` is still
-  frame-counting (default 20) though the shell already reads `session.settled()`.
+  description, two runners). Merecat now has the scenario runner plus a
+  feature-gated Piccolo control runner that emits Actions, but Piccolo does not
+  yet run the scenario grammar. The grammar also cannot drive panes: no pointer
+  verbs, no element verbs, no surface targeting. `settle` is still frame-counting
+  (default 20) though the shell already reads `session.settled()`.
 - (r5) Produce a coherent application snapshot and accessibility tree. The snapshot
   landed missing four of its six promised members (no windows, surfaces, focus target, or
   available actions). The a11y tree does not exist in merecat at all: no accesskit dep,
@@ -616,3 +646,19 @@ done-conditions story.
   names deliberately left on disk, to change together in one format migration rather than as two
   silent breaks: the sidecar is still `frame.json`, and `PaneContent::Orrery` is still `Orrery`.
   Receipts: frisket 14 tests, incipit 3, session-runtime 188, meerkat compiles green.
+- 2026-07-16: **Piccolo control scripting is integrated as a host seam.** Merecat's
+  opt-in `piccolo` feature wires Genet's `script-engine-api` and
+  `script-engine-piccolo` through `src/script.rs`. Four tests cover read-only
+  snapshots, typed navigation/pane/session Actions, capability denial, and the
+  step budget. The default build remains Piccolo-free. This does not claim page
+  JavaScript, arbitrary graph mutation, chrome extension registration, or a
+  user-facing workflow command; those remain explicit follow-on surfaces.
+- 2026-07-17: **The follow-on surfaces above now have a canonical cross-repo
+  plan**: the participant gate + packs plan
+  (`mere/design_docs/mere_docs/implementation_strategy/2026-07-17_participant_gate_packs_plan.md`,
+  designed with Mark). One authority gate for every non-UI actor (script, wasm
+  component, moot peer, agent, scenario runner); merecat's stake is doctrine 2
+  extended (proposals are typed Action mirrors, never strings), the palette
+  populated from participant nested graphs, and a typed merecat WIT world as
+  that plan's B3. The resident helper unit is named **servitor** (reserved on
+  crates.io); chartulary's nesting substrate (B0) landed the same day.

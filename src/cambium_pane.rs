@@ -20,18 +20,27 @@ use std::rc::Rc;
 
 use cambium::{
     AnyView, DomHandle, GenetAppRunner, GenetCtx, GenetElement, GridColumn, GridSpec, PointerClick,
-    data_grid, el, on_click,
+    TabStrip, data_grid, el, lens, on_click, tab_strip,
 };
 use genet_layout::{IncrementalLayout, ScrollOffsets};
+use layout_dom_api::LayoutDom;
 use genet_scripted_dom::{NodeId, ScriptedDom};
 
 use crate::app::App;
 use crate::roster_view::{RosterGridRow, roster_grid_rows};
 
-/// The Roster grid's state: the flat node rows and the pane height the grid
-/// virtualizes against.
+/// The Roster's tabs — `mere::roster`'s four data views over one grid. Only
+/// Nodes has a gatherer today; the rest render an honest empty state until
+/// theirs land (Links needs the edge families walked into `build_link_rows`).
+const ROSTER_TABS: [&str; 4] = ["Nodes", "Links", "Graphlets", "Fields"];
+
+/// The Roster pane's state: the tab strip, the flat node rows, and the pane
+/// size — the height the grid virtualizes against, and both dimensions for the
+/// pane's own backdrop.
 struct RosterState {
+    tabs: TabStrip,
     rows: Vec<RosterGridRow>,
+    viewport_w: f32,
     viewport_h: f32,
 }
 
@@ -65,16 +74,56 @@ fn roster_spec() -> GridSpec {
     }
 }
 
-/// Build the Roster grid view from state. Cells own their text and their target
-/// url (cambium's runner retains the view, so a cell cannot borrow `state`); a
-/// click on either column emits `Navigate` for that row.
+/// The Roster pane: a tab strip over the active tab's view. The strip is
+/// cambium's (consumer-pulled by this pane), lensed onto our `tabs` field; the
+/// Nodes tab is the node grid, the others an honest empty state until their
+/// gatherers land.
+fn roster_pane(state: &RosterState) -> RosterView {
+    let strip = lens(
+        |tabs: &mut TabStrip| tab_strip::<RosterAction>(tabs, &ROSTER_TABS),
+        |state: &mut RosterState| &mut state.tabs,
+    );
+    let body: RosterView = match state.tabs.selected {
+        0 => roster_grid(state),
+        _ => Box::new(
+            el::<_, RosterState, RosterAction>(
+                "div",
+                format!(
+                    "{} has no gatherer yet",
+                    ROSTER_TABS[state.tabs.selected.min(ROSTER_TABS.len() - 1)]
+                ),
+            )
+            .attr("class", "pane-empty"),
+        ),
+    };
+    // The pane paints its own backdrop at the pane's full size. A tab whose body
+    // is text-sized (an empty state) covers only a few rows of pixels, and what
+    // sits under a pane is not the pane's colour — so without this the bare gap
+    // shows through. Geometry inline, per the sheet contract; the colour is the
+    // host sheet's `.pane`, the same one the hand-DOM panes wear.
+    Box::new(
+        el::<_, RosterState, RosterAction>("div", (strip, body))
+            .attr("class", "pane")
+            .attr(
+                "style",
+                format!(
+                    "width: {}px; height: {}px;",
+                    state.viewport_w, state.viewport_h
+                ),
+            ),
+    )
+}
+
+/// The Nodes tab: the graph's node manifest as a grid. Cells own their text and
+/// their target url (cambium's runner retains the view, so a cell cannot borrow
+/// `state`); a click on either column emits `Navigate` for that row.
 fn roster_grid(state: &RosterState) -> RosterView {
     let cell_rows = state.rows.clone();
     let class_rows = state.rows.clone();
     data_grid(
         &roster_spec(),
         state.rows.len(),
-        state.viewport_h,
+        (state.viewport_h - crate::ui::TABLIST_HEIGHT).max(0.0),
         0.0,
         move |row, col| {
             let (text, url) = match cell_rows.get(row) {
@@ -100,12 +149,20 @@ fn roster_grid(state: &RosterState) -> RosterView {
     )
 }
 
-/// The pane-local y at the centre of grid row `idx` (below the sticky header).
-/// The scenario's `click-row` aims here, so a receipt clicks the row the grid
-/// actually drew rather than guessing at a list geometry the grid retired.
+/// The pane-local y at the centre of grid row `idx` — below the tab strip and
+/// the grid's sticky header. The scenario's `click-row` aims here, so a receipt
+/// clicks the row the grid actually drew rather than guessing at a list geometry
+/// the grid retired. `grid_row_center_y_hits_that_row` holds this to the layout.
 pub fn grid_row_center_y(idx: usize) -> f32 {
     let spec = roster_spec();
-    spec.header_height + idx as f32 * spec.row_height + spec.row_height / 2.0
+    crate::ui::TABLIST_HEIGHT + spec.header_height + idx as f32 * spec.row_height
+        + spec.row_height / 2.0
+}
+
+/// The label of Roster tab `idx`, clamped. The observation rendering of
+/// `App::roster_tab`, which is an index because the strip's selection is.
+pub fn tab_label(idx: usize) -> &'static str {
+    ROSTER_TABS[idx.min(ROSTER_TABS.len() - 1)]
 }
 
 /// The Roster pane's cambium grid: a retained runner over the node rows. Held by
@@ -120,25 +177,51 @@ impl RosterGrid {
     pub fn new() -> Self {
         let dom: DomHandle = Rc::new(RefCell::new(ScriptedDom::new()));
         let state = RosterState {
+            tabs: TabStrip::new(0).with_label("Roster"),
             rows: Vec::new(),
+            viewport_w: 0.0,
             viewport_h: 0.0,
         };
         let runner = RosterRunner::new(
             dom.clone(),
-            roster_grid as fn(&RosterState) -> RosterView,
+            roster_pane as fn(&RosterState) -> RosterView,
             state,
         );
         Self { dom, runner }
     }
 
-    /// Refresh the grid from graph truth and the pane's height. Rebuilds the
-    /// view (and its DOM) through the runner.
-    pub fn sync(&mut self, app: &App, viewport_h: f32) {
+    /// Refresh the grid from graph truth and the pane's size. Rebuilds the view
+    /// (and its DOM) through the runner. The size is the whole pane; the grid
+    /// virtualizes against what the tab strip leaves it.
+    pub fn sync(&mut self, app: &App, pane_w: f32, pane_h: f32) {
         let rows = roster_grid_rows(app);
         self.runner.update(|state| {
             state.rows = rows;
-            state.viewport_h = viewport_h;
+            state.viewport_w = pane_w;
+            state.viewport_h = pane_h;
         });
+    }
+
+    /// Which tab is active, and its label.
+    pub fn selected_tab(&self) -> (usize, &'static str) {
+        let i = self.runner.state().tabs.selected;
+        (i, ROSTER_TABS[i.min(ROSTER_TABS.len() - 1)])
+    }
+
+    /// The pane-local centre of the tab labelled `label`, at the pane's size.
+    /// Asks the LAYOUT where the tab is rather than recomputing its geometry:
+    /// the strip is a flex row of text-sized tabs, so a tab's x is whatever the
+    /// host sheet's padding and the label's own measured width put it at, and
+    /// only the layout knows that. `None` when no such tab is drawn.
+    pub fn tab_center(&self, label: &str, w: u32, h: u32) -> Option<(f32, f32)> {
+        let dom = self.dom.borrow();
+        let layout = IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
+        let tab = dom
+            .all_with_class(dom.document(), "tab")
+            .into_iter()
+            .find(|&t| dom.dom_children(t).any(|c| dom.text(c) == Some(label)))?;
+        let (x, y, tw, th) = layout.absolute_rect(&*dom, tab)?;
+        Some((x + tw / 2.0, y + th / 2.0))
     }
 
     /// The grid's scene at the pane's size, under the host's cambium sheet.
@@ -189,34 +272,105 @@ mod tests {
         }
     }
 
+    fn grid_with_rows() -> RosterGrid {
+        let mut g = RosterGrid::new();
+        g.runner.update(|state| {
+            state.rows = vec![row("alpha"), row("beta"), row("gamma")];
+            state.viewport_w = 512.0;
+            state.viewport_h = 600.0;
+        });
+        g
+    }
+
     /// The pane-event round trip, headless: lay the grid's DOM out at a pane size
     /// and hit-test the points a click would land on. Pins the integration this
     /// seam depends on — a cambium view's DOM must be hit-testable through
     /// genet-layout, or no cambium pane can take a click.
     #[test]
     fn grid_dom_is_hit_testable() {
-        let dom: DomHandle = Rc::new(RefCell::new(ScriptedDom::new()));
-        let state = RosterState {
-            rows: vec![row("alpha"), row("beta"), row("gamma")],
-            viewport_h: 600.0,
-        };
-        let _runner = RosterRunner::new(
-            dom.clone(),
-            roster_grid as fn(&RosterState) -> RosterView,
-            state,
-        );
-        let d = dom.borrow();
+        let g = grid_with_rows();
+        let d = g.dom.borrow();
         let layout = IncrementalLayout::new(&*d, &[crate::ui::CAMBIUM_SHEET], 512.0, 600.0);
         let scroll = ScrollOffsets::<NodeId>::default();
-        // Header (y<28), then rows at 28.. in 26px steps.
-        for (x, y) in [(20.0, 10.0), (20.0, 40.0), (20.0, 47.0), (20.0, 70.0)] {
-            let hit = layout.hit_test(&*d, x, y, &scroll);
-            println!("({x}, {y}) -> {:?}", hit.map(|n| n.raw()));
-        }
-        // A click inside the first row must land on some node.
         assert!(
-            layout.hit_test(&*d, 20.0, 40.0, &scroll).is_some(),
+            layout
+                .hit_test(&*d, 20.0, grid_row_center_y(0), &scroll)
+                .is_some(),
             "a point inside the grid's first row must hit a DOM node"
         );
+    }
+
+    /// `TABLIST_HEIGHT` is a host-side constant standing in for what the host
+    /// sheet lays the strip out at — the Roster subtracts it from the grid's
+    /// viewport and adds it to a row's y, so if the sheet and the constant drift
+    /// apart every click lands on the wrong row. Hold them together.
+    #[test]
+    fn tablist_height_matches_the_sheet() {
+        let g = grid_with_rows();
+        let d = g.dom.borrow();
+        let layout = IncrementalLayout::new(&*d, &[crate::ui::CAMBIUM_SHEET], 512.0, 600.0);
+        let scroll = ScrollOffsets::<NodeId>::default();
+        // The strip occupies its declared height: a point just inside its bottom
+        // edge is still a tab, and one just below it is not.
+        let inside = layout.hit_test(&*d, 20.0, crate::ui::TABLIST_HEIGHT - 2.0, &scroll);
+        let below = layout.hit_test(&*d, 20.0, crate::ui::TABLIST_HEIGHT + 2.0, &scroll);
+        assert!(inside.is_some(), "the strip must fill its declared height");
+        assert_ne!(
+            inside, below,
+            "the strip must END at its declared height: {}px hits the same node as \
+             the row below it, so the sheet and TABLIST_HEIGHT have drifted",
+            crate::ui::TABLIST_HEIGHT
+        );
+    }
+
+    /// The tabs are live end-to-end: a click at a tab's centre reaches the
+    /// strip's handler and switches the pane's body. This is the whole point of
+    /// the strip — that cambium's catalog widget takes a real pane click through
+    /// merecat's hit-test path, not just that it renders.
+    #[test]
+    fn clicking_a_tab_switches_the_body() {
+        let mut g = grid_with_rows();
+        assert_eq!(g.selected_tab(), (0, "Nodes"));
+        let (x, y) = g
+            .tab_center("Links", 512, 600)
+            .expect("the strip must draw a Links tab");
+        g.click(x, y, 512, 600);
+        assert_eq!(
+            g.selected_tab(),
+            (1, "Links"),
+            "clicking the Links tab must select it"
+        );
+        // The body followed the tab: the grid is gone, replaced by the empty
+        // state. (The pane's backdrop still covers those pixels — that is the
+        // point of it — so ask the DOM what is there, not whether anything is.)
+        let d = g.dom.borrow();
+        assert!(
+            d.all_with_class(d.document(), "grid").is_empty(),
+            "the Links tab has no gatherer, so no grid may remain under it"
+        );
+        assert!(
+            !d.all_with_class(d.document(), "pane-empty").is_empty(),
+            "a gatherer-less tab must say so rather than draw an empty grid"
+        );
+    }
+
+    /// `tab_center` must agree with the strip the sheet actually lays out: every
+    /// declared tab is drawn, in order, inside the strip's height. The scenario's
+    /// `click-tab` aims here, so a drift means receipts click the wrong tab.
+    #[test]
+    fn every_tab_is_drawn_in_the_strip() {
+        let g = grid_with_rows();
+        let mut last_x = 0.0;
+        for label in ROSTER_TABS {
+            let (x, y) = g
+                .tab_center(label, 512, 600)
+                .unwrap_or_else(|| panic!("the strip must draw a {label} tab"));
+            assert!(x > last_x, "tabs must run left to right: {label} at {x}");
+            assert!(
+                y > 0.0 && y < crate::ui::TABLIST_HEIGHT,
+                "{label}'s centre ({y}) must sit inside the strip"
+            );
+            last_x = x;
+        }
     }
 }

@@ -52,6 +52,8 @@ pub struct Snapshot {
     pub trail_rows: Vec<String>,
     /// When a Roster pane is in the tree, its row texts (the node manifest).
     pub roster_rows: Vec<String>,
+    /// The Roster's active tab label, mirrored out of the strip's own state.
+    pub roster_tab: &'static str,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -206,6 +208,7 @@ pub fn snapshot(app: &App) -> Snapshot {
                     .collect()
             })
             .unwrap_or_default(),
+        roster_tab: crate::cambium_pane::tab_label(app.roster_tab),
     }
 }
 

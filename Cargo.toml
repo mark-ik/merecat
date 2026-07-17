@@ -51,6 +51,10 @@ dirs = "6"
 # lane's netfetch feature gives LocalFetcher its https branch).
 inker = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-documents = { git = "https://github.com/mark-ik/genet.git", branch = "main", features = ["netfetch"] }
+# Optional app-control scripting. Piccolo is a Merecat mod/workflow backend,
+# not a browser-page engine; Vano/Boa remain the JavaScript lanes.
+script-engine-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
+script-engine-piccolo = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
 genet-extract = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-static-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # `linked_icon_href` (the page's declared `<link rel=icon>`) + image decode
@@ -87,6 +91,13 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = []
+# Piccolo drives Merecat's capability-scoped control scripts. It is kept
+# opt-in so the browser host's ordinary build carries no scripting runtime.
+piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo", "dep:serde_json"]
 
 # Registry patches mirrored from mere's workspace manifest: a `[patch]` lives
 # in the top-level manifest of whoever builds, so a standalone consumer of

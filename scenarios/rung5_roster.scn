@@ -33,4 +33,19 @@ click-row Example Domain
 settle 20
 assert focused example.com
 capture 02_roster_row_followed
+
+# The tab strip is cambium's catalog widget taking a real pane click (the first
+# consumer-pull addition). Clicking Links switches the body; the Nodes rows go
+# away, because only Nodes has a gatherer today.
+assert tab Nodes
+click-tab Links
+settle 5
+assert tab Links
+capture 03_roster_tab_links
+# Back to Nodes: the rows return, and a row click still navigates.
+click-tab Nodes
+settle 5
+assert tab Nodes
+assert row Example Domain
+capture 04_roster_tab_nodes
 log rung 5 slice D (Roster) self-drive complete
