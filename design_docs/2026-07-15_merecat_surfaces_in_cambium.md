@@ -55,6 +55,22 @@ family's crate-promotion gate, applied to components).
    shape. cambium has `keyed` for the reconciliation and `arrangement` for
    placement; the tab strip is the composition worth naming.
 
+   **LANDED 2026-07-17** — `cambium::tab_strip` (catalog: a tab strip) + the
+   Roster's four tabs (Roster: tabs, from cambium's catalog). Two things the
+   first consumer pulled that the sketch above did not predict:
+
+   - **Generic over `Action`.** The strip emits none (switching a tab is a state
+     change), but its siblings do — the Roster's grid bubbles a `Navigate`. A
+     `()`-actioned strip would force every such caller through `map_action`, so
+     the strip is generic like `data_grid`, not `()`-actioned like the controls.
+   - **The host owns the strip's geometry, so the host must state its height.**
+     The strip sets none by design. That makes `TABLIST_HEIGHT` a host-side
+     restatement of a sheet fact, which is a drift risk, so it is test-held. A
+     tab's *x* cannot be restated at all (flex + text measurement), so the host
+     asks `absolute_rect` rather than computing. **Any pane that composes a
+     cambium widget inherits this shape**: the widget's geometry is knowable only
+     from the layout, so ask it.
+
 2. **Split / divider pane** — the pane furniture. Today merecat hand-computes pane
    rects in `pane.rs` and has no divider drag. A cambium `split` (two children, a
    draggable divider, a ratio) owns the resize gesture and the seam, and both the
@@ -108,8 +124,10 @@ The order follows pull and dependency, not pane-by-pane:
 
 1. **Finish Roster on the grid** — event dispatch (`runner.dispatch_click`), which
    also proves the general pane-event path every cambium pane reuses.
-2. **Tab strip** — unlocks Roster's four tabs and is the first multi-consumer
-   addition. Consumer-pull PR to cambium.
+2. ~~**Tab strip**~~ — DONE 2026-07-17. Unlocked Roster's four tabs; the first
+   multi-consumer catalog addition. Only Nodes has a gatherer; Links / Graphlets
+   / Fields say so until the edge-family walks land (no general edge iterator —
+   `semantic_edges` / `arrangement_edges` / `containment_edges` each need one).
 3. **Gloss** — `graph_canvas_swatch` (existing) exercises the leaf-render pipeline
    the host still owes; the outline pulls **tree**.
 4. **Split** — migrate the pane furniture; `pane.rs` becomes a walk over cambium
