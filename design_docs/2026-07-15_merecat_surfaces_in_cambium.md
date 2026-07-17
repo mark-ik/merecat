@@ -128,8 +128,16 @@ The order follows pull and dependency, not pane-by-pane:
    multi-consumer catalog addition. Only Nodes has a gatherer; Links / Graphlets
    / Fields say so until the edge-family walks land (no general edge iterator —
    `semantic_edges` / `arrangement_edges` / `containment_edges` each need one).
-3. **Gloss** — `graph_canvas_swatch` (existing) exercises the leaf-render pipeline
-   the host still owes; the outline pulls **tree**.
+3. **Gloss** — minimap half DONE 2026-07-17: `graph_canvas_swatch` on the new
+   leaf pipeline (`scene_from_dom_with_leaves` — sizes each `<custom-leaf>` from
+   its laid-out box, repaints dirty leaves through the pane's `LeafRegistry`,
+   splices at the box). Data via `Canvas::minimap_geometry`; node colour from
+   mere's palette (NODE_SHEET carries into the minimap); a node click drains a
+   Navigate intent -> `OpenAddress`. NOTE the swatch's interaction contract is
+   **mirror-then-drain, not action bubbling**: its handlers are `Fn(&mut State,
+   Id)` mutators, so the pane records intents in its own state and the shell
+   drains them after dispatch — the tab strip's shape, not the grid's. The
+   outline half still pulls **tree** when outline data lands.
 4. **Split** — migrate the pane furniture; `pane.rs` becomes a walk over cambium
    splits, and divider drag arrives for free.
 5. **Sectioned list** — Trail migrates onto it; Steward/Alembic/Apparatus follow.

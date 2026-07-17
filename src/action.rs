@@ -131,6 +131,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Save session", Action::SaveSession),
         ("Open Roster pane", Action::SummonPane(PaneKind::Roster)),
         ("Open Trail pane", Action::SummonPane(PaneKind::Trail)),
+        ("Open Gloss pane", Action::SummonPane(PaneKind::Gloss)),
         ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),

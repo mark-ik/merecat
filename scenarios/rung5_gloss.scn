@@ -1,0 +1,29 @@
+# The Gloss pane receipt: the graph's minimap on cambium's graph_canvas_swatch —
+# the first custom-paint leaf a merecat pane renders (the leaf pipeline,
+# scene_from_dom_with_leaves). Node colour carries node identity from mere's
+# palette; a node click lowers Action::OpenAddress through the same spine as a
+# Roster row. Network-dependent (example.com gives a titled node); FRESH profile.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+
+# Open the Gloss pane: the minimap draws the whole graph off graph truth.
+act Open Gloss pane
+settle 5
+assert pane gloss
+assert surface pane
+capture 01_gloss_minimap
+
+# Move focus off example.com (open a different page), so clicking its minimap
+# node is a real re-navigation we can assert.
+open https://example.org/
+settle 30
+# Click the example.com node in the minimap (matched by url). It lowers
+# Action::OpenAddress and lands back on that node.
+click-node example.com
+settle 20
+assert focused example.com
+capture 02_gloss_node_followed
+log gloss pane (minimap leaf) self-drive complete

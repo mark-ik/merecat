@@ -86,6 +86,8 @@ enum Step {
     ClickRow(String),
     /// Click the Roster's tab by label; the shell asks the strip where it is.
     ClickTab(String),
+    /// Click the Gloss minimap's node by label/url substring.
+    ClickNode(String),
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
@@ -148,6 +150,7 @@ pub enum Tick {
     /// Click the list-pane row containing this substring; the shell resolves it.
     ClickRow { substr: String },
     ClickTab { label: String },
+    ClickNode { substr: String },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -256,6 +259,9 @@ impl Scenario {
             },
             Step::ClickTab(label) => Tick::ClickTab {
                 label: label.clone(),
+            },
+            Step::ClickNode(substr) => Tick::ClickNode {
+                substr: substr.clone(),
             },
             Step::Scroll(x, y, dx, dy) => Tick::Scroll {
                 x: *x,
@@ -503,6 +509,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
             }),
             "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
             "click-tab" if !rest.is_empty() => Step::ClickTab(rest.to_string()),
+            "click-node" if !rest.is_empty() => Step::ClickNode(rest.to_string()),
             "click" => {
                 let (x, y) = parse_xy(rest).ok_or_else(|| {
                     format!("line {}: click wants '<x> <y>': '{line}'", i + 1)
@@ -609,7 +616,8 @@ mod tests {
                 Tick::Click { .. }
                 | Tick::Scroll { .. }
                 | Tick::ClickRow { .. }
-                | Tick::ClickTab { .. } => {}
+                | Tick::ClickTab { .. }
+                | Tick::ClickNode { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }

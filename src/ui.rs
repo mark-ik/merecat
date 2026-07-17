@@ -439,13 +439,62 @@ fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
 /// Lay out a `ScriptedDom` under `sheet` and composite its paint list into a
 /// scene — the genet-layout path the chrome runs, generalized over the sheet so
 /// a cambium-built DOM (rung 5 slice D toolkit adoption) renders the same way,
-/// under its own class stylesheet. Text-only DOM; custom-paint leaves (the Gloss
-/// swatch) inject through the leaf registry, a follow-on.
+/// under its own class stylesheet. Text-only DOM; a view with custom-paint
+/// leaves goes through [`scene_from_dom_with_leaves`].
 pub fn scene_from_dom(dom: &ScriptedDom, sheet: &str, w: u32, h: u32) -> netrender::Scene {
     let layout = IncrementalLayout::new(dom, &[sheet], w as f32, h as f32);
     let scroll = ScrollOffsets::<DomNodeId>::default();
     let viewport = DeviceIntSize::new(w as i32, h as i32);
     let plist = layout.emit_paint_list(dom, &scroll, viewport);
+    let layers = [CompositeLayer {
+        commands: plist.commands(),
+        fonts: plist.fonts(),
+        images: plist.images(),
+    }];
+    composite_paint_layers(viewport, &layers).scene
+}
+
+/// Adapts sprigging's rendered leaf buffers to genet-layout's paint-list source
+/// (the orphan-rule-legal home: this crate owns the newtype). The same shape
+/// meerkat's `genet_render` proved; merecat re-owns it rather than importing
+/// meerkat, which merecat exists to obviate.
+struct LeafSource<'a>(&'a sprigging::RenderedLeaves);
+
+impl genet_layout::LeafPaintSource for LeafSource<'_> {
+    fn leaf_commands(&self, key: u64) -> Option<&[paint_list_api::PaintCmd]> {
+        self.0.get(key)
+    }
+}
+
+/// [`scene_from_dom`] plus custom-paint leaves (the Gloss minimap swatch): size
+/// each `<custom-leaf>` from its laid-out box, re-paint the dirty ones through
+/// the registry into `cache`, and splice their commands at their boxes. The
+/// leaf-render pipeline the surfaces-in-cambium plan lists as what the host
+/// still owed.
+pub fn scene_from_dom_with_leaves(
+    dom: &ScriptedDom,
+    sheet: &str,
+    w: u32,
+    h: u32,
+    registry: &mut sprigging::LeafRegistry<u64>,
+    cache: &mut sprigging::RenderedLeaves,
+) -> netrender::Scene {
+    let layout = IncrementalLayout::new(dom, &[sheet], w as f32, h as f32);
+    let sizes: std::collections::HashMap<u64, (f32, f32)> =
+        layout.custom_leaf_boxes().into_iter().collect();
+    registry.render_into(
+        |key| {
+            sizes.get(&key).map(|&(w, h)| sprigging::Size {
+                width: w,
+                height: h,
+            })
+        },
+        cache,
+    );
+    let scroll = ScrollOffsets::<DomNodeId>::default();
+    let viewport = DeviceIntSize::new(w as i32, h as i32);
+    let source = LeafSource(cache);
+    let plist = layout.emit_paint_list_with_leaves(dom, &scroll, viewport, &source);
     let layers = [CompositeLayer {
         commands: plist.commands(),
         fonts: plist.fonts(),
@@ -480,7 +529,13 @@ pub const CAMBIUM_SHEET: &str = "\
            white-space: nowrap; } \
     .tab.selected { color: rgb(232, 150, 40); \
                     background-color: rgb(22, 27, 40); } \
-    .pane-empty { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; }";
+    .pane-empty { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; } \
+    .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
+                           border: 1px solid rgb(52, 62, 86); border-radius: 7px; } \
+    .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; } \
+    .graph-canvas-swatch-expand { color: rgb(150, 160, 180); font-size: 10px; \
+                                  background-color: rgb(28, 34, 50); border: 0; \
+                                  border-radius: 4px; padding: 2px 5px; }";
 
 /// The height `.tablist` occupies in [`CAMBIUM_SHEET`], above a tabbed pane's
 /// body. The host owns the strip's geometry (cambium's strip sets none), so the

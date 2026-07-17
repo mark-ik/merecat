@@ -126,6 +126,9 @@ pub struct Shell {
     /// it and the click that hits it. `!Send`, like the content sessions, so it
     /// lives here rather than in App.
     roster_grid: Option<crate::cambium_pane::RosterGrid>,
+    /// The Gloss pane (minimap): the first pane whose cambium view carries a
+    /// custom-paint leaf, so it owns a leaf registry beside its runner.
+    gloss_pane: Option<crate::gloss_pane::GlossPane>,
 }
 
 impl Shell {
@@ -166,6 +169,7 @@ impl Shell {
             pending_fetches: browse::PendingFetches::default(),
             pointer_capture: None,
             roster_grid: None,
+            gloss_pane: None,
         };
         shell.run_effects(boot_effects);
         shell
@@ -373,6 +377,37 @@ impl Shell {
         tracing::warn!(%label, "click-tab: no Roster tab matched");
     }
 
+    /// Click the Gloss minimap's node matching `substr` (the scenario's
+    /// `click-node`). Same shape as `click_pane_tab`: only the pane knows where
+    /// its nodes are, so ask it, then press at the answer.
+    fn click_pane_node(&mut self, substr: &str) {
+        let plan = self.surface_plan();
+        for surface in &plan {
+            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
+                continue;
+            };
+            if self.pane_content(id) != Some(PaneContent::Gloss) {
+                continue;
+            }
+            let dims = (
+                surface.rect.w.round().max(1.0) as u32,
+                surface.rect.h.round().max(1.0) as u32,
+            );
+            let Some(center) = self
+                .gloss_pane
+                .as_ref()
+                .and_then(|p| p.node_center(substr, dims.0, dims.1))
+            else {
+                continue;
+            };
+            let (x, y) = (surface.rect.x + center.0, surface.rect.y + center.1);
+            self.deliver_press(x, y, MouseButton::Left);
+            self.deliver_release(x, y, MouseButton::Left);
+            return;
+        }
+        tracing::warn!(%substr, "click-node: no Gloss node matched");
+    }
+
     /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
     /// page scrolls when the pointer is on it, the canvas pans when it is not.
     /// Ephemeral, so it drives the session's semantic method directly (the
@@ -468,6 +503,32 @@ impl Shell {
                                     match action {
                                         crate::cambium_pane::RosterAction::Navigate(url) => {
                                             self.act(Action::OpenAddress(url))
+                                        }
+                                    }
+                                }
+                            }
+                            Some(PaneContent::Gloss) => {
+                                // Same hit-test round trip; the outcome arrives
+                                // as drained intents (the swatch mutates state
+                                // rather than bubbling), lowered here.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let intents = match (dims, self.gloss_pane.as_mut()) {
+                                    (Some((rw, rh)), Some(pane)) => {
+                                        pane.click(hit.local.0, hit.local.1, rw, rh)
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for intent in intents {
+                                    match intent {
+                                        crate::gloss_pane::GlossIntent::Navigate(url) => {
+                                            self.act(Action::OpenAddress(url))
+                                        }
+                                        crate::gloss_pane::GlossIntent::Expand => {
+                                            self.app.focus =
+                                                crate::surface::FocusTarget::Canvas;
                                         }
                                     }
                                 }
@@ -590,6 +651,15 @@ impl Shell {
                                 .get_or_insert_with(crate::cambium_pane::RosterGrid::new);
                             grid.sync(&self.app, rw as f32, rh as f32);
                             grid.scene(rw, rh)
+                        }
+                        Some(PaneContent::Gloss) => {
+                            // The minimap: the swatch's custom-paint leaf renders
+                            // through the pane's registry (the leaf pipeline).
+                            let pane = self
+                                .gloss_pane
+                                .get_or_insert_with(crate::gloss_pane::GlossPane::new);
+                            pane.sync(&self.app, rw as f32, rh as f32);
+                            pane.scene(rw, rh)
                         }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };
@@ -716,6 +786,10 @@ impl Shell {
             }
             crate::scenario::Tick::ClickTab { label } => {
                 self.click_pane_tab(&label);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::ClickNode { substr } => {
+                self.click_pane_node(&substr);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),

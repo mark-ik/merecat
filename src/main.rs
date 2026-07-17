@@ -29,6 +29,7 @@ mod app;
 mod browse;
 mod cambium_pane;
 mod content;
+mod gloss_pane;
 mod observe;
 mod pane;
 mod pane_rows;
