@@ -96,8 +96,3 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
         .collect()
 }
 
-/// The row a point at pane-local `y` falls on. Delegates to the shared row
-/// geometry (`pane_rows`).
-pub fn row_at(rows: &[TrailRow], local_y: f32) -> Option<usize> {
-    crate::pane_rows::row_index_at(rows.len(), local_y)
-}

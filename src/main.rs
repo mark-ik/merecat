@@ -30,9 +30,9 @@ mod browse;
 mod cambium_pane;
 mod content;
 mod gloss_pane;
+mod trail_pane;
 mod observe;
 mod pane;
-mod pane_rows;
 mod roster_view;
 mod scenario;
 #[cfg(feature = "piccolo")]

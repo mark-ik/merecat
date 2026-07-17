@@ -149,7 +149,14 @@ The order follows pull and dependency, not pane-by-pane:
    is built and tested in cambium for the in-tree consumers: the Workbench's
    platen tiling and stacked frisket panes pull it when they land. Both
    postures are deliberate; the module docs on both sides say which and why.
-5. **Sectioned list** — Trail migrates onto it; Steward/Alembic/Apparatus follow.
+5. **Sectioned list** — DONE 2026-07-17 (`cambium::sectioned_list`): Trail
+   migrated off hand-DOM onto it, and with it the fixed-height row geometry
+   (`pane_rows`, `trail_scene`, both `row_at`) is DELETED — both list panes ask
+   the layout for a row's rect now (Roster's grid, Trail's rows). NOT grown out
+   of `action_list` (palette-shaped; a resident pane wants none of that filter
+   machinery). Rows bubble their affordance (Navigate/Recover) out of the
+   runner, so a Trail row's activation reaches the graph on the same spine as a
+   keypress. Steward/Alembic/Apparatus follow when their data lands.
 6. **Inspector** (detail panel), **Comms** (message list) as their data lands.
 7. **Chrome/omnibar** onto `text_field_typed` + `command_surface` — the last
    hand-DOM holdout retires.

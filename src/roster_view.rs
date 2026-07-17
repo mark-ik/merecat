@@ -75,10 +75,6 @@ pub fn roster_rows(app: &App) -> Vec<RosterViewRow> {
     out
 }
 
-/// The row a point at pane-local `y` falls on. Shared list-pane geometry.
-pub fn row_at(rows: &[RosterViewRow], local_y: f32) -> Option<usize> {
-    crate::pane_rows::row_index_at(rows.len(), local_y)
-}
 
 /// One flat node row for the cambium `data_grid` (rung 5 slice D toolkit
 /// adoption). The grid is columned, not sectioned — the content-type buckets

@@ -129,6 +129,9 @@ pub struct Shell {
     /// The Gloss pane (minimap): the first pane whose cambium view carries a
     /// custom-paint leaf, so it owns a leaf registry beside its runner.
     gloss_pane: Option<crate::gloss_pane::GlossPane>,
+    /// The Trail pane: the sectioned list's first consumer (the hand-DOM Trail
+    /// retired). Retained like the others.
+    trail_pane: Option<crate::trail_pane::TrailPane>,
     /// The divider drag in flight: the pressed seam's placement, held from
     /// press to release (like `pointer_capture`, which also points at it).
     /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
@@ -175,6 +178,7 @@ impl Shell {
             pointer_capture: None,
             roster_grid: None,
             gloss_pane: None,
+            trail_pane: None,
             divider_drag: None,
         };
         shell.run_effects(boot_effects);
@@ -328,12 +332,18 @@ impl Shell {
             };
             // Each list pane resolves a row by ITS OWN geometry: Trail's
             // hand-DOM rows, the Roster's cambium grid (header + row height).
+            let dims = (
+                surface.rect.w.round().max(1.0) as u32,
+                surface.rect.h.round().max(1.0) as u32,
+            );
             let found = match self.pane_content(id) {
-                Some(PaneContent::Trail) => crate::trail_view::trail_rows(&self.app)
-                    .iter()
-                    .position(|r| r.text.contains(substr))
-                    .map(crate::pane_rows::row_y)
-                    .map(|y| y + crate::pane_rows::ROW_HEIGHT / 2.0),
+                // Rows are flow-laid-out under the host sheet now, so the pane's
+                // layout answers (the ask-the-layout rule), not row arithmetic.
+                Some(PaneContent::Trail) => self
+                    .trail_pane
+                    .as_ref()
+                    .and_then(|p| p.row_center(substr, dims.0, dims.1))
+                    .map(|(_, y)| y),
                 // Only the Nodes tab draws rows. On another tab the row exists in
                 // the graph but not on screen, so refuse rather than click a row
                 // that isn't there and report the miss as a hit.
@@ -483,13 +493,28 @@ impl Shell {
                     if button == MouseButton::Left {
                         match self.pane_content(id) {
                             Some(PaneContent::Trail) => {
-                                let rows = crate::trail_view::trail_rows(&self.app);
-                                if let Some(idx) = crate::trail_view::row_at(&rows, hit.local.1)
-                                    && let crate::trail_view::RowAction::Navigate(url) =
-                                        &rows[idx].action
-                                {
-                                    let url = url.clone();
-                                    self.act(Action::OpenAddress(url));
+                                // The same cambium round trip as the Roster.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let actions = match (dims, self.trail_pane.as_mut()) {
+                                    (Some((rw, rh)), Some(pane)) => {
+                                        pane.click(hit.local.0, hit.local.1, rw, rh)
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for action in actions {
+                                    match action {
+                                        crate::trail_pane::TrailPaneAction::Navigate(url) => {
+                                            self.act(Action::OpenAddress(url))
+                                        }
+                                        crate::trail_pane::TrailPaneAction::Recover(id) => {
+                                            // Awaits the deletion log (rung 6);
+                                            // loud, not silent.
+                                            tracing::warn!(%id, "Recover row: no deletion log yet");
+                                        }
+                                    }
                                 }
                             }
                             Some(PaneContent::Roster) => {
@@ -695,7 +720,11 @@ impl Shell {
                     // Opaque panel, so a transparent clear is fine.
                     let scene = match self.pane_content(id) {
                         Some(PaneContent::Trail) => {
-                            crate::ui::trail_scene(&crate::trail_view::trail_rows(&self.app), rw, rh)
+                            let pane = self
+                                .trail_pane
+                                .get_or_insert_with(crate::trail_pane::TrailPane::new);
+                            pane.sync(&self.app, rw as f32, rh as f32);
+                            pane.scene(rw, rh)
                         }
                         Some(PaneContent::Roster) => {
                             // The retained cambium grid: refresh it from graph

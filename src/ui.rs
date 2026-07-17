@@ -236,20 +236,7 @@ const CHROME_SHEET: &str = "\
                 border: 1px solid rgb(52, 62, 86); white-space: nowrap; } \
     .pane { position: absolute; background-color: rgb(22, 27, 40); } \
     .pane-label { position: absolute; color: rgb(190, 198, 214); \
-                  font-size: 14px; padding: 10px 14px; white-space: nowrap; } \
-    .trail-title { position: absolute; color: rgb(150, 160, 180); \
-                   font-size: 12px; padding: 4px 14px; white-space: nowrap; } \
-    .trail-row { position: absolute; color: rgb(210, 216, 230); \
-                 font-size: 13px; padding: 4px 18px; white-space: nowrap; \
-                 overflow: hidden; } \
-    .trail-nav { position: absolute; color: rgb(150, 190, 250); \
-                 font-size: 13px; padding: 4px 18px; white-space: nowrap; \
-                 overflow: hidden; } \
-    .trail-muted { position: absolute; color: rgb(120, 128, 145); \
-                   font-size: 13px; padding: 4px 18px; white-space: nowrap; } \
-    .trail-sel { position: absolute; color: rgb(28, 22, 10); font-size: 13px; \
-                 padding: 4px 18px; white-space: nowrap; overflow: hidden; \
-                 background-color: rgb(232, 150, 40); border-radius: 6px; }";
+                  font-size: 14px; padding: 10px 14px; white-space: nowrap; }";
 
 /// Where the omnibar caret roughly sits on screen, as `(position, size)` in
 /// physical px — for the host to aim the IME candidate window
@@ -386,51 +373,10 @@ pub fn pane_scene(label: &str, w: u32, h: u32) -> netrender::Scene {
 /// hits exactly the row it sees. Navigable rows read in a link color; muted
 /// hints and section titles are dimmed. Built on the same `ScriptedDom` +
 /// genet-layout path the chrome runs.
-pub fn trail_scene(rows: &[crate::trail_view::TrailRow], w: u32, h: u32) -> netrender::Scene {
-    use crate::trail_view::RowAction;
-
-    let mut dom = ScriptedDom::new();
-    let root = dom.document();
-    pane_panel(&mut dom, root, w, h);
-
-    for (i, row) in rows.iter().enumerate() {
-        let class = match row.action {
-            RowAction::Title => "trail-title",
-            RowAction::Muted => "trail-muted",
-            RowAction::Navigate(_) | RowAction::Recover(_) => "trail-nav",
-        };
-        pane_row(&mut dom, root, class, &row.text, crate::pane_rows::row_y(i));
-    }
-
-    finish_scene(&dom, w, h)
-}
-
-// The Roster pane renders as a cambium `data_grid` (rung 5 slice D toolkit
-// adoption; see `crate::cambium_pane`), so the hand-DOM `roster_scene` that
-// mirrored the Trail list is retired. Trail is still hand-DOM until it migrates
-// onto cambium too.
-
-/// The full-size panel background a list pane draws its rows over.
-fn pane_panel(dom: &mut ScriptedDom, root: DomNodeId, w: u32, h: u32) {
-    let panel = dom.create_element(qual("div"));
-    dom.set_attribute(panel, qual("class"), "pane");
-    dom.set_attribute(
-        panel,
-        qual("style"),
-        &format!("transform: translate(0px, 0px); width: {w}px; height: {h}px;"),
-    );
-    dom.append_child(root, panel);
-}
-
-/// One absolutely-positioned list-pane row at `y`.
-fn pane_row(dom: &mut ScriptedDom, root: DomNodeId, class: &str, text: &str, y: f32) {
-    let el = dom.create_element(qual("div"));
-    dom.set_attribute(el, qual("class"), class);
-    dom.set_attribute(el, qual("style"), &format!("transform: translate(0px, {y}px);"));
-    let node = dom.create_text(text);
-    dom.append_child(el, node);
-    dom.append_child(root, el);
-}
+// Both list panes (Roster's grid, Trail's sectioned list) render as cambium
+// views now (rung 5 slice D toolkit adoption; see `crate::cambium_pane`,
+// `crate::trail_pane`), so the hand-DOM list scenes and their fixed-height row
+// geometry are retired. Placeholder panes still use `pane_scene` below.
 
 fn finish_scene(dom: &ScriptedDom, w: u32, h: u32) -> netrender::Scene {
     scene_from_dom(dom, CHROME_SHEET, w, h)
@@ -530,7 +476,7 @@ pub const CAMBIUM_SHEET: &str = "\
     .tab.selected { color: rgb(232, 150, 40); \
                     background-color: rgb(22, 27, 40); } \
     .pane-empty { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; } \
-    .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
+    .list-section-title { color: rgb(150, 160, 180); font-size: 12px;                           padding: 10px 14px 4px 14px; white-space: nowrap; }     .list-row { color: rgb(200, 208, 224); font-size: 13px;                 padding: 5px 14px; white-space: nowrap; overflow: hidden; }     .list-row.muted { color: rgb(120, 130, 150); }     .list-row.action { color: rgb(232, 150, 40); }     .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
                            border: 1px solid rgb(52, 62, 86); border-radius: 7px; } \
     .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; } \
     .graph-canvas-swatch-expand { color: rgb(150, 160, 180); font-size: 10px; \

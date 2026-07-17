@@ -26,12 +26,13 @@ assert row example.com
 assert row example.org
 capture 01_trail_rows
 
-# Click the example.com row. The Trail pane is the right half (summon Right-split
-# off the Orrery at 0.5, so x>=512); "Recent" is row 0, example.org row 1,
-# example.com row 2. Row y = 8 + index*26, so example.com sits at y=60. The click
-# routes to the row, lowers Action::OpenAddress, and focuses that node.
-click 600 60
+# Click the example.com row by name: the shell asks the Trail pane's own layout
+# where that row sits (rows are flow-laid-out under the host sheet now — no fixed
+# row height to arithmetic against), presses there, and the row's Navigate
+# affordance bubbles out of the cambium sectioned_list, lowering
+# Action::OpenAddress through the same spine as a keypress.
+click-row example.com
 settle 30
 assert focused example.com
 capture 02_row_followed
-log rung 5 slice D self-drive complete
+log rung 5 slice D (Trail on sectioned_list) self-drive complete
