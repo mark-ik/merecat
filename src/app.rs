@@ -162,7 +162,28 @@ impl App {
         // single-pane (Orrery) tree. `next_pane_id` clears every restored id so a
         // later summon cannot collide with a persisted pane.
         let frisket = session::load_frisket_layout(&data_root).unwrap_or_default();
-        let next_pane_id = frisket.iter_leaves().map(|(id, _, _)| id.0).max().unwrap_or(0) + 1;
+        // Restore the lens-window spaces (rung 7 depth): each live slot gets
+        // its window reopened through the ordinary OpenWindow effect — the
+        // same port a fresh tear-out uses, so a restored window is spawned
+        // truth, not painted memory. The id ceiling spans EVERY space.
+        let lenses = session::load_lens_spaces(&data_root);
+        for (ordinal, space) in lenses.iter().enumerate() {
+            if space.is_some() {
+                effects.push(Effect::OpenWindow { ordinal });
+            }
+        }
+        let next_pane_id = frisket
+            .iter_leaves()
+            .map(|(id, _, _)| id.0)
+            .chain(
+                lenses
+                    .iter()
+                    .flatten()
+                    .flat_map(|s| s.iter_leaves().map(|(id, _, _)| id.0).collect::<Vec<_>>()),
+            )
+            .max()
+            .unwrap_or(0)
+            + 1;
         // Restore the workbench tiling, pruned to the live graph's members (a
         // tile whose node vanished between sessions collapses away).
         let present = canvas.graph().nodes().map(|(_, n)| n.id).collect();
@@ -210,7 +231,7 @@ impl App {
                 browser,
                 maximized: None,
                 window_count: 1,
-                lenses: Vec::new(),
+                lenses,
                 roster_tab: 0,
                 next_pane_id,
                 events: Vec::new(),
@@ -497,6 +518,10 @@ impl App {
                 // there (the lens-frisket-ops receipt's hinge).
                 self.active_pane = Some(pane_id);
                 self.events.push(AppEvent::PaneTornOut(content.tag().to_string()));
+                // The move is durable structure in TWO trees; persist it (the
+                // lens-window sidecar is what makes the window survive a
+                // restart).
+                effects.push(Effect::SaveSession);
                 effects.push(Effect::Redraw);
                 effects
             }

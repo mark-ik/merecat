@@ -333,6 +333,9 @@ impl Shell {
                     // The workbench tiling persists as platen's canonical pair
                     // (rung 5 slice E), so tiles/stacks/fractions survive too.
                     session::save_workbench(&self.app.data_root, &self.app.workbench);
+                    // The lens-window spaces (rung 7 depth): torn-out panes
+                    // survive a restart as windows again.
+                    session::save_lens_spaces(&self.app.data_root, &self.app.lenses);
                     // The browser-state sidecar (rung 6): content-on refreshed
                     // from live truth, so a restart respawns what was showing.
                     self.app.refresh_browser_states();
@@ -1384,8 +1387,10 @@ impl Shell {
 
     /// A lens window's surface plan: its OWN pane space (`App::lenses`) walked
     /// at its size — the same geometry the primary uses, per window. Canvas
-    /// leaf = the lens camera's view; other leaves = panes; seams = dividers.
-    /// No content inset and no chrome in a lens yet (follow-ons, said plainly).
+    /// leaf = the lens camera's view; other leaves = panes; seams = dividers;
+    /// a torn-out workbench's live tiles = content surfaces. No canvas-inset
+    /// content in a lens (the tile IS the lens's content story); chrome
+    /// composites separately in `render_lens`.
     fn lens_plan(&self, ordinal: usize, w: u32, h: u32) -> Vec<crate::surface::Surface> {
         let Some(Some(space)) = self.app.lenses.get(ordinal) else {
             return Vec::new();
@@ -1610,6 +1615,9 @@ impl Shell {
                 }
                 self.app.window_count = 1 + self.lens_windows.len();
                 self.app.note(crate::observe::AppEvent::WindowClosed);
+                // Persist the departure: a window closed on purpose stays
+                // closed across a restart (its slot saves as null).
+                self.act(Action::SaveSession);
                 return;
             }
             WindowEvent::Resized(size) => {

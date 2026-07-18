@@ -73,6 +73,30 @@ pub fn save_frisket_layout(data_root: &Path, layout: &FrisketLayout) {
     }
 }
 
+/// Persist the lens-window spaces at `windows.json` (rung 7 depth: windows
+/// are pane hosts, so torn-out panes survive a restart AS windows). Closed
+/// slots persist as `null`, keeping ordinals stable. Best-effort, like the
+/// rest.
+pub fn save_lens_spaces(data_root: &Path, lenses: &[Option<FrisketLayout>]) {
+    if let Err(err) = frisket_store::save_lens_spaces(data_root, lenses) {
+        tracing::warn!(%err, "failed to persist the lens windows");
+    }
+}
+
+/// Restore the lens-window spaces. Missing or corrupt starts with none (the
+/// primary window alone — the panes those windows held are gone with them,
+/// honestly, not silently folded into the primary).
+pub fn load_lens_spaces(data_root: &Path) -> Vec<Option<FrisketLayout>> {
+    match frisket_store::load_lens_spaces(data_root) {
+        Ok(Some(lenses)) => lenses,
+        Ok(None) => Vec::new(),
+        Err(err) => {
+            tracing::warn!(%err, "failed to load the lens-window sidecar; starting with none");
+            Vec::new()
+        }
+    }
+}
+
 /// The workbench tiling sidecar, beside `graph.json` (the meerkat convention:
 /// the tiling is the graph's, so it persists with the session).
 const WORKBENCH_FILE: &str = "workbench.json";

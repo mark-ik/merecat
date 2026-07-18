@@ -1,0 +1,21 @@
+# Rung 7 depth receipt, run 1 of the restore twin: window records persist.
+# A pane tears out to a lens window; the tear-out saves the lens-window
+# sidecar (windows.json beside frame.json). Run 2 (rung7_persist_verify, on
+# THIS run's profile) proves the window comes back as a window. Offline.
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+act Open Roster pane
+settle 5
+assert pane roster
+
+act Tear out pane
+settle 30
+assert windows == 2
+assert lens-pane 0:roster
+assert no-pane roster
+capture 01_torn_out
+
+log rung 7 persist run 1 (tear-out saved) complete

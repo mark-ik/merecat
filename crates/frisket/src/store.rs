@@ -63,6 +63,43 @@ pub fn load_frisket_layout(session_dir: &Path) -> io::Result<Option<FrisketLayou
     Ok(Some(layout))
 }
 
+/// Filename for the lens-window sidecar (beside `frame.json`): each lens
+/// window's frisket space by ordinal, `null` holding a closed window's slot
+/// so ordinals stay stable. One file for the whole set (the per-window
+/// subdirectory keyed by `FrisketId` is parked with multi-window, per the
+/// module note above).
+pub const WINDOWS_FILE: &str = "windows.json";
+
+/// Serialize the lens spaces and write them atomically (tmp + rename).
+pub fn save_lens_spaces(
+    session_dir: &Path,
+    lenses: &[Option<FrisketLayout>],
+) -> io::Result<()> {
+    let target = session_dir.join(WINDOWS_FILE);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(lenses)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let tmp = target.with_extension("json.tmp");
+    fs::write(&tmp, json)?;
+    fs::rename(&tmp, &target)?;
+    Ok(())
+}
+
+/// Read + parse the lens-window sidecar. `Ok(None)` when it doesn't exist
+/// (no lens windows were open — the common single-window session).
+pub fn load_lens_spaces(session_dir: &Path) -> io::Result<Option<Vec<Option<FrisketLayout>>>> {
+    let path = session_dir.join(WINDOWS_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)?;
+    let lenses: Vec<Option<FrisketLayout>> =
+        serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    Ok(Some(lenses))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{FrisketId, GraphId, InsertSide, PaneContent, PaneId, PaneNode};

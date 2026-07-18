@@ -1,0 +1,16 @@
+# Rung 7 depth receipt, run 2 of the restore twin (REUSES run 1's profile):
+# the lens window RESTORES as a window. App::new reads windows.json and
+# reopens each live slot through the ordinary OpenWindow effect — spawned
+# truth, not painted memory. The roster pane is back in its lens, not folded
+# into the primary. Offline.
+settle 40
+key escape
+
+assert windows == 2
+assert lens-pane 0:roster
+assert no-pane roster
+capture 01_primary_restored
+capture-lens 02_lens_restored
+settle 10
+
+log rung 7 persist run 2 (window restored) complete
