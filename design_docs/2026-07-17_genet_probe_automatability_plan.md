@@ -263,6 +263,28 @@ each of those two widgets wants regardless.
   no per-pane dispatch). 69 tests + the roster/trail/gloss/divergence scenarios
   green through the trait.
 
-Next: move the scenario parser + verb loop into genet-probe too (so the harness
-itself is shared, calling `Automatable` on `Shell`), then the second-consumer
-proof on isometry. The trait is the seam that makes both possible.
+- 2026-07-18 — **Slice 5: the shared scenario driver** (genet `382dd17`). The
+  parser + verb loop lifted off merecat into genet-probe: `Scenario::parse` reads
+  a generic grammar, `Scenario::tick(app)` drives an [`Automatable`] app one step
+  per frame (the app keeps its winit pump), and the two things the loop cannot do
+  itself sit behind a `Driveable` trait — `capture` (a screenshot) and `app_step`
+  (any app-specific verb, e.g. `assert pane roster`, passed through raw). Generic
+  verbs are shared: `act`, `click` by selector, `settle`, `assert text` / `event`
+  / `snap`, `log`, `capture`. A `click` miss attributes itself into the event
+  stream as `interaction-missed <selector>` — the divergence rule, generalized
+  off merecat into the loop. 11 crate-side tests over a mock `Driveable`.
+
+## Remaining, and a convergence to reconcile
+
+- **merecat migration onto the shared driver.** Its ~30 scenario verbs split:
+  the generic ones run through `genet_probe::Scenario`, the ~20 app-specific ones
+  (`assert pane`/`focused`/`tab`/`ratio`/`surface`/`suggestions`, `divider`, the
+  omnibar verbs) become `Driveable::app_step` arms, and `scenario_pump` calls
+  `tick`. Sizable and receipt-critical, so its own focused pass.
+- **Adjacent sibling work.** 2026-07-18 a sibling landed merecat `401d21f`
+  *"scenario parity: the Piccolo automation runner drives the grammar"* — a
+  second automation path (Piccolo scripts) over a scenario grammar. That and this
+  shared driver want reconciling into one grammar/loop rather than two; flag for
+  whoever takes the merecat migration.
+- **Second consumer (isometry)** — the real proof the driver is generic: a fresh
+  app implementing `Driveable`, driven by a scenario with zero new harness code.
