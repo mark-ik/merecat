@@ -1,3 +1,9 @@
+# Root package + workspace: `crates/frisket` joined at meerkat's deletion
+# (2026-07-18) — a same-repo path member, so the committed manifest still
+# carries no cross-repo local paths.
+[workspace]
+members = ["crates/frisket"]
+
 [package]
 name = "merecat"
 version = "0.1.0"
@@ -33,11 +39,10 @@ fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", b
 # material that moves here with the port, like fetch.
 session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
-# split tree. Already in the lock transitively through session-runtime (which
-# persists it via frisket_store to frame.json); this names it. Destined for
-# merecat with the port, so a direct git dep now, like fetch. The crates.io
-# `frisket` is a name-hold stub; this uses mere's real one from the workspace.
-frisket = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# split tree — HOME since meerkat's deletion (2026-07-18): a workspace member
+# of this repo, per the 2026-07-14 destination decision (its PaneContent
+# names merecat's panes). Carries the frame.json store as `frisket::store`.
+frisket = { path = "crates/frisket" }
 # The a11y/automation tree vocabulary (rung 5 slice F): UxTree + stitch +
 # stable path-derived ids. Not facade-re-exported by mere (a named facade
 # gap), so a direct git dep like frisket.
@@ -60,7 +65,7 @@ dirs = "6"
 # plan phase 4: merecat's content port spawns through the registry; the static
 # lane's netfetch feature gives LocalFetcher its https branch).
 inker = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-genet-documents = { git = "https://github.com/mark-ik/genet.git", branch = "main", features = ["netfetch"] }
+genet-documents = { git = "https://github.com/mark-ik/genet.git", branch = "main", features = ["netfetch", "livery"] }
 # Optional app-control scripting. Piccolo is a Merecat mod/workflow backend,
 # not a browser-page engine; Vano/Boa remain the JavaScript lanes.
 script-engine-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }

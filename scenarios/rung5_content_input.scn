@@ -31,7 +31,7 @@ capture 01_content_scrolled
 # the content pane (example.com is the canonical stable test domain). The click
 # routes to the content surface, resolves to a Navigate, and lowers through
 # Action::OpenAddress, so a new iana.org node joins the graph and takes focus.
-click 573 238
+click-at 573 238
 settle 50
 assert focused iana
 capture 02_followed_link

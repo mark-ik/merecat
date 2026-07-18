@@ -1,0 +1,36 @@
+# The settings matrix row, self-driven: "change engine/viewer settings and
+# SEE them apply". Two engines are registered (genet.web + genet.livery),
+# so picking a viewer is a real choice: the Apparatus pane's radio lowers
+# SetViewerOverride, the sidecar persists it, live content RESPAWNS through
+# the pinned route, and the Inspector reads the applied engine back off the
+# respawned session. Network-dependent (example.com); FRESH profile; the
+# restore twin reuses it.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+act Toggle live content
+settle 30
+assert content-live
+
+# The default route: the static stylo lane.
+act Open Inspector pane
+settle 5
+assert row Engine: genet.web
+assert row Viewer: auto
+
+# Retarget through the Apparatus pane: pick the livery lane by name. The
+# radio click lowers the typed Action; the respawn applies it visibly.
+act Open Apparatus pane
+settle 5
+assert pane apparatus
+click-row genet.livery
+settle 30
+assert event viewer-changed
+assert content-live
+assert row Viewer: genet.livery
+assert row Engine: genet.livery
+capture 01_livery_applied
+
+log settings row (viewer applied via pinned respawn) complete

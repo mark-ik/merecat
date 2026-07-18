@@ -45,12 +45,12 @@ fn pane_display_label(content: &PaneContent) -> String {
     }
 }
 
-/// The shared genet-probe scenario, parsed from `MERECAT_SHARED_SCENARIO` (a
+/// The scenario, parsed from `MERECAT_SCENARIO` (a
 /// path). A parse error yields a stillborn scenario whose first `finish` reports
 /// the failure — the harness learns WHY instead of timing out. `None` when the
 /// env var is unset (the merecat driver, or no driver, runs instead).
 fn shared_scenario_from_env() -> Option<genet_probe::Scenario> {
-    let path = std::path::PathBuf::from(std::env::var_os("MERECAT_SHARED_SCENARIO")?);
+    let path = std::path::PathBuf::from(std::env::var_os("MERECAT_SCENARIO")?);
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     // A parse error becomes a scenario that logs why and fails a step (an
     // assert on a field no snapshot has), so the run reports RESULT fail with the
@@ -70,7 +70,7 @@ fn shared_out_dir_from_env() -> std::path::PathBuf {
     let dir = std::env::var_os("MERECAT_CAPTURE_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            std::env::var_os("MERECAT_SHARED_SCENARIO")
+            std::env::var_os("MERECAT_SCENARIO")
                 .map(std::path::PathBuf::from)
                 .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
         })
@@ -130,14 +130,11 @@ pub struct Shell {
     ctrl: bool,
     /// Live Alt state, for the nav chords (Alt+Left / Alt+Right).
     alt: bool,
-    /// The self-drive scenario, when `MERECAT_SCENARIO` is set: pumped once
-    /// after every rendered frame; steps lower to ordinary Actions.
-    scenario: Option<crate::scenario::Scenario>,
-    /// The SHARED genet-probe scenario driver (activated by `MERECAT_SHARED_SCENARIO`
-    /// instead of `MERECAT_SCENARIO`): the same one-step-per-frame loop, but the
-    /// generic one every genet app shares, driving this Shell through its
-    /// `Automatable`/`Driveable` impl. Proves merecat and the shared driver are
-    /// one loop; mutually exclusive with `scenario` above. `shared_out_dir` stays
+    /// The genet-probe scenario driver (activated by `MERECAT_SCENARIO`): the
+    /// generic one-step-per-frame loop every genet app shares, driving this
+    /// Shell through its
+    /// `Automatable`/`Driveable` impl — the one scenario loop merecat runs.
+    /// `shared_out_dir` stays
     /// on `self` (the scenario is taken out during a tick) so `capture` can reach
     /// it. `shared_done` guards writing the sentinel exactly once.
     shared_scenario: Option<genet_probe::Scenario>,
@@ -184,6 +181,9 @@ pub struct Shell {
     /// The Workbench pane (rung 5 slice E): platen's tiling walked into cells
     /// wearing cambium tab strips. Retained like the others.
     workbench_pane: Option<crate::workbench_pane::WorkbenchPane>,
+    /// The Apparatus pane (the settings row): the focused node's viewer
+    /// override on a cambium radio_group. Retained like the others.
+    apparatus_pane: Option<crate::apparatus_pane::ApparatusPane>,
     /// A workbench tab drag in flight: the pressed tab's member, held from
     /// press to release. Release over another cell stacks (the model's
     /// `move_to_slot_of`); release on the same cell is a click (activate).
@@ -240,6 +240,13 @@ impl Shell {
         // rungs join by registration, not new dispatch code.
         let mut content_engines = SessionRegistry::new();
         content_engines.register(Box::new(StaticSessionEngine::new(LocalFetcher)));
+        // The second lane (the settings row's whole point): the clean-room
+        // Livery CSS/layout path, selectable per node via the viewer override.
+        // Two registered engines make "change the viewer and SEE it apply"
+        // a real capability rather than a stored preference.
+        content_engines.register(Box::new(genet_documents::LiverySessionEngine::new(
+            LocalFetcher,
+        )));
 
         let mut shell = Self {
             app,
@@ -249,7 +256,6 @@ impl Shell {
             cursor: (0.0, 0.0),
             ctrl: false,
             alt: false,
-            scenario: crate::scenario::Scenario::from_env(),
             shared_scenario: shared_scenario_from_env(),
             shared_out_dir: shared_out_dir_from_env(),
             pending_capture: None,
@@ -268,6 +274,7 @@ impl Shell {
             trail_pane: None,
             inspector_pane: None,
             workbench_pane: None,
+            apparatus_pane: None,
             wb_tab_drag: None,
             wb_divider_drag: None,
             divider_drag: None,
@@ -325,7 +332,13 @@ impl Shell {
                         node: None,
                         address: url.clone(),
                         content_type: None,
-                        pinned_engine: None,
+                        // The settings row: a sidecar viewer override pins the
+                        // route, so a respawn lands on the chosen lane.
+                        pinned_engine: self
+                            .app
+                            .browser
+                            .get(node)
+                            .and_then(|b| b.viewer_override.clone()),
                     };
                     let decision = self.route_policy.route(&request);
                     let spawn = SessionSpawnRequest::new(&url)
@@ -486,7 +499,10 @@ impl Shell {
         // all surfaces at once (no per-pane dispatch). Short-circuit `||` means a
         // hit presses once; only a total miss is attributable.
         let hit = self.click(&genet_probe::Selector::class("roster-cell").containing(substr))
-            || self.click(&genet_probe::Selector::class("list-row").containing(substr));
+            || self.click(&genet_probe::Selector::class("list-row").containing(substr))
+            // A settings option is a row for receipt purposes (the Apparatus
+            // pane's radio options).
+            || self.click(&genet_probe::Selector::class("radio").containing(substr));
         if !hit {
             self.app.note(crate::observe::AppEvent::InteractionMissed {
                 what: "click-row",
@@ -669,6 +685,35 @@ impl Shell {
                                         crate::gloss_pane::GlossIntent::Expand => {
                                             self.app.focus =
                                                 crate::surface::FocusTarget::Canvas;
+                                        }
+                                    }
+                                }
+                            }
+                            Some(PaneContent::Apparatus) => {
+                                // The same cambium round trip: the radio's own
+                                // selection moves, and the diff lowers as the
+                                // typed viewer Action for the FOCUSED node.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let intents = match (dims, self.apparatus_pane.as_mut()) {
+                                    (Some((rw, rh)), Some(pane)) => {
+                                        pane.click(hit.local.0, hit.local.1, rw, rh)
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for intent in intents {
+                                    match intent {
+                                        crate::apparatus_pane::ApparatusIntent::SetViewer(viewer) => {
+                                            if let Some(member) =
+                                                self.app.canvas.focused_member()
+                                            {
+                                                self.act(Action::SetViewerOverride {
+                                                    member,
+                                                    viewer,
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -918,9 +963,9 @@ impl Shell {
                 })
         };
         if let Some(member) = target
-            && let Some(data_uri) = decode_sprite_data_uri(path)
+            && let Some((data_uri, hull)) = decode_sprite(path)
         {
-            self.act(Action::SetNodeSprite { member, data_uri });
+            self.act(Action::SetNodeSprite { member, data_uri, hull });
             return;
         }
         // Not an image over a node: the file becomes a node. Forward slashes
@@ -1042,6 +1087,15 @@ impl Shell {
                             pane.sync(&self.app, rw as f32, rh as f32);
                             pane.scene(rw, rh)
                         }
+                        Some(PaneContent::Apparatus) => {
+                            // The settings row: the focused node's viewer
+                            // control (radio over the registered lanes).
+                            let pane = self
+                                .apparatus_pane
+                                .get_or_insert_with(crate::apparatus_pane::ApparatusPane::new);
+                            pane.sync(&self.app, rw as f32, rh as f32);
+                            pane.scene(rw, rh)
+                        }
                         _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
                     };
                     (scene, wgpu::Color::TRANSPARENT)
@@ -1118,9 +1172,6 @@ impl Shell {
                 "capture state"
             );
             let ok = capture_composed(host, &layers, w, h, &path);
-            if let Some(scenario) = self.scenario.as_mut() {
-                scenario.note_capture(&path, ok);
-            }
         }
 
         if needs_redraw {
@@ -1366,99 +1417,31 @@ impl Shell {
             }
             return;
         }
-        // Drain the semantic event stream every frame: into the scenario's
-        // log when one is running, dropped otherwise (a future diagnostics
-        // subscriber taps in here).
-        let events = self.app.take_events();
-        let Some(scenario) = self.scenario.as_mut() else {
-            return;
-        };
-        scenario.note_events(&events);
-        match scenario.tick(&self.app) {
-            crate::scenario::Tick::Act(actions) => {
-                for action in actions {
-                    self.act(action);
-                }
-                self.request_redraw();
-            }
-            // Pointer ticks drive the SAME surface-routed path winit does (one
-            // description, two runners): a synthetic click is a press+release.
-            crate::scenario::Tick::Click { x, y } => {
-                self.deliver_press(x, y, MouseButton::Left);
-                self.deliver_release(x, y, MouseButton::Left);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::Scroll { x, y, dx, dy } => {
-                self.deliver_wheel(x, y, dx, dy);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::ClickRow { substr } => {
-                self.click_pane_row(&substr);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::ClickTab { label } => {
-                self.click_pane_tab(&label);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::ClickNode { substr } => {
-                self.click_pane_node(&substr);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::Drag { from, to } => {
-                // A real gesture through the same methods winit drives: press,
-                // a mid step and the endpoint as moves, release.
-                self.deliver_press(from.0, from.1, MouseButton::Left);
-                let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
-                self.deliver_move(mid.0, mid.1);
-                self.deliver_move(to.0, to.1);
-                self.deliver_release(to.0, to.1, MouseButton::Left);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::DragTab { from, onto, edge } => {
-                self.drag_workbench_tab(&from, &onto, edge.as_deref());
-                self.request_redraw();
-            }
-            crate::scenario::Tick::DropFile { x, y, path } => {
-                self.drop_file(x, y, std::path::Path::new(&path));
-                self.request_redraw();
-            }
-            crate::scenario::Tick::Script(source) => {
-                self.run_scenario_script(&source);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::Wait => self.request_redraw(),
-            crate::scenario::Tick::Capture(path) => {
-                self.pending_capture = Some(path);
-                self.request_redraw();
-            }
-            crate::scenario::Tick::Done => {
-                if let Some(scenario) = self.scenario.take() {
-                    scenario.finish();
-                }
-                event_loop.exit();
-            }
-        }
     }
 
 }
 
-/// Decode a dropped image file into a face-sized PNG data-URI, or `None` for
-/// a file the image decoder does not read (which then becomes a node instead).
-/// Downscaled so the per-node URI stays small (the face draws at ~24-120px).
-/// The collider-hull trace meerkat pairs with this is a follow-on; the face
-/// alone meets the matrix row's "textures the node under it".
-fn decode_sprite_data_uri(path: &Path) -> Option<String> {
+/// Decode a dropped image file into a face-sized PNG data-URI plus its traced
+/// collider hull, or `None` for a file the image decoder does not read (which
+/// then becomes a node instead). Downscaled so the per-node URI stays small
+/// (the face draws at ~24-120px). The hull is canvas's shared tracer (the
+/// meerkat-harvest promotion), so the node collides at its picture.
+fn decode_sprite(path: &Path) -> Option<(String, Vec<(f32, f32)>)> {
     const SPRITE_MAX: u32 = 256;
     let rgba = image::open(path).ok()?.thumbnail(SPRITE_MAX, SPRITE_MAX).to_rgba8();
     let (w, h) = rgba.dimensions();
+    let hull = mere::canvas::sprite_hull::trace_sprite_hull(rgba.as_raw(), w, h);
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png)
         .write_image(rgba.as_raw(), w, h, image::ExtendedColorType::Rgba8)
         .ok()?;
     use base64::Engine as _;
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&png)
+    Some((
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png)
+        ),
+        hull,
     ))
 }
 
@@ -1494,11 +1477,12 @@ mod tests {
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
             .save(&png_path)
             .unwrap();
-        let uri = decode_sprite_data_uri(&png_path).expect("a png decodes");
+        let (uri, hull) = decode_sprite(&png_path).expect("a png decodes");
         assert!(uri.starts_with("data:image/png;base64,"));
+        assert!(hull.len() >= 3, "an opaque png traces a collider hull");
         let txt_path = dir.join("drop.txt");
         std::fs::write(&txt_path, "not an image").unwrap();
-        assert!(decode_sprite_data_uri(&txt_path).is_none());
+        assert!(decode_sprite(&txt_path).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -1646,6 +1630,11 @@ impl genet_probe::Automatable for Shell {
                         guards.push(("gloss", rect, pane.dom_ref()));
                     }
                 }
+                Some(PaneContent::Apparatus) => {
+                    if let Some(pane) = &self.apparatus_pane {
+                        guards.push(("apparatus", rect, pane.dom_ref()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -1726,32 +1715,274 @@ impl genet_probe::Driveable for Shell {
         true
     }
 
-    /// merecat's app-specific verbs, reached when the generic grammar passes a
-    /// line through. A representative slice today (`key`, `open`) — enough to
-    /// prove the seam and drive the omnibar/navigation the generic verbs cannot;
-    /// the full ~30-verb re-homing (the asserts, drag, the Piccolo `script` step)
-    /// is the coordinated retirement of `scenario.rs`. An unrecognized verb is a
-    /// loud failure, never a silent skip.
+    /// merecat's app-specific verbs, reached when the shared grammar passes a
+    /// line through. The whole vocabulary now: parse the line with merecat's own
+    /// parser and run it against the Shell via `run_scenario_step`. An unknown
+    /// verb fails loudly (parse returns Err), never a silent skip.
     fn app_step(&mut self, line: &str) -> Result<(), String> {
-        let (verb, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
-        let rest = rest.trim();
-        match verb {
-            "key" => {
-                let action = match rest {
-                    "escape" => Action::OmnibarClose,
-                    "enter" => Action::OmnibarCommit,
-                    other => return Err(format!("app_step: unknown key '{other}'")),
-                };
-                Shell::act(self, action);
-                Ok(())
-            }
-            "open" if !rest.is_empty() => {
-                Shell::act(self, Action::OpenAddress(rest.to_string()));
-                Ok(())
-            }
-            _ => Err(format!("app_step: unknown verb: {line}")),
-        }
+        let step = crate::scenario::parse(line)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("app_step: empty line '{line}'"))?;
+        self.run_scenario_step(&step)
     }
+}
+
+impl Shell {
+    /// Execute one merecat scenario step against the Shell — the app-specific
+    /// verbs the shared genet-probe loop hands to `Driveable::app_step`. This is
+    /// merecat's former `scenario.rs` `tick()` (asserts) and `scenario_pump`'s
+    /// `Tick` execution (interactions), unified into one pass: an assert reads
+    /// the observation snapshot and returns `Err` on mismatch; an interaction
+    /// drives the Shell directly. The generic verbs (act/settle/capture/log,
+    /// assert event/text/snap) never arrive — the shared loop owns them; their
+    /// arms below are defensive.
+    fn run_scenario_step(&mut self, step: &crate::scenario::Step) -> Result<(), String> {
+        use crate::action::CaretMove;
+        use crate::scenario::{CmpOp, EditKey, Step};
+
+        fn cmp_usize(op: &CmpOp, a: usize, b: usize) -> bool {
+            match op {
+                CmpOp::Eq => a == b,
+                CmpOp::Ge => a >= b,
+                CmpOp::Le => a <= b,
+            }
+        }
+        fn cmp_f32(op: &CmpOp, a: f32, b: f32) -> bool {
+            match op {
+                CmpOp::Eq => (a - b).abs() < 1e-3,
+                CmpOp::Ge => a >= b,
+                CmpOp::Le => a <= b,
+            }
+        }
+
+        match step {
+            // ---- interactions: drive the Shell (the former Tick execution) ----
+            Step::Open(url) => self.act(Action::OpenAddress(url.clone())),
+            Step::Omnibar { command } => self.act(Action::OmnibarOpen { command: *command }),
+            Step::Type(text) => {
+                for c in text.chars() {
+                    self.act(Action::OmnibarChar(c));
+                }
+            }
+            Step::Insert(text) => self.act(Action::OmnibarInsert(text.clone())),
+            Step::Key(key) => {
+                let action = match key {
+                    EditKey::Enter => Action::OmnibarCommit,
+                    EditKey::Escape => Action::OmnibarClose,
+                    EditKey::Backspace => Action::OmnibarBackspace,
+                    EditKey::Delete => Action::OmnibarDelete,
+                    EditKey::Up => Action::OmnibarMove(-1),
+                    EditKey::Down => Action::OmnibarMove(1),
+                    EditKey::Left => Action::OmnibarCaret(CaretMove::Left),
+                    EditKey::Right => Action::OmnibarCaret(CaretMove::Right),
+                    EditKey::Home => Action::OmnibarCaret(CaretMove::Home),
+                    EditKey::End => Action::OmnibarCaret(CaretMove::End),
+                };
+                self.act(action);
+            }
+            Step::Script(source) => self.run_scenario_script(source),
+            Step::Click(x, y) => {
+                self.deliver_press(*x, *y, MouseButton::Left);
+                self.deliver_release(*x, *y, MouseButton::Left);
+            }
+            Step::ClickRow(substr) => self.click_pane_row(substr),
+            Step::ClickTab(label) => self.click_pane_tab(label),
+            Step::ClickNode(substr) => self.click_pane_node(substr),
+            Step::Drag(from, to) => {
+                self.deliver_press(from.0, from.1, MouseButton::Left);
+                let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+                self.deliver_move(mid.0, mid.1);
+                self.deliver_move(to.0, to.1);
+                self.deliver_release(to.0, to.1, MouseButton::Left);
+            }
+            Step::DragTab(from, onto, edge) => {
+                self.drag_workbench_tab(from, onto, edge.as_deref());
+            }
+            Step::DropFile(x, y, path) => self.drop_file(*x, *y, std::path::Path::new(path)),
+            Step::Scroll(x, y, dx, dy) => self.deliver_wheel(*x, *y, *dx, *dy),
+            Step::Divider(ratio) => self.act(Action::SetActivePaneDivider(*ratio)),
+
+            // ---- asserts: read the snapshot, Err on mismatch (former tick) ----
+            Step::AssertOmnibar(open) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.omnibar.open != *open {
+                    let state = if *open { "open" } else { "closed" };
+                    return Err(format!("assert omnibar {state}: it is not"));
+                }
+            }
+            Step::AssertText(want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.omnibar.text != *want {
+                    return Err(format!(
+                        "assert omnibar-text '{want}': the omnibar holds '{}'",
+                        snap.omnibar.text
+                    ));
+                }
+            }
+            Step::AssertFocused(substr) => {
+                let needle = substr.to_lowercase();
+                let snap = crate::observe::snapshot(&self.app);
+                let hay = snap
+                    .focused
+                    .map(|f| format!("{} {}", f.url, f.caption).to_lowercase())
+                    .unwrap_or_default();
+                if !hay.contains(&needle) {
+                    return Err(format!("assert focused '{substr}': focused is '{hay}'"));
+                }
+            }
+            Step::AssertSurface(kind) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.surfaces.iter().any(|s| s == kind) {
+                    return Err(format!("assert surface '{kind}': the plan is {:?}", snap.surfaces));
+                }
+            }
+            Step::AssertFocus(kind) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.focus != *kind {
+                    return Err(format!("assert focus '{kind}': focus is '{}'", snap.focus));
+                }
+            }
+            Step::AssertPane(tag) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.panes.iter().any(|p| p == tag) {
+                    return Err(format!("assert pane '{tag}': the tree holds {:?}", snap.panes));
+                }
+            }
+            Step::AssertMaximized(want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.maximized != *want {
+                    let state = if *want { "maximized" } else { "not maximized" };
+                    return Err(format!("assert {state}: it is not"));
+                }
+            }
+            Step::AssertRow(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let hit = snap
+                    .trail_rows
+                    .iter()
+                    .chain(snap.roster_rows.iter())
+                    .chain(snap.inspector_rows.iter())
+                    .any(|r| r.contains(substr));
+                if !hit {
+                    return Err(format!(
+                        "assert row '{substr}': trail {:?} roster {:?} inspector {:?}",
+                        snap.trail_rows, snap.roster_rows, snap.inspector_rows
+                    ));
+                }
+            }
+            Step::AssertTab(want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.roster_tab != want {
+                    return Err(format!(
+                        "assert tab '{want}': the Roster is on '{}'",
+                        snap.roster_tab
+                    ));
+                }
+            }
+            Step::AssertRatio(op, want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let ok = snap.split_ratio.is_some_and(|r| cmp_f32(op, r, *want));
+                if !ok {
+                    return Err(format!(
+                        "assert ratio {op:?} {want}: the root split is {:?}",
+                        snap.split_ratio
+                    ));
+                }
+            }
+            Step::AssertSuggestions(op, n) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let len = snap.omnibar.suggestions.len();
+                if !cmp_usize(op, len, *n) {
+                    return Err(format!(
+                        "assert suggestions: have {len} ({:?}), wanted {op:?} {n}",
+                        snap.omnibar.suggestions
+                    ));
+                }
+            }
+            Step::AssertVisible => {
+                if !crate::observe::snapshot(&self.app).graph_visible {
+                    return Err("assert visible: every node is off-screen".to_string());
+                }
+            }
+            Step::AssertContentLive => {
+                let snap = crate::observe::snapshot(&self.app);
+                let focused = snap.focused.as_ref().map(|f| f.member);
+                let state = focused
+                    .and_then(|id| snap.content.iter().find(|(n, _)| *n == id))
+                    .map(|(_, s)| s.clone());
+                if state.as_deref() != Some("live") {
+                    return Err(format!(
+                        "assert content-live: focused node is {}",
+                        state.unwrap_or_else(|| "without content state".to_string())
+                    ));
+                }
+            }
+            Step::AssertWbCells(op, n) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !cmp_usize(op, snap.workbench_cells.len(), *n) {
+                    return Err(format!(
+                        "assert wb-cells: have {} ({:?}), wanted {op:?} {n}",
+                        snap.workbench_cells.len(),
+                        snap.workbench_cells
+                    ));
+                }
+            }
+            Step::AssertWbCell(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.workbench_cells.iter().any(|c| c.contains(substr)) {
+                    return Err(format!(
+                        "assert wb-cell '{substr}': the cells are {:?}",
+                        snap.workbench_cells
+                    ));
+                }
+            }
+            Step::AssertWbFraction(op, want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let ok = snap
+                    .workbench_fractions
+                    .first()
+                    .is_some_and(|f| cmp_f32(op, *f, *want));
+                if !ok {
+                    return Err(format!(
+                        "assert wb-fraction {op:?} {want}: the root fractions are {:?}",
+                        snap.workbench_fractions
+                    ));
+                }
+            }
+            Step::AssertWindows(op, n) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !cmp_usize(op, snap.windows, *n) {
+                    return Err(format!("assert windows {op:?} {n}: have {}", snap.windows));
+                }
+            }
+            Step::AssertA11y(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.a11y.iter().any(|l| l.contains(substr)) {
+                    return Err(format!(
+                        "assert a11y '{substr}': {} lines, none match (first 12: {:?})",
+                        snap.a11y.len(),
+                        snap.a11y.iter().take(12).collect::<Vec<_>>()
+                    ));
+                }
+            }
+
+            // ---- generic verbs the shared loop owns; never reached, defensive ----
+            Step::Act(label) => {
+                if !genet_probe::Automatable::act(self, label) {
+                    return Err(format!("act: no palette action labelled '{label}'"));
+                }
+            }
+            Step::Settle(_) | Step::Log(_) => {}
+            Step::Capture(name) => {
+                self.pending_capture = Some(self.shared_out_dir.join(format!("{name}.png")));
+            }
+            Step::AssertEvent(_) => {}
+        }
+        self.request_redraw();
+        Ok(())
+    }
+
 }
 
 

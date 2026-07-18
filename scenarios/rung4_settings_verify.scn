@@ -1,0 +1,14 @@
+# Settings restore twin: run on rung4_settings.scn's profile. A fresh process
+# restores the sidecar's viewer override AND applies it — the boot respawn
+# routes through the pinned engine, so the setting survives a restart as an
+# applied fact, not a stored string.
+settle 40
+key escape
+assert focused example.com
+assert content-live
+act Open Inspector pane
+settle 5
+assert row Viewer: genet.livery
+assert row Engine: genet.livery
+capture 01_livery_after_restart
+log settings restore twin complete

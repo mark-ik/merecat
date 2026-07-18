@@ -6,8 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use frisket::FrisketLayout;
+// The frame-sidecar store is frisket's own since meerkat's deletion (it moved
+// out of session-runtime with the pane model).
+use frisket::store as frisket_store;
 use mere::kernel::graph::Graph;
-use session_runtime::{frisket_store, session_graph_store};
+use session_runtime::session_graph_store;
 
 /// The per-user data root (`<data_dir>/merecat`). A `MERECAT_ROOT` override
 /// points the whole root at a scratch profile, so a headed-verification run

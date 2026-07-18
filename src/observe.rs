@@ -111,6 +111,8 @@ pub enum AppEvent {
     Reloaded(String),
     /// A dropped image textured this node's sprite face.
     NodeSpriteSet(Uuid),
+    /// A node's viewer override changed (the settings row).
+    ViewerChanged { node: Uuid, viewer: String },
     /// A lens window was requested (rung 7).
     WindowOpened,
     /// A lens window closed.
@@ -154,6 +156,7 @@ impl AppEvent {
             AppEvent::NavigatedForward(url) => format!("nav-forward {url}"),
             AppEvent::Reloaded(url) => format!("reloaded {url}"),
             AppEvent::NodeSpriteSet(node) => format!("sprite-set {node}"),
+            AppEvent::ViewerChanged { node, viewer } => format!("viewer-changed {node} {viewer}"),
             AppEvent::WindowOpened => "window-opened".to_string(),
             AppEvent::WindowClosed => "window-closed".to_string(),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),

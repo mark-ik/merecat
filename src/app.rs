@@ -356,8 +356,45 @@ impl App {
                 self.events.push(AppEvent::WindowOpened);
                 vec![Effect::OpenWindow, Effect::Redraw]
             }
-            Action::SetNodeSprite { member, data_uri } => {
+            Action::SetViewerOverride { member, viewer } => {
+                self.browser.entry(member).viewer_override = viewer.clone();
+                self.events.push(AppEvent::ViewerChanged {
+                    node: member,
+                    viewer: viewer.clone().unwrap_or_else(|| "auto".to_string()),
+                });
+                let mut effects = Vec::new();
+                // Live (or in-flight) content respawns through the now-pinned
+                // route, so the setting is seen applying (the Reload shape).
+                if matches!(
+                    self.content.get(member),
+                    Some(crate::content::NodeContent::Live | crate::content::NodeContent::Requested)
+                ) && let Some(url) = self
+                    .canvas
+                    .graph()
+                    .nodes()
+                    .find(|(_, n)| n.id == member)
+                    .map(|(_, n)| n.url().to_string())
+                {
+                    self.content.note_requested(member);
+                    self.events.push(AppEvent::ContentState {
+                        node: member,
+                        state: "requested".to_string(),
+                    });
+                    effects.push(Effect::CloseContent { node: member });
+                    effects.push(Effect::SpawnContent { node: member, url });
+                }
+                effects.push(Effect::SaveSession);
+                effects.push(Effect::Redraw);
+                effects
+            }
+            Action::SetNodeSprite { member, data_uri, hull } => {
                 self.canvas.set_node_sprite(member, data_uri);
+                // The traced collider: the node collides at its picture. Under
+                // 3 points the tracer found no opaque region — keep the
+                // silhouette collider rather than installing a degenerate one.
+                if hull.len() >= 3 {
+                    self.canvas.set_node_sprite_hull(member, hull);
+                }
                 self.events.push(AppEvent::NodeSpriteSet(member));
                 vec![Effect::SaveSession, Effect::Redraw]
             }

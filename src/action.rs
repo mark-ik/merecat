@@ -38,14 +38,25 @@ pub enum Action {
     Reload,
     /// Set a node's sprite face (a dropped image file, decoded by the shell
     /// into a PNG data-URI — the decode is platform/file work, so it happens
-    /// port-side and only the typed result lowers).
+    /// port-side and only the typed result lowers). `hull` is the traced
+    /// collider polygon (face-normalized; under 3 points = keep the
+    /// silhouette collider) — the meerkat-harvest tracer, now canvas's.
     SetNodeSprite {
         member: uuid::Uuid,
         data_uri: String,
+        hull: Vec<(f32, f32)>,
     },
     /// Open another window onto the same state (rung 7): a lens — the same
     /// graph through its own camera, per the one-state-N-windows doctrine.
     NewWindow,
+    /// Set a node's viewer override (the settings matrix row): `None` returns
+    /// to automatic routing; `Some(engine_id)` pins that lane. Persists in the
+    /// browser-state sidecar and respawns live content through the pinned
+    /// route, so the change is APPLIED, not merely stored.
+    SetViewerOverride {
+        member: uuid::Uuid,
+        viewer: Option<String>,
+    },
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
     /// Toggle the isometric (2.5D foreshortened) view.
@@ -211,6 +222,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Gloss pane", Action::SummonPane(PaneKind::Gloss)),
         ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
         ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
+        ("Open Apparatus pane", Action::SummonPane(PaneKind::Apparatus)),
         ("New window", Action::NewWindow),
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),

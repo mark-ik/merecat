@@ -27,6 +27,7 @@
 mod a11y;
 mod action;
 mod app;
+mod apparatus_pane;
 mod browse;
 mod cambium_pane;
 mod content;

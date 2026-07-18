@@ -1,0 +1,30 @@
+[package]
+name = "frisket"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mark-ik/merecat"
+description = "The pane model for Merecat: a savable tree of resizable panes, projected into uxtree. A frisket is the press frame whose cut-out apertures decide what prints where."
+documentation = "https://docs.rs/frisket"
+readme = "README.md"
+keywords = ["pane", "layout", "tiling", "merecat", "uxtree"]
+categories = ["accessibility", "gui"]
+
+# Relocated from mere's workspace at meerkat's deletion (2026-07-18): its
+# `PaneContent` names merecat's panes, so a library crate enumerating the
+# app's panes was an inversion (the 2026-07-14 destination decision,
+# executed). Relicensed MPL -> MIT/Apache on the way over — mere-original
+# code, the named step the rung-5 plan called out. The `frame.json` store
+# (was `session_runtime::frisket_store`) moved in as `store`.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+accesskit = "0.24"
+incipit = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["serde", "v4"] }
+uxtree = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
