@@ -349,9 +349,15 @@ how a rung-5 receipt came to read as rung-4-completable.
   RESULT ok (the fresh process finds the node focused, live, and inspected off
   the RESPAWNED session's facts). Multi-session (manifests, `sessions/<id>/`, a
   switcher) is the rung's remaining half, not claimed here.
-- (r4, not r6) Change engine/viewer settings and see them apply. The module map filed
-  settings under `session`, gated on rung 6, so the matrix demanded at rung 4 what the
-  map delivered at rung 6. Settings now have their own module-map row.
+- (r4, not r6) Change engine/viewer settings and see them apply. **Met 2026-07-18**,
+  with the strongest form available: a SECOND engine registered (genet.livery — the
+  clean-room CSS lane) makes the viewer override a real choice. The Apparatus pane
+  (re-chartered at the harvest: the graph-object facet analyzer, retargeting with
+  selection — never settings-as-nodes, the ruled-out design) carries the radio;
+  `SetViewerOverride` persists to the sidecar and RESPAWNS live content through the
+  routing policy's `pinned_engine`, and the Inspector reads the applied engine off
+  the respawned session. Receipts: `rung4_settings.scn` + its restore twin, both
+  headed RESULT ok (the override survives a restart as an applied fact).
 - (r5) Run the same scenario through keyboard input and through automation Actions (one
   description, two runners). Merecat now has the scenario runner plus a
   feature-gated Piccolo control runner that emits Actions, but Piccolo does not
@@ -378,14 +384,21 @@ how a rung-5 receipt came to read as rung-4-completable.
   RESULT ok.
 - Meerkat holds no capability absent from this matrix.
 
-Then meerkat leaves mere's workspace and the mere facade drops its two
-compatibility re-exports, `platen` and `workbench`, in the same pass. The facade
-re-exports twelve crates and only those two are scaffolding; the other ten
-(apparatus, canvas, forme, gloss, glossary, graphlets, kernel, linked_data, roster,
-trail) are the permanent library boundary. `workbench`'s move is an inference from the
-code (it hard-deps platen and lives inside `crates/platen/domain/workbench`), not a
-recorded decision, and it needs Mark's confirmation: if it does not move, a library
-crate ends up depending on the app's crate, which is an inversion.
+Then meerkat leaves mere's workspace — **EXECUTED 2026-07-18** (the funeral),
+with the boundary REVISED first (with Mark, same day): `platen` and
+`workbench` are NOT scaffolding after all — they are the **composition domain
+model** (prospective consumers: isometry's tiling, woodshed's knot-editor/tab
+work), so the facade keeps ALL twelve re-exports and only `frisket` moved.
+What the pass did: `crates/meerkat` + `crates/meerkat-browser-worker` +
+`crates/shell/frisket` left mere's workspace; frisket relocated to merecat as
+a workspace member (`crates/frisket`, relicensed MPL→MIT/Apache — the named
+step), carrying `session_runtime::frisket_store` in as `frisket::store` and
+the tear-out payload types as `frisket::tearout`; session-runtime dropped its
+frisket dep (193 tests green). The harvest that preceded it (gems taken:
+the sprite-hull tracer → `mere::canvas::sprite_hull`; gems noted; chaff
+named) is `2026-07-18_meerkat_harvest.md`. The old paragraph's `workbench`
+question is thereby answered: it does not move, and there is no inversion,
+because frisket (the app-vocabulary crate) is the one that left the library.
 
 ## What is deliberately NOT carried
 

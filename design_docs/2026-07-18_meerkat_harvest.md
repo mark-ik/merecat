@@ -121,17 +121,24 @@ apparatus/steward split ("apparatus splits its natures"):
 - **Settings (app-level) are none of the three.** Distinct surface, distinct
   pane, pane-shaped, later; the page catalog above is its checklist.
 
-## The funeral rite (the deletion pass this doc gates)
+## The funeral rite — EXECUTED 2026-07-18
 
-1. mere: remove `crates/meerkat` + `crates/meerkat-browser-worker` from the
-   workspace and disk; drop their workspace-dep entries.
-2. mere: `frisket` relocates to merecat (the 2026-07-14 decision — its
-   `PaneContent` names merecat's panes); `session_runtime::frisket_store`
-   goes with it; session-runtime drops its frisket dep.
-3. mere facade: **unchanged** — platen + workbench STAY library (the
-   2026-07-18 composition-domain-model decision reversed the boundary-pass
-   move; isometry/woodshed are the prospective consumers).
-4. merecat: frisket becomes a workspace member crate (same repo, so no local
-   paths in committed manifests); the git dep on mere.git's frisket drops.
-5. Docs: the founding doc's done-condition 2 stamps met; the obviation
-   ladder closes; the torch passes.
+1. ✔ mere: `crates/meerkat` + `crates/meerkat-browser-worker` removed from
+   the workspace and disk; their workspace-dep entries dropped.
+2. ✔ mere: `frisket` relocated to merecat; `session_runtime::frisket_store`
+   went with it (as `frisket::store`), plus the tear-out payload types (as
+   `frisket::tearout` — they name `PaneId`); session-runtime dropped its
+   frisket dep. 193 session-runtime tests green; `cargo check -p mere` green.
+3. ✔ mere facade: **unchanged** — platen + workbench stay library (the
+   composition-domain-model decision; isometry/woodshed are the prospective
+   consumers).
+4. ✔ merecat: frisket is a workspace member (`crates/frisket`, relicensed
+   MPL→MIT/Apache — the named step; same-repo path, so committed manifests
+   still carry no cross-repo local paths). Workspace suite green (frisket 17
+   incl. the moved store tests + bin 68); headed receipts re-run green on the
+   post-funeral binary (the settings pair exercises frame.json through the
+   relocated store).
+5. ✔ Docs: the architecture plan's deletion condition stamped executed; this
+   rite checked off. The torch is passed: merecat is the reference host, and
+   meerkat survives only in git history — reachable for archaeology, gone
+   from the tree.
