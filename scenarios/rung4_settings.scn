@@ -31,6 +31,10 @@ assert event viewer-changed
 assert content-live
 assert row Viewer: genet.livery
 assert row Engine: genet.livery
+# The livery lane reports structure through the trait now (genet
+# 8e7524f41c4) — the respawned session's facts carry the real title, no
+# more "none for this lane".
+assert row Document title: Example Domain
 capture 01_livery_applied
 
 log settings row (viewer applied via pinned respawn) complete
