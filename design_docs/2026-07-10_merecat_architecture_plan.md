@@ -291,9 +291,31 @@ daily-driver value, not by meerkat's module sizes.
    (pan/zoom/grab) through its own camera and closes independently.
    `window_count` mirrors into the snapshot (`assert windows`). Receipts: 69
    unit tests (viewport install/stash keeps two cameras distinct, inertia
-   included) and `rung7_window.scn` headed RESULT ok. NOT claimed: panes/chrome
-   in lens windows, per-window focus records, and tear-out (its own supply
-   chain, still blocked upstream) — the rung's remaining depth.
+   included) and `rung7_window.scn` headed RESULT ok.
+
+   **Depth LANDED 2026-07-18 (the forest adoption, merecat-shaped): windows
+   are pane hosts, and tear-out preserves identity.** Each lens owns a pane
+   space (`App::lenses`, a frisket tree over the one App); `lens_plan` walks
+   it per window and `render_lens` composites canvas + panes + seams through
+   the lens host, every pane through the SAME retained runner the primary
+   uses (`pane_scene_by_kind`, extracted). Lens presses dispatch into those
+   shared runners (`pane_click_actions`). `TearOutActivePane` (the
+   trichotomy's leaf arm, on the palette) moves the active leaf to the newest
+   lens — spawning one when none is open — with the pane id preserved.
+   **The identity story, said precisely**: in merecat's surface-compositor
+   shape, a pane IS its retained runner; a window is a lens over it, so
+   tear-out preserves DOM, widget state, and scroll *structurally* — the
+   outcome the forest dom exists to buy the one-shared-DOM shape (and did:
+   genet's `ForestDom` + cambium's `push_forest_projection`, landed the same
+   day, carry that shape for every OTHER cambium app, and remain merecat's
+   path if its chrome ever migrates to one cambium view). Receipts: the
+   tear-out unit test (leaf moves, id preserved, lens reuse) and
+   `rung7_tearout.scn` headed RESULT ok — the Roster's Links tab, selected in
+   the primary, is STILL selected after the move (`assert tab Links` across
+   windows), with `capture-lens` as the pixel half. Remaining depth, named:
+   content tiles + chrome in lenses, lens frisket ops (summon/divider in a
+   lens), the drag gesture over `frisket::tearout` (branch/fork arms), and
+   window-record persistence.
 8. **The long tail**. Comms and community services (Murm direct exchange +
    Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
    scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a

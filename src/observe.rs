@@ -76,6 +76,9 @@ pub struct Snapshot {
     pub can_forward: bool,
     /// How many windows are open (rung 7; mirrored from the shell).
     pub windows: usize,
+    /// Each live lens window's panes, as "ordinal:tag" strings (rung 7 depth:
+    /// windows are pane hosts). Empty when no lens is open.
+    pub lens_panes: Vec<String>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -117,6 +120,8 @@ pub enum AppEvent {
     WindowOpened,
     /// A lens window closed.
     WindowClosed,
+    /// The active pane tore out into a lens window (the leaf arm), by tag.
+    PaneTornOut(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -159,6 +164,7 @@ impl AppEvent {
             AppEvent::ViewerChanged { node, viewer } => format!("viewer-changed {node} {viewer}"),
             AppEvent::WindowOpened => "window-opened".to_string(),
             AppEvent::WindowClosed => "window-closed".to_string(),
+            AppEvent::PaneTornOut(tag) => format!("pane-torn-out {tag}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
@@ -300,6 +306,18 @@ pub fn snapshot(app: &App) -> Snapshot {
         can_back: app.history.can_back(),
         can_forward: app.history.can_forward(),
         windows: app.window_count,
+        lens_panes: app
+            .lenses
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, space)| space.as_ref().map(|s| (ordinal, s)))
+            .flat_map(|(ordinal, space)| {
+                space
+                    .iter_leaves()
+                    .map(move |(_, content, _)| format!("{ordinal}:{}", content.tag()))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
     }
 }
 

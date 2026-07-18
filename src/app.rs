@@ -93,6 +93,13 @@ pub struct App {
     /// shell owns the platform windows and copies the count here so
     /// observation (and a scenario) can see it.
     pub window_count: usize,
+    /// Each lens window's pane space (rung 7 depth: windows are pane HOSTS,
+    /// not canvas-only): a frisket tree over the one App, indexed by the lens
+    /// ordinal the shell's window records carry. `None` = that lens closed
+    /// (tombstoned so ordinals stay stable). The primary window's space stays
+    /// `frisket` above. Not persisted yet — window records at restart are the
+    /// rung's remaining depth.
+    pub lenses: Vec<Option<FrisketLayout>>,
     /// Which Roster tab is showing. A MIRROR, not the truth: cambium's tab strip
     /// owns its selection (the widget's state, in the shell's runner), and the
     /// shell copies it here after each dispatch so observation can see it — the
@@ -203,6 +210,7 @@ impl App {
                 browser,
                 maximized: None,
                 window_count: 1,
+                lenses: Vec::new(),
                 roster_tab: 0,
                 next_pane_id,
                 events: Vec::new(),
@@ -243,6 +251,25 @@ impl App {
                 self.browser.entry(id).content_on = on;
             }
         }
+    }
+
+    /// Seed a new lens window's pane space: a lone Orrery leaf with a freshly
+    /// minted pane id (globally unique across every window's tree, so surface
+    /// keys and the active-pane anchor never collide). Returns its ordinal.
+    fn seed_lens_space(&mut self) -> usize {
+        let pane_id = PaneId(self.next_pane_id);
+        self.next_pane_id += 1;
+        let ordinal = self.lenses.len();
+        self.lenses.push(Some(FrisketLayout {
+            id: frisket::FrisketId::new(format!("lens-{ordinal}")),
+            label: format!("lens {ordinal}"),
+            root: PaneNode::Leaf {
+                pane_id,
+                content: PaneContent::Orrery,
+                graph_id: GraphId::nil(),
+            },
+        }));
+        ordinal
     }
 
     /// Note a semantic event from outside `update` — the shell's own divergence
@@ -353,8 +380,76 @@ impl App {
             }
             Action::SaveSession => vec![Effect::SaveSession],
             Action::NewWindow => {
+                let ordinal = self.seed_lens_space();
                 self.events.push(AppEvent::WindowOpened);
-                vec![Effect::OpenWindow, Effect::Redraw]
+                vec![Effect::OpenWindow { ordinal }, Effect::Redraw]
+            }
+            // The tear-out trichotomy's LEAF arm: the active pane's frisket
+            // leaf leaves this window's tree and joins the newest lens's
+            // (spawning one when none is open). The pane's retained runner is
+            // untouched — in the surface-compositor shape, identity across
+            // windows is a property of the RUNNER staying put while the leaf
+            // changes trees, which is exactly what the forest dom exists to
+            // buy the one-shared-DOM shape.
+            Action::TearOutActivePane => {
+                let Some(active) = self.active_pane else {
+                    return vec![Effect::Redraw];
+                };
+                // Read the leaf wholesale (id + content + graph binding), then
+                // remove it from the primary tree.
+                let Some((pane_id, content, graph_id)) = self
+                    .frisket
+                    .iter_leaves()
+                    .find(|(id, _, _)| *id == active)
+                    .map(|(id, c, g)| (id, c.clone(), g))
+                else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(path) = crate::pane::path_of(&self.frisket, active) else {
+                    return vec![Effect::Redraw];
+                };
+                if !self.frisket.close_leaf(&path) {
+                    return vec![Effect::Redraw];
+                }
+                if self.maximized == Some(active) {
+                    self.maximized = None;
+                }
+                self.active_pane = None;
+                let mut effects = Vec::new();
+                // Land in the newest live lens, else spawn one for the pane.
+                let target = self.lenses.iter().rposition(Option::is_some);
+                let ordinal = match target {
+                    Some(ordinal) => ordinal,
+                    None => {
+                        let ordinal = self.seed_lens_space();
+                        self.events.push(AppEvent::WindowOpened);
+                        effects.push(Effect::OpenWindow { ordinal });
+                        ordinal
+                    }
+                };
+                if let Some(Some(lens)) = self.lenses.get_mut(ordinal) {
+                    // Anchor on the lens tree's LAST leaf (a summon needs a
+                    // leaf path; the root path only names a leaf while the
+                    // tree is a lone Orrery).
+                    let anchor_path = lens
+                        .iter_leaves()
+                        .last()
+                        .map(|(id, _, _)| id)
+                        .and_then(|id| crate::pane::path_of(lens, id))
+                        .unwrap_or_default();
+                    lens.summon_leaf(
+                        &anchor_path,
+                        InsertSide::Right,
+                        PaneNode::Leaf {
+                            pane_id,
+                            content: content.clone(),
+                            graph_id,
+                        },
+                    );
+                }
+                self.events.push(AppEvent::PaneTornOut(content.tag().to_string()));
+                effects.push(Effect::Redraw);
+                effects
             }
             Action::SetViewerOverride { member, viewer } => {
                 self.browser.entry(member).viewer_override = viewer.clone();
@@ -729,6 +824,7 @@ impl App {
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
             maximized: None,
             window_count: 1,
+            lenses: Vec::new(),
             roster_tab: 0,
             next_pane_id: 1,
             events: Vec::new(),
@@ -833,6 +929,58 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::SpawnContent { .. })),
             "a failed node retries on the next flip"
+        );
+    }
+
+    /// The tear-out leaf arm (rung 7 depth): the active pane's leaf leaves
+    /// the primary tree and joins a lens space — SAME pane id (the retained
+    /// runner never moves; identity is structural). No lens open spawns one.
+    #[test]
+    fn tear_out_moves_the_leaf_and_keeps_its_id() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Roster));
+        let roster_id = app
+            .frisket
+            .iter_leaves()
+            .find(|(_, c, _)| matches!(c, PaneContent::Roster))
+            .map(|(id, _, _)| id)
+            .expect("summoned");
+        let effects = app.update(Action::TearOutActivePane);
+        // Departure: the primary tree no longer holds a Roster leaf.
+        assert!(
+            !app.frisket
+                .iter_leaves()
+                .any(|(_, c, _)| matches!(c, PaneContent::Roster)),
+            "the roster left the primary tree"
+        );
+        // Arrival: a lens space spawned (no lens was open) and holds the SAME
+        // pane id — the leaf moved, nothing was recreated.
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::OpenWindow { .. })),
+            "tearing out with no lens spawns one: {effects:?}"
+        );
+        let lens = app.lenses[0].as_ref().expect("lens space seeded");
+        let moved = lens
+            .iter_leaves()
+            .find(|(_, c, _)| matches!(c, PaneContent::Roster))
+            .expect("the roster landed in the lens");
+        assert_eq!(moved.0, roster_id, "same pane id across the move");
+        // A second tear-out lands in the SAME lens (no window spam).
+        app.update(Action::SummonPane(PaneKind::Trail));
+        let effects = app.update(Action::TearOutActivePane);
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::OpenWindow { .. })),
+            "an open lens is reused"
+        );
+        let lens = app.lenses[0].as_ref().unwrap();
+        assert!(
+            lens.iter_leaves()
+                .any(|(_, c, _)| matches!(c, PaneContent::Trail)),
+            "the trail joined the existing lens"
         );
     }
 

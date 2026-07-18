@@ -1,0 +1,37 @@
+# Rung 7 depth receipt, self-driven: windows are pane hosts, and tear-out
+# preserves identity. The Roster summons in the primary, its tab switches to
+# Links (WIDGET state, living in the retained cambium runner), then the pane
+# tears out into a lens window. The identity receipt: the tab is STILL Links
+# after the move — the runner never moved, only its frisket leaf changed
+# trees. This is the outcome the forest dom exists to buy the one-shared-DOM
+# shape; merecat's surface-compositor gets it structurally, and the lens
+# renders the same pane through the same runner (capture-lens is the pixel
+# half). Offline.
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+act Open Roster pane
+settle 5
+assert pane roster
+click-tab Links
+settle 5
+assert tab Links
+
+# Tear out: the pane leaves the primary tree, a lens spawns to host it.
+act Tear out pane
+settle 30
+assert windows == 2
+assert event pane-torn-out roster
+assert no-pane roster
+assert lens-pane 0:roster
+
+# THE identity receipt: the Roster's tab selection survived the window move
+# untouched (the retained runner is the pane; the window is a lens over it).
+assert tab Links
+capture 01_primary_after_tearout
+capture-lens 02_roster_in_lens
+settle 10
+
+log rung 7 tear-out (leaf arm, identity preserved) complete

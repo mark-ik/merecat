@@ -43,6 +43,9 @@
 //! assert wb-cell <substr>   # a workbench cell's tab string contains substr
 //! assert wb-fraction ==|>=|<= <f>  # the workbench root split's FIRST fraction
 //! assert a11y <substr>      # an a11y-projection line ("role: label") contains substr
+//! assert lens-pane <substr> # a lens window's "ordinal:tag" pane contains substr
+//! assert no-pane <tag>      # NO pane with that tag is in the PRIMARY tree
+//! capture-lens <name>       # self-capture the first lens window's frame
 //! assert omnibar open|closed
 //! assert omnibar-text <str>  # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -107,6 +110,13 @@ pub enum Step {
     AssertA11y(String),
     /// The window count (primary + lenses) compares as given.
     AssertWindows(CmpOp, usize),
+    /// A lens window holds a pane whose "ordinal:tag" contains the substring.
+    AssertLensPane(String),
+    /// NO pane with the given tag is in the PRIMARY tree (the tear-out's
+    /// departure half).
+    AssertNoPane(String),
+    /// Self-capture the first live lens window's composed frame.
+    CaptureLens(String),
     /// The root split's ratio compares as given.
     AssertRatio(CmpOp, f32),
     Settle(u32),
@@ -276,6 +286,7 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                 Step::Divider(ratio)
             }
             "capture" if !rest.is_empty() => Step::Capture(rest.to_string()),
+            "capture-lens" if !rest.is_empty() => Step::CaptureLens(rest.to_string()),
             "assert" => {
                 let (what, arg) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
                 let arg = arg.trim();
@@ -296,6 +307,8 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
                     "a11y" if !arg.is_empty() => Step::AssertA11y(arg.to_string()),
+                    "lens-pane" if !arg.is_empty() => Step::AssertLensPane(arg.to_string()),
+                    "no-pane" if !arg.is_empty() => Step::AssertNoPane(arg.to_string()),
                     "windows" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)

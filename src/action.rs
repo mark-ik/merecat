@@ -47,8 +47,15 @@ pub enum Action {
         hull: Vec<(f32, f32)>,
     },
     /// Open another window onto the same state (rung 7): a lens — the same
-    /// graph through its own camera, per the one-state-N-windows doctrine.
+    /// graph through its own camera and its OWN pane space (each window holds
+    /// a frisket tree over the one App), per the one-state-N-windows doctrine.
     NewWindow,
+    /// Tear the active pane out into a lens window (the tear-out trichotomy's
+    /// leaf arm): the pane's frisket leaf leaves this window's tree and joins
+    /// the newest lens's (spawning one when none is open). The pane's retained
+    /// runner — its DOM, widget state, scroll — is untouched by the move, so
+    /// identity survives BY CONSTRUCTION in the surface-compositor shape.
+    TearOutActivePane,
     /// Set a node's viewer override (the settings matrix row): `None` returns
     /// to automatic routing; `Some(engine_id)` pins that lane. Persists in the
     /// browser-state sidecar and respawns live content through the pinned
@@ -224,6 +231,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
         ("Open Apparatus pane", Action::SummonPane(PaneKind::Apparatus)),
         ("New window", Action::NewWindow),
+        ("Tear out pane", Action::TearOutActivePane),
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Close pane", Action::CloseActivePane),
@@ -254,8 +262,9 @@ pub enum Effect {
     SpawnContent { node: uuid::Uuid, url: String },
     /// Close `node`'s live session; the port drops the handle.
     CloseContent { node: uuid::Uuid },
-    /// Open a lens window (platform work: window + surface creation).
-    OpenWindow,
+    /// Open a lens window (platform work: window + surface creation) showing
+    /// the pane space the app seeded at `App::lenses[ordinal]`.
+    OpenWindow { ordinal: usize },
     /// The projection is stale; present another frame.
     Redraw,
 }

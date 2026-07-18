@@ -142,6 +142,9 @@ pub struct Shell {
     /// A capture the next `render` fulfills from the very views it presents
     /// (never a re-rasterization — the receipt must be the presented frame).
     pending_capture: Option<std::path::PathBuf>,
+    /// A capture the next LENS render fulfills (the scenario's capture-lens
+    /// verb; targets the first live lens window).
+    pending_lens_capture: Option<std::path::PathBuf>,
     window: Option<Arc<Window>>,
     host: Option<SurfaceHost>,
     width: u32,
@@ -207,7 +210,7 @@ pub struct Shell {
     /// Lens windows requested but not yet created (window creation needs the
     /// `ActiveEventLoop`, which effects don't carry; the event handlers drain
     /// this while one is in scope).
-    pending_windows: usize,
+    pending_windows: Vec<usize>,
 }
 
 /// One lens window's record: its platform window, present stack, size,
@@ -221,6 +224,9 @@ struct LensWindow {
     viewport: mere::canvas::Viewport,
     /// Whether a canvas pointer gesture (grab/pan) is in flight here.
     pointer_down: bool,
+    /// Which `App::lenses` pane space this window shows (stable; the space
+    /// tombstones on close).
+    ordinal: usize,
 }
 
 impl Shell {
@@ -259,6 +265,7 @@ impl Shell {
             shared_scenario: shared_scenario_from_env(),
             shared_out_dir: shared_out_dir_from_env(),
             pending_capture: None,
+            pending_lens_capture: None,
             window: None,
             host: None,
             width: 1024,
@@ -279,7 +286,7 @@ impl Shell {
             wb_divider_drag: None,
             divider_drag: None,
             lens_windows: std::collections::HashMap::new(),
-            pending_windows: 0,
+            pending_windows: Vec::new(),
         };
         shell.run_effects(boot_effects);
         shell
@@ -395,7 +402,7 @@ impl Shell {
                 Effect::Redraw => self.request_redraw(),
                 // Window creation needs the ActiveEventLoop; note the request
                 // and let the event handler in scope drain it.
-                Effect::OpenWindow => self.pending_windows += 1,
+                Effect::OpenWindow { ordinal } => self.pending_windows.push(ordinal),
                 // Fetch-shaped effects were consumed above.
                 Effect::FetchPage { .. } | Effect::FetchFavicon { .. } => {}
             }
@@ -974,6 +981,157 @@ impl Shell {
         self.act(Action::OpenAddress(url));
     }
 
+    /// A pane click's resulting Actions, by kind — the cambium round trip
+    /// (hit-test the runner's DOM, dispatch, convert what bubbles) packaged
+    /// for any window. Lens windows drive this; the primary press arm carries
+    /// its own copy of these round trips today (collapsing it here is a
+    /// follow-on simplification). Side-mirrors happen here (roster_tab, the
+    /// gloss Expand focus, Trail's not-yet-wired Recover note); durable
+    /// intents come back as Actions for the caller to lower.
+    fn pane_click_actions(
+        &mut self,
+        content: &PaneContent,
+        local: (f32, f32),
+        dims: (u32, u32),
+    ) -> Vec<Action> {
+        let (lx, ly) = local;
+        let (rw, rh) = dims;
+        let mut out = Vec::new();
+        match content {
+            PaneContent::Trail => {
+                if let Some(pane) = self.trail_pane.as_mut() {
+                    for action in pane.click(lx, ly, rw, rh) {
+                        match action {
+                            crate::trail_pane::TrailPaneAction::Navigate(url) => {
+                                out.push(Action::OpenAddress(url))
+                            }
+                            crate::trail_pane::TrailPaneAction::Recover(id) => {
+                                self.app.note(
+                                    crate::observe::AppEvent::AffordanceUnavailable {
+                                        what: "recover",
+                                        target: id.clone(),
+                                    },
+                                );
+                                tracing::warn!(%id, "Recover row: no deletion log yet");
+                            }
+                        }
+                    }
+                }
+            }
+            PaneContent::Roster => {
+                if let Some(grid) = self.roster_grid.as_mut() {
+                    let actions = grid.click(lx, ly, rw, rh);
+                    self.app.roster_tab = grid.selected_tab().0;
+                    for action in actions {
+                        match action {
+                            crate::cambium_pane::RosterAction::Navigate(url) => {
+                                out.push(Action::OpenAddress(url))
+                            }
+                        }
+                    }
+                }
+            }
+            PaneContent::Gloss => {
+                if let Some(pane) = self.gloss_pane.as_mut() {
+                    for intent in pane.click(lx, ly, rw, rh) {
+                        match intent {
+                            crate::gloss_pane::GlossIntent::Navigate(url) => {
+                                out.push(Action::OpenAddress(url))
+                            }
+                            crate::gloss_pane::GlossIntent::Expand => {
+                                self.app.focus = crate::surface::FocusTarget::Canvas;
+                            }
+                        }
+                    }
+                }
+            }
+            PaneContent::Apparatus => {
+                if let Some(pane) = self.apparatus_pane.as_mut() {
+                    for intent in pane.click(lx, ly, rw, rh) {
+                        match intent {
+                            crate::apparatus_pane::ApparatusIntent::SetViewer(viewer) => {
+                                if let Some(member) = self.app.canvas.focused_member() {
+                                    out.push(Action::SetViewerOverride { member, viewer });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// One pane's scene by kind, at `(rw, rh)`, through the shared retained
+    /// runners — used by the primary render AND every lens window (rung 7
+    /// depth: windows are pane hosts). The runner being shared is what makes
+    /// tear-out identity-preserving in the surface-compositor shape: the pane
+    /// keeps its DOM, widget state, and scroll because the runner never moves.
+    /// Trail renders real rows off graph truth (slice D); kinds without real
+    /// content are labeled placeholders (slice C), honestly.
+    fn pane_scene_by_kind(&mut self, content: Option<&PaneContent>, rw: u32, rh: u32) -> Scene {
+        match content {
+            Some(PaneContent::Trail) => {
+                let pane = self
+                    .trail_pane
+                    .get_or_insert_with(crate::trail_pane::TrailPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            Some(PaneContent::Roster) => {
+                // The retained cambium grid: refresh it from graph truth at
+                // the pane's size, then draw its DOM.
+                let grid = self
+                    .roster_grid
+                    .get_or_insert_with(crate::cambium_pane::RosterGrid::new);
+                grid.sync(&self.app, rw as f32, rh as f32);
+                grid.scene(rw, rh)
+            }
+            Some(PaneContent::Gloss) => {
+                // The minimap: the swatch's custom-paint leaf renders through
+                // the pane's registry (the leaf pipeline).
+                let pane = self
+                    .gloss_pane
+                    .get_or_insert_with(crate::gloss_pane::GlossPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            Some(PaneContent::Inspector) => {
+                // Detail sections over app truth; inert content.
+                let pane = self
+                    .inspector_pane
+                    .get_or_insert_with(crate::inspector_pane::InspectorPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            Some(PaneContent::Workbench) => {
+                // The tiling's furniture: tab strips + cell bodies. Tile
+                // documents composite as their own surfaces in the PRIMARY
+                // plan; in a lens the furniture shows and tile compositing is
+                // a named follow-on.
+                let pane = self
+                    .workbench_pane
+                    .get_or_insert_with(crate::workbench_pane::WorkbenchPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            Some(PaneContent::Apparatus) => {
+                // The graph-object facet analyzer's first rows: the viewer
+                // control (radio over the registered lanes).
+                let pane = self
+                    .apparatus_pane
+                    .get_or_insert_with(crate::apparatus_pane::ApparatusPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            other => {
+                let label = other.map(|c| pane_display_label(c)).unwrap_or_default();
+                crate::ui::pane_scene(&label, rw, rh)
+            }
+        }
+    }
+
     /// The layered present (born minimal at rung 3, grows into the surface
     /// plan at rung 5): rasterize each surface's scene to its own texture and
     /// compose them in order onto the frame — the canvas below, the chrome
@@ -1039,65 +1197,11 @@ impl Shell {
                     (scene, wgpu::Color::WHITE)
                 }
                 crate::surface::SurfaceKind::Pane(id) => {
-                    // Trail renders real rows off graph truth (slice D); the
-                    // other kinds are still labeled placeholders (slice C).
-                    // Opaque panel, so a transparent clear is fine.
-                    let scene = match self.pane_content(id) {
-                        Some(PaneContent::Trail) => {
-                            let pane = self
-                                .trail_pane
-                                .get_or_insert_with(crate::trail_pane::TrailPane::new);
-                            pane.sync(&self.app, rw as f32, rh as f32);
-                            pane.scene(rw, rh)
-                        }
-                        Some(PaneContent::Roster) => {
-                            // The retained cambium grid: refresh it from graph
-                            // truth at the pane's size, then draw its DOM.
-                            let grid = self
-                                .roster_grid
-                                .get_or_insert_with(crate::cambium_pane::RosterGrid::new);
-                            grid.sync(&self.app, rw as f32, rh as f32);
-                            grid.scene(rw, rh)
-                        }
-                        Some(PaneContent::Gloss) => {
-                            // The minimap: the swatch's custom-paint leaf renders
-                            // through the pane's registry (the leaf pipeline).
-                            let pane = self
-                                .gloss_pane
-                                .get_or_insert_with(crate::gloss_pane::GlossPane::new);
-                            pane.sync(&self.app, rw as f32, rh as f32);
-                            pane.scene(rw, rh)
-                        }
-                        Some(PaneContent::Inspector) => {
-                            // Detail sections over app truth; inert content, so
-                            // no click routing joins the press path.
-                            let pane = self
-                                .inspector_pane
-                                .get_or_insert_with(crate::inspector_pane::InspectorPane::new);
-                            pane.sync(&self.app, rw as f32, rh as f32);
-                            pane.scene(rw, rh)
-                        }
-                        Some(PaneContent::Workbench) => {
-                            // The tiling's furniture: tab strips + cell bodies.
-                            // Live tile documents composite as their own
-                            // surfaces above this (the surface plan).
-                            let pane = self
-                                .workbench_pane
-                                .get_or_insert_with(crate::workbench_pane::WorkbenchPane::new);
-                            pane.sync(&self.app, rw as f32, rh as f32);
-                            pane.scene(rw, rh)
-                        }
-                        Some(PaneContent::Apparatus) => {
-                            // The settings row: the focused node's viewer
-                            // control (radio over the registered lanes).
-                            let pane = self
-                                .apparatus_pane
-                                .get_or_insert_with(crate::apparatus_pane::ApparatusPane::new);
-                            pane.sync(&self.app, rw as f32, rh as f32);
-                            pane.scene(rw, rh)
-                        }
-                        _ => crate::ui::pane_scene(&self.pane_label(id), rw, rh),
-                    };
+                    // The pane's scene by kind, through the SHARED retained
+                    // runners (extracted so lens windows render the same
+                    // panes through the same runners — the identity story).
+                    let content = self.pane_content(id);
+                    let scene = self.pane_scene_by_kind(content.as_ref(), rw, rh);
                     (scene, wgpu::Color::TRANSPARENT)
                 }
                 crate::surface::SurfaceKind::Divider(_) => {
@@ -1193,8 +1297,7 @@ impl Shell {
     /// camera from the canvas's CURRENT viewport (sensible initial framing),
     /// then owns it.
     fn drain_pending_windows(&mut self, event_loop: &ActiveEventLoop) {
-        while self.pending_windows > 0 {
-            self.pending_windows -= 1;
+        while let Some(ordinal) = self.pending_windows.pop() {
             let attributes = Window::default_attributes()
                 .with_title("Merecat — lens")
                 .with_inner_size(PhysicalSize::new(800u32, 600u32));
@@ -1223,6 +1326,7 @@ impl Shell {
                             cursor: (0.0, 0.0),
                             viewport: self.app.canvas.viewport(),
                             pointer_down: false,
+                            ordinal,
                         },
                     );
                 }
@@ -1232,57 +1336,173 @@ impl Shell {
         self.app.window_count = 1 + self.lens_windows.len();
     }
 
-    /// Render one lens window: install its viewport, frame the canvas at its
-    /// size, stash the (possibly inertia-advanced) viewport back, compose.
+    /// A lens window's surface plan: its OWN pane space (`App::lenses`) walked
+    /// at its size — the same geometry the primary uses, per window. Canvas
+    /// leaf = the lens camera's view; other leaves = panes; seams = dividers.
+    /// No content inset and no chrome in a lens yet (follow-ons, said plainly).
+    fn lens_plan(&self, ordinal: usize, w: u32, h: u32) -> Vec<crate::surface::Surface> {
+        let Some(Some(space)) = self.app.lenses.get(ordinal) else {
+            return Vec::new();
+        };
+        let area = Rect::full(w.max(1), h.max(1));
+        let tiling = crate::pane::place_panes(space, area, None);
+        let mut base: Vec<(SurfaceKind, Rect)> = tiling
+            .panes
+            .iter()
+            .map(|p| {
+                if matches!(p.content, PaneContent::Orrery) {
+                    (SurfaceKind::Canvas, p.rect)
+                } else {
+                    (SurfaceKind::Pane(p.id), p.rect)
+                }
+            })
+            .collect();
+        base.extend(
+            tiling
+                .dividers
+                .iter()
+                .map(|d| (SurfaceKind::Divider(d.index), d.rect)),
+        );
+        crate::surface::assemble(&base, &[], None, None)
+    }
+
+    /// A pane's `PaneContent` in a LENS window's space.
+    fn lens_pane_content(&self, ordinal: usize, id: frisket::PaneId) -> Option<PaneContent> {
+        self.app
+            .lenses
+            .get(ordinal)
+            .and_then(|s| s.as_ref())
+            .and_then(|space| {
+                space
+                    .iter_leaves()
+                    .find(|(pid, _, _)| *pid == id)
+                    .map(|(_, content, _)| content.clone())
+            })
+    }
+
+    /// Render one lens window: its pane space composited through its host —
+    /// the canvas leaf through the lens camera (installed around the frame,
+    /// stashed after), every other leaf through the SAME retained pane runner
+    /// the primary uses. That shared runner is the identity story: a pane torn
+    /// out to a lens keeps its DOM, widget state, and scroll because the
+    /// runner never moved — only its leaf changed trees.
     fn render_lens(&mut self, id: WindowId) {
+        let Some(lens) = self.lens_windows.get(&id) else {
+            return;
+        };
+        let (lw, lh, ordinal, lens_viewport) =
+            (lens.width, lens.height, lens.ordinal, lens.viewport);
+        let surfaces = self.lens_plan(ordinal, lw, lh);
+        if surfaces.is_empty() {
+            return;
+        }
+        // Pass 1 (mutable): produce each surface's scene at its rect size.
+        let mut new_viewport = lens_viewport;
+        let mut animating = false;
+        let mut scenes: Vec<PlannedScene> = Vec::with_capacity(surfaces.len());
+        for surface in &surfaces {
+            let rect = surface.rect;
+            let (rw, rh) = (rect.w.round().max(1.0) as u32, rect.h.round().max(1.0) as u32);
+            let (scene, clear) = match surface.kind {
+                crate::surface::SurfaceKind::Canvas => {
+                    let saved = self.app.canvas.viewport();
+                    self.app.canvas.set_viewport(new_viewport);
+                    self.app.canvas.resize(rw, rh);
+                    let (scene, anim) = self.app.canvas.frame(rw, rh);
+                    animating |= anim;
+                    new_viewport = self.app.canvas.viewport();
+                    self.app.canvas.set_viewport(saved);
+                    self.app
+                        .canvas
+                        .resize(self.width.max(1), self.height.max(1));
+                    (scene, wgpu::Color::WHITE)
+                }
+                crate::surface::SurfaceKind::Pane(pid) => {
+                    let content = self.lens_pane_content(ordinal, pid);
+                    let scene = self.pane_scene_by_kind(content.as_ref(), rw, rh);
+                    (scene, wgpu::Color::TRANSPARENT)
+                }
+                crate::surface::SurfaceKind::Divider(_) => {
+                    (Scene::default(), crate::ui::SEAM_CLEAR)
+                }
+                // No content inset / chrome in a lens (v1).
+                _ => continue,
+            };
+            scenes.push(PlannedScene {
+                id: surface.id.0,
+                kind: surface.kind,
+                placement: ExternalTexturePlacement::new(rect.dest()),
+                dims: (rw, rh),
+                scene,
+                clear,
+            });
+        }
+        // Pass 2 (immutable host): rasterize + compose, keyed per surface.
         let Some(lens) = self.lens_windows.get_mut(&id) else {
             return;
         };
-        let saved = self.app.canvas.viewport();
-        self.app.canvas.set_viewport(lens.viewport);
-        self.app.canvas.resize(lens.width, lens.height);
-        let (scene, animating) = self.app.canvas.frame(lens.width, lens.height);
-        lens.viewport = self.app.canvas.viewport();
-        self.app.canvas.set_viewport(saved);
-        self.app
-            .canvas
-            .resize(self.width.max(1), self.height.max(1));
-        let (_tex, view) = lens.host.core().rasterize_for(
-            u64::MAX ^ 1,
-            &scene,
-            lens.width,
-            lens.height,
-            ColorLoad::Clear(wgpu::Color::WHITE),
-        );
+        lens.viewport = new_viewport;
+        let layers: Vec<CompositeLayer> = scenes
+            .iter()
+            .map(|s| {
+                let (_tex, view) = lens.host.core().rasterize_for(
+                    s.id,
+                    &s.scene,
+                    s.dims.0,
+                    s.dims.1,
+                    ColorLoad::Clear(s.clear),
+                );
+                CompositeLayer {
+                    kind: s.kind,
+                    view,
+                    placement: s.placement,
+                }
+            })
+            .collect();
         let Some(frame) = lens.host.acquire() else {
             return;
         };
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        lens.host.renderer().compose_external_texture(
-            &view,
-            &target,
-            lens.host.format(),
-            lens.width,
-            lens.height,
-            ExternalTexturePlacement::new([0.0, 0.0, lens.width as f32, lens.height as f32]),
-        );
+        for layer in &layers {
+            lens.host.renderer().compose_external_texture(
+                &layer.view,
+                &target,
+                lens.host.format(),
+                lw,
+                lh,
+                layer.placement,
+            );
+        }
         frame.present();
+        // A lens self-capture composes the SAME presented layers (the primary
+        // capture discipline, per window).
+        if let Some(path) = self.pending_lens_capture.take() {
+            if !capture_composed(&lens.host, &layers, lw, lh, &path) {
+                tracing::warn!(path = ?path, "lens capture failed");
+            }
+        }
         if animating {
             lens.window.request_redraw();
         }
     }
 
-    /// Route one lens window's event: canvas gestures with the lens's own
-    /// viewport installed around the pass (pan, zoom, grab), resize, close.
+    /// Route one lens window's event: pane presses dispatch into the SHARED
+    /// retained runners (the same round trips the primary uses); canvas
+    /// gestures run with the lens's own camera installed around the pass
+    /// (pan, zoom, grab); resize, close.
     fn lens_event(&mut self, id: WindowId, event: WindowEvent) {
         let Some(lens) = self.lens_windows.get_mut(&id) else {
             return;
         };
         match event {
             WindowEvent::CloseRequested => {
+                let ordinal = lens.ordinal;
                 self.lens_windows.remove(&id);
+                if let Some(space) = self.app.lenses.get_mut(ordinal) {
+                    *space = None;
+                }
                 self.app.window_count = 1 + self.lens_windows.len();
                 self.app.note(crate::observe::AppEvent::WindowClosed);
                 return;
@@ -1298,11 +1518,50 @@ impl Shell {
                 self.render_lens(id);
                 return;
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                // A press routes by the lens's OWN plan: a pane press
+                // dispatches into the shared runner; a canvas press falls
+                // through to the camera-gesture block below.
+                let (x, y) = lens.cursor;
+                let (lw, lh, ordinal) = (lens.width, lens.height, lens.ordinal);
+                let plan = self.lens_plan(ordinal, lw, lh);
+                if let Some(hit) =
+                    crate::surface::hit_test(&plan, crate::surface::FocusTarget::Canvas, x, y)
+                    && let crate::surface::SurfaceKind::Pane(pid) = hit.kind
+                {
+                    if let Some(content) = self.lens_pane_content(ordinal, pid) {
+                        let dims = plan
+                            .iter()
+                            .find(|s| s.id == hit.id)
+                            .map(|s| {
+                                (
+                                    s.rect.w.round().max(1.0) as u32,
+                                    s.rect.h.round().max(1.0) as u32,
+                                )
+                            })
+                            .unwrap_or((lw, lh));
+                        let actions = self.pane_click_actions(&content, hit.local, dims);
+                        for action in actions {
+                            self.act(action);
+                        }
+                    }
+                    self.request_redraw();
+                    return;
+                }
+                // Canvas press: handled by the gesture block below.
+            }
             _ => {}
         }
         // Continuous canvas gestures, with the lens camera installed. The
         // canvas's semantic input methods are the shared vocabulary; only the
         // viewport differs per window (the gesture law holds unchanged).
+        let Some(lens) = self.lens_windows.get_mut(&id) else {
+            return;
+        };
         let saved = self.app.canvas.viewport();
         self.app.canvas.set_viewport(lens.viewport);
         self.app.canvas.resize(lens.width, lens.height);
@@ -1976,6 +2235,31 @@ impl Shell {
             Step::Settle(_) | Step::Log(_) => {}
             Step::Capture(name) => {
                 self.pending_capture = Some(self.shared_out_dir.join(format!("{name}.png")));
+            }
+            Step::CaptureLens(name) => {
+                self.pending_lens_capture =
+                    Some(self.shared_out_dir.join(format!("{name}.png")));
+                // The lens presents on its own redraw; nudge every window so
+                // the pending capture lands this pump.
+                self.request_redraw();
+            }
+            Step::AssertLensPane(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.lens_panes.iter().any(|p| p.contains(substr)) {
+                    return Err(format!(
+                        "assert lens-pane '{substr}': the lens spaces hold {:?}",
+                        snap.lens_panes
+                    ));
+                }
+            }
+            Step::AssertNoPane(tag) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.panes.iter().any(|p| p == tag) {
+                    return Err(format!(
+                        "assert no-pane '{tag}': the primary tree still holds {:?}",
+                        snap.panes
+                    ));
+                }
             }
             Step::AssertEvent(_) => {}
         }
