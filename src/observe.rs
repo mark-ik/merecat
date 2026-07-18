@@ -67,6 +67,10 @@ pub struct Snapshot {
     /// The workbench's ROOT split fractions (empty for a lone cell). The
     /// workbench-divider receipts assert against these after a drag.
     pub workbench_fractions: Vec<f32>,
+    /// The accessibility projection as "role: label" lines (rung 5 slice F):
+    /// the stitched application tree, flattened, so a scenario can assert a
+    /// node the same way a screen reader would announce it.
+    pub a11y: Vec<String>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -266,6 +270,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         },
         workbench_cells: workbench_cells(app),
         workbench_fractions: app.workbench.weights(),
+        a11y: crate::a11y::a11y_lines(app),
     }
 }
 

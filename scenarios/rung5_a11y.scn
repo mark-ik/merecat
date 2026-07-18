@@ -1,0 +1,34 @@
+# Rung 5 slice F receipt, self-driven: the accessibility projection. One
+# stitched application tree over app truth — chrome, the frisket pane
+# structure, the workbench tiling, and the live document's structural
+# outline — asserted through the same observation surface a screen-reader
+# bridge would consume. The document node DECLARES its partial capability
+# (structural outline only), per the no-placebo rule. Network-dependent
+# (example.com); run on a FRESH profile.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+act Open node in Workbench
+settle 30
+assert content-live
+
+# The stitched tree: the pane structure names the workbench leaf, platen's
+# tiling projects its tab, the live document announces with its real title
+# and outline, and the caption chip is in the chrome subtree.
+assert a11y group: workbench
+assert a11y tab: Tile
+assert a11y document: Example Domain
+assert a11y heading: Example Domain
+assert a11y link: Learn more
+assert a11y label: Example Domain
+
+# The omnibar joins the chrome subtree while open, carrying its live text.
+omnibar find
+type meer
+assert a11y textinput: omnibar = meer
+key escape
+capture 01_a11y
+
+log rung 5 slice F (a11y projection) self-drive complete

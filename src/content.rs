@@ -42,16 +42,27 @@ pub struct ContentFacts {
     pub structure: Option<StructureFacts>,
 }
 
-/// The structural read's summary numbers (the report itself stays port-side;
-/// the app mirrors what its surfaces present).
+/// The structural read, mirrored in app-owned terms (the report type itself
+/// stays port-side; the app holds what its surfaces present — the Inspector's
+/// counts and the a11y projection's outline).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructureFacts {
     /// The document's own `<title>`.
     pub title: Option<String>,
     pub headings: usize,
     pub links: usize,
-    /// Outline entries (painted elements).
-    pub outline: usize,
+    /// The element outline (painted elements, document order): the a11y
+    /// projection's document subtree is built from exactly this.
+    pub outline: Vec<OutlineFact>,
+}
+
+/// One outline element: nesting depth, a coarse semantic role, and the
+/// element's accessible name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutlineFact {
+    pub depth: usize,
+    pub role: &'static str,
+    pub name: String,
 }
 
 /// The app-truth side of the content lane: node id -> lifecycle, plus the

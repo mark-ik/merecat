@@ -266,7 +266,15 @@ impl Shell {
                                         title: r.title,
                                         headings: r.headings.len(),
                                         links: r.links.len(),
-                                        outline: r.outline.len(),
+                                        outline: r
+                                            .outline
+                                            .into_iter()
+                                            .map(|e| crate::content::OutlineFact {
+                                                depth: e.depth,
+                                                role: e.role,
+                                                name: e.name,
+                                            })
+                                            .collect(),
                                     }
                                 }),
                             };

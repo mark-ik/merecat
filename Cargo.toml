@@ -38,6 +38,12 @@ session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main"
 # merecat with the port, so a direct git dep now, like fetch. The crates.io
 # `frisket` is a name-hold stub; this uses mere's real one from the workspace.
 frisket = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# The a11y/automation tree vocabulary (rung 5 slice F): UxTree + stitch +
+# stable path-derived ids. Not facade-re-exported by mere (a named facade
+# gap), so a direct git dep like frisket.
+uxtree = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# AccessKit node vocabulary for the projection (matches mere's 0.24 pin).
+accesskit = "0.24"
 # The actor-kernel runtime: the physics + fetch actors wake this shell's
 # event loop through an `armillary::Wake`.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }

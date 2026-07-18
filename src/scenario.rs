@@ -37,6 +37,7 @@
 //! assert wb-cells ==|>=|<= <n>  # the workbench has n cells
 //! assert wb-cell <substr>   # a workbench cell's tab string contains substr
 //! assert wb-fraction ==|>=|<= <f>  # the workbench root split's FIRST fraction
+//! assert a11y <substr>      # an a11y-projection line ("role: label") contains substr
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -106,6 +107,8 @@ enum Step {
     AssertWbCell(String),
     /// The workbench root split's FIRST fraction compares as given.
     AssertWbFraction(CmpOp, f32),
+    /// An a11y-projection line contains this substring.
+    AssertA11y(String),
     /// The root split's ratio compares as given.
     AssertRatio(CmpOp, f32),
     Settle(u32),
@@ -323,6 +326,17 @@ impl Scenario {
                     self.fail(format!(
                         "assert wb-cell '{substr}': the cells are {:?}",
                         snap.workbench_cells
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertA11y(substr) => {
+                let snap = crate::observe::snapshot(app);
+                if !snap.a11y.iter().any(|l| l.contains(substr)) {
+                    self.fail(format!(
+                        "assert a11y '{substr}': {} lines, none match (first 12: {:?})",
+                        snap.a11y.len(),
+                        snap.a11y.iter().take(12).collect::<Vec<_>>()
                     ));
                 }
                 Tick::Wait
@@ -677,6 +691,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "not-maximized" => Step::AssertMaximized(false),
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
+                    "a11y" if !arg.is_empty() => Step::AssertA11y(arg.to_string()),
                     "wb-cell" if !arg.is_empty() => Step::AssertWbCell(arg.to_string()),
                     "wb-cells" => {
                         let (op, n) = arg

@@ -112,7 +112,7 @@ fn content_rows(app: &App, node: Option<uuid::Uuid>) -> Vec<(String, String)> {
             ));
             rows.push((
                 "Document structure".to_string(),
-                format!("headings={} outline={}", s.headings, s.outline),
+                format!("headings={} outline={}", s.headings, s.outline.len()),
             ));
             rows.push(("Outgoing links".to_string(), s.links.to_string()));
         }
@@ -220,7 +220,14 @@ mod tests {
                     title: Some("The Page".to_string()),
                     headings: 2,
                     links: 5,
-                    outline: 9,
+                    outline: vec![
+                        crate::content::OutlineFact {
+                            depth: 0,
+                            role: "group",
+                            name: String::new(),
+                        };
+                        9
+                    ],
                 }),
             }),
         });

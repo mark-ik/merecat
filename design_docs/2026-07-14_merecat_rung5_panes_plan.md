@@ -412,7 +412,29 @@ Preserve platen's persistence discipline verbatim either way. The canonical
   either option. Option (a) pays it once by inheriting; option (b) pays it by re-deriving
   roughly 1,500 LOC of tab, divider, and drop machinery.
 
-### F. A11y over panes, and the honest capability report
+### F. A11y over panes, and the honest capability report — LANDED 2026-07-18
+
+`a11y.rs`: one stitched application tree over app truth, pure and headless-
+testable — window root → chrome subtree (omnibar-while-open with live text,
+caption label) + `frisket::project_frisket_with` (the pane structure), with
+`mere::workbench::project_workbench` under the Workbench leaf and a document
+subtree under the canvas leaf for every live node. The document subtree is
+built from the `StructureFacts` OUTLINE (the mirror grew from counts to
+entries), so the "genet ask" this slice booked was already discharged by the
+Inspector slice's `DocumentSession::inspect` — no downcast, no private-type
+wall. Each document root DECLARES "structural outline only: no bounds, no
+per-element focus" (the honest Partial); ids are uxtree's path-derived
+scheme, so subtrees stay disjoint by construction (asserted). The snapshot
+grew `a11y` ("role: label" lines) and the grammar `assert a11y`. uxtree came
+in as a direct git dep (the named facade gap), accesskit at mere's 0.24 pin.
+Receipts: 65 unit tests (coherence: unique ids, resolvable children;
+subtree presence; capability declaration; omnibar projection), and
+`rung5_a11y.scn` headed RESULT ok — the live example.com document announces
+its real title, heading, paragraphs, and link through the same surface a
+screen-reader bridge would consume. NOT landed, said plainly: pushing the
+`TreeUpdate` to an OS adapter (accesskit_windows et al.) — the donor never
+landed that either; producing the coherent tree is this rung's matrix bar,
+and the adapter is a follow-on. Original scope below.
 
 The deletion matrix requires a coherent snapshot and accessibility tree. Merecat has no
 accesskit dep, no uxtree dep, and calls no projector.

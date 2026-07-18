@@ -24,6 +24,7 @@
 //! `i` toggles the isometric view, `q`/`e` orbit, `[`/`]` tilt, `h` toggles
 //! height-by-degree.
 
+mod a11y;
 mod action;
 mod app;
 mod browse;
