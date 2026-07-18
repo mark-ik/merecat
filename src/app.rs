@@ -293,6 +293,40 @@ impl App {
         ordinal
     }
 
+    /// Land `leaf` in the newest live lens that is not `exclude` (a tear-out
+    /// must LEAVE its source window), spawning a lens when none qualifies.
+    /// Anchors on the lens tree's LAST leaf (a summon needs a leaf path).
+    /// Returns the effects (an `OpenWindow` when a lens spawned).
+    fn land_leaf_in_lens(&mut self, leaf: PaneNode, exclude: Option<SpaceRef>) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let target = self
+            .lenses
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, s)| s.is_some() && exclude != Some(SpaceRef::Lens(*i)))
+            .map(|(i, _)| i);
+        let ordinal = match target {
+            Some(ordinal) => ordinal,
+            None => {
+                let ordinal = self.seed_lens_space();
+                self.events.push(AppEvent::WindowOpened);
+                effects.push(Effect::OpenWindow { ordinal });
+                ordinal
+            }
+        };
+        if let Some(Some(lens)) = self.lenses.get_mut(ordinal) {
+            let anchor_path = lens
+                .iter_leaves()
+                .last()
+                .map(|(id, _, _)| id)
+                .and_then(|id| crate::pane::path_of(lens, id))
+                .unwrap_or_default();
+            lens.summon_leaf(&anchor_path, InsertSide::Right, leaf);
+        }
+        effects
+    }
+
     /// The space holding `pane`: the primary tree, else the live lens whose
     /// tree carries it. Pane ids are minted from one counter, so the answer is
     /// unique — this is how a pane-anchored op (close, divider, summon-beside,
@@ -473,45 +507,14 @@ impl App {
                 if self.maximized == Some(active) {
                     self.maximized = None;
                 }
-                let mut effects = Vec::new();
-                // Land in the newest live lens that is NOT the source, else
-                // spawn one for the pane.
-                let target = self
-                    .lenses
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|(i, s)| s.is_some() && source != SpaceRef::Lens(*i))
-                    .map(|(i, _)| i);
-                let ordinal = match target {
-                    Some(ordinal) => ordinal,
-                    None => {
-                        let ordinal = self.seed_lens_space();
-                        self.events.push(AppEvent::WindowOpened);
-                        effects.push(Effect::OpenWindow { ordinal });
-                        ordinal
-                    }
-                };
-                if let Some(Some(lens)) = self.lenses.get_mut(ordinal) {
-                    // Anchor on the lens tree's LAST leaf (a summon needs a
-                    // leaf path; the root path only names a leaf while the
-                    // tree is a lone Orrery).
-                    let anchor_path = lens
-                        .iter_leaves()
-                        .last()
-                        .map(|(id, _, _)| id)
-                        .and_then(|id| crate::pane::path_of(lens, id))
-                        .unwrap_or_default();
-                    lens.summon_leaf(
-                        &anchor_path,
-                        InsertSide::Right,
-                        PaneNode::Leaf {
-                            pane_id,
-                            content: content.clone(),
-                            graph_id,
-                        },
-                    );
-                }
+                let mut effects = self.land_leaf_in_lens(
+                    PaneNode::Leaf {
+                        pane_id,
+                        content: content.clone(),
+                        graph_id,
+                    },
+                    Some(source),
+                );
                 // The moved pane STAYS active: it kept living (same runner,
                 // same id), so pane-anchored ops now follow it to its new
                 // window — summon-beside lands there, the divider op reweights
@@ -521,6 +524,37 @@ impl App {
                 // The move is durable structure in TWO trees; persist it (the
                 // lens-window sidecar is what makes the window survive a
                 // restart).
+                effects.push(Effect::SaveSession);
+                effects.push(Effect::Redraw);
+                effects
+            }
+            // The trichotomy's BRANCH arm, gesture-first: a workbench tab
+            // dragged out of the pane. The tile leaves platen's tiling and
+            // becomes a pinned Tile pane in a lens window; its live session
+            // (if any) composites there as the pane's content surface.
+            Action::TearOutTile { member } => {
+                if !self.workbench.close_tile(member) {
+                    return vec![Effect::Redraw];
+                }
+                let pane_id = PaneId(self.next_pane_id);
+                self.next_pane_id += 1;
+                let mut effects = self.land_leaf_in_lens(
+                    PaneNode::Leaf {
+                        pane_id,
+                        content: PaneContent::Tile(member),
+                        graph_id: GraphId::nil(),
+                    },
+                    None,
+                );
+                self.active_pane = Some(pane_id);
+                let label = self
+                    .canvas
+                    .graph()
+                    .nodes()
+                    .find(|(_, n)| n.id == member)
+                    .map(|(_, n)| n.url().to_string())
+                    .unwrap_or_default();
+                self.events.push(AppEvent::TileTornOut(label));
                 effects.push(Effect::SaveSession);
                 effects.push(Effect::Redraw);
                 effects

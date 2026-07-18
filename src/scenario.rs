@@ -38,6 +38,8 @@
 //! drag-tab <a> onto <b>     # drag workbench tab <a> onto tab <b>'s cell (stack)
 //! drag-tab <a> onto <b> @ <edge>  # ...releasing on the cell's left|right|top|bottom
 //!                           # edge band (split beside instead of stack)
+//! drag-tab <a> out          # ...releasing OUTSIDE the workbench (on the canvas):
+//!                           # the tile tears out into a lens window (branch arm)
 //! assert row <substr>       # a Trail/Roster/Inspector row's text contains substr
 //! assert wb-cells ==|>=|<= <n>  # the workbench has n cells
 //! assert wb-cell <substr>   # a workbench cell's tab string contains substr
@@ -101,6 +103,9 @@ pub enum Step {
     /// of the tab labelled like the second (the stack gesture, by name). The
     /// optional edge releases on that band of the cell body (split beside).
     DragTab(String, String, Option<String>),
+    /// Drag workbench tab <a> and release OUTSIDE the workbench pane (on the
+    /// canvas) — the tile tear-out gesture (the trichotomy's branch arm).
+    DragTabOut(String),
     /// Drop the file at window `(x, y)` — the same handler winit's
     /// `DroppedFile` drives.
     DropFile(f32, f32, String),
@@ -248,24 +253,34 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                 }
             }
             "drag-tab" => {
-                let (from, onto) = rest
-                    .split_once(" onto ")
-                    .map(|(a, b)| (a.trim(), b.trim()))
-                    .filter(|(a, b)| !a.is_empty() && !b.is_empty())
-                    .ok_or_else(|| {
-                        format!("line {}: drag-tab wants '<a> onto <b>': '{line}'", i + 1)
-                    })?;
-                let (onto, edge) = match onto.split_once(" @ ") {
-                    Some((b, e)) => {
-                        let e = e.trim();
-                        if !matches!(e, "left" | "right" | "top" | "bottom") {
-                            return err("drag-tab edge wants left|right|top|bottom");
+                // `drag-tab <a> out` releases OUTSIDE the workbench pane (on
+                // the canvas): the tear-out trichotomy's branch arm.
+                if let Some(from) = rest
+                    .strip_suffix(" out")
+                    .map(str::trim)
+                    .filter(|f| !f.is_empty())
+                {
+                    Step::DragTabOut(from.to_string())
+                } else {
+                    let (from, onto) = rest
+                        .split_once(" onto ")
+                        .map(|(a, b)| (a.trim(), b.trim()))
+                        .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+                        .ok_or_else(|| {
+                            format!("line {}: drag-tab wants '<a> onto <b>': '{line}'", i + 1)
+                        })?;
+                    let (onto, edge) = match onto.split_once(" @ ") {
+                        Some((b, e)) => {
+                            let e = e.trim();
+                            if !matches!(e, "left" | "right" | "top" | "bottom") {
+                                return err("drag-tab edge wants left|right|top|bottom");
+                            }
+                            (b.trim(), Some(e.to_string()))
                         }
-                        (b.trim(), Some(e.to_string()))
-                    }
-                    None => (onto, None),
-                };
-                Step::DragTab(from.to_string(), onto.to_string(), edge)
+                        None => (onto, None),
+                    };
+                    Step::DragTab(from.to_string(), onto.to_string(), edge)
+                }
             }
             "click-tab" if !rest.is_empty() => Step::ClickTab(rest.to_string()),
             "click-node" if !rest.is_empty() => Step::ClickNode(rest.to_string()),

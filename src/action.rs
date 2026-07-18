@@ -137,6 +137,11 @@ pub enum Action {
     /// Workbench pane if absent, opens the tile in platen's model, and spawns
     /// the node's content if it has none.
     OpenInWorkbench,
+    /// Tear a tile OUT of the workbench — the tab drag released outside the
+    /// pane. The tile leaves platen's tiling and becomes a pinned
+    /// `PaneContent::Tile` pane in a lens window: the tear-out trichotomy's
+    /// BRANCH arm, gesture-first (the leaf arm is `TearOutActivePane`).
+    TearOutTile { member: uuid::Uuid },
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when

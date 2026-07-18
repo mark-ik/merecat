@@ -1,0 +1,37 @@
+# Rung 7 depth receipt, self-driven: the tear-out trichotomy's BRANCH arm,
+# gesture-first. A live page opens as a workbench tile, then its TAB drags
+# out of the workbench pane (released on the canvas): the tile leaves
+# platen's tiling and becomes a pinned Tile pane in a lens window, where its
+# SAME live session composites as the window's content surface. The primary
+# composites no content at all (the pinned pane claims its member across
+# windows). Network-dependent (example.com); FRESH profile.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+act Open node in Workbench
+settle 40
+assert pane workbench
+assert wb-cells == 1
+assert surface content
+capture 01_tile_in_workbench
+
+# The gesture: drag the tab out (release on the canvas). One description,
+# two runners — the same press/move/release path a pointer takes.
+drag-tab Example Domain out
+settle 30
+assert event tile-torn-out
+assert wb-cells == 0
+assert windows == 2
+assert lens-pane 0:tile
+
+# THE receipt pair: the pinned pane composites the live session in the
+# LENS's plan; the primary composites none (no workbench tile, no inset).
+assert lens-surface content
+assert no-surface content
+capture 02_primary_after
+capture-lens 03_tile_pane_in_lens
+settle 10
+
+log rung 7 depth (tile tear-out, branch arm) complete

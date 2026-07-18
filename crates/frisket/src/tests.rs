@@ -216,7 +216,7 @@ fn graph_bound_panes_are_classified_apart_from_window_chrome() {
         PaneContent::Gloss,
         PaneContent::Roster,
         PaneContent::Inspector,
-        PaneContent::Tile(LeafNodeRef(0)),
+        PaneContent::Tile(uuid::Uuid::nil()),
     ] {
         assert!(
             c.follows_active_graph(),

@@ -440,6 +440,13 @@ impl Shell {
                 if matches!(p.content, PaneContent::Orrery) {
                     canvas_rect = Some(p.rect);
                     (SurfaceKind::Canvas, p.rect)
+                } else if let PaneContent::Tile(m) = p.content
+                    && self.content_sessions.contains_key(&m)
+                {
+                    // A pinned Tile pane with a live session IS a content
+                    // surface at the pane's rect — same keyed path as an
+                    // inset or workbench tile, so input routes for free.
+                    (SurfaceKind::Content(m), p.rect)
                 } else {
                     (SurfaceKind::Pane(p.id), p.rect)
                 }
@@ -498,6 +505,14 @@ impl Shell {
                     .any(|c| c.active_member() == Some(*id))
             }
         };
+        // A pinned Tile pane claims its member wherever its space shows.
+        let tile_paned = |id: &uuid::Uuid| {
+            self.app
+                .frisket
+                .iter_leaves()
+                .chain(self.app.lenses.iter().flatten().flat_map(|s| s.iter_leaves()))
+                .any(|(_, c, _)| matches!(c, PaneContent::Tile(m) if *m == *id))
+        };
         let content = canvas_rect.and_then(|cr| {
             self.app
                 .canvas
@@ -505,6 +520,7 @@ impl Shell {
                 .filter(|id| self.content_sessions.contains_key(id))
                 .filter(|id| !tiles.iter().any(|(t, _)| t == id))
                 .filter(|id| !tiled_in_lens(id))
+                .filter(|id| !tile_paned(id))
                 .map(|node| (node, crate::surface::content_rect(cr)))
         });
         let caption = crate::app::focused_caption(&self.app.canvas);
@@ -905,7 +921,10 @@ impl Shell {
             return;
         };
         if !surface.rect.contains(x, y) {
-            // Released outside the workbench: the gesture dissolves.
+            // Released OUTSIDE the workbench: the branch arm — the dragged
+            // tile tears out of the tiling into a lens window as a pinned
+            // Tile pane, through the same spine as every other op.
+            self.act(Action::TearOutTile { member: dragged });
             self.request_redraw();
             return;
         }
@@ -985,6 +1004,41 @@ impl Shell {
                 target: format!("{from} onto {onto}"),
             });
             tracing::warn!(%from, %onto, "drag-tab: no workbench tabs matched");
+            return;
+        };
+        self.deliver_press(ax, ay, MouseButton::Left);
+        self.deliver_move((ax + bx) / 2.0, (ay + by) / 2.0);
+        self.deliver_move(bx, by);
+        self.deliver_release(bx, by, MouseButton::Left);
+    }
+
+    /// Drive the tile TEAR-OUT drag by label (the scenario's `drag-tab <a>
+    /// out`): the tab centre resolves through the pane's DOM and the release
+    /// lands at the CANVAS pane's centre — outside the workbench, so the same
+    /// press/move/release path a pointer takes resolves the branch arm.
+    fn drag_workbench_tab_out(&mut self, from: &str) {
+        let plan = self.surface_plan();
+        let start = plan.iter().find_map(|s| {
+            let crate::surface::SurfaceKind::Pane(id) = s.kind else {
+                return None;
+            };
+            if self.pane_content(id) != Some(PaneContent::Workbench) {
+                return None;
+            }
+            let rect = [s.rect.x, s.rect.y, s.rect.w, s.rect.h];
+            let pane = self.workbench_pane.as_ref()?;
+            pane.resolve(&genet_probe::Selector::class("tab").containing(from), rect)
+        });
+        let release = plan
+            .iter()
+            .find(|s| matches!(s.kind, crate::surface::SurfaceKind::Canvas))
+            .map(|s| (s.rect.x + s.rect.w / 2.0, s.rect.y + s.rect.h / 2.0));
+        let (Some((ax, ay)), Some((bx, by))) = (start, release) else {
+            self.app.note(crate::observe::AppEvent::InteractionMissed {
+                what: "drag-tab",
+                target: format!("{from} out"),
+            });
+            tracing::warn!(%from, "drag-tab out: no matching tab or no canvas pane");
             return;
         };
         self.deliver_press(ax, ay, MouseButton::Left);
@@ -1403,6 +1457,12 @@ impl Shell {
             .map(|p| {
                 if matches!(p.content, PaneContent::Orrery) {
                     (SurfaceKind::Canvas, p.rect)
+                } else if let PaneContent::Tile(m) = p.content
+                    && self.content_sessions.contains_key(&m)
+                {
+                    // A torn-out tile: the pinned pane composites its live
+                    // session as this window's content surface.
+                    (SurfaceKind::Content(m), p.rect)
                 } else {
                     (SurfaceKind::Pane(p.id), p.rect)
                 }
@@ -2267,6 +2327,7 @@ impl Shell {
             Step::DragTab(from, onto, edge) => {
                 self.drag_workbench_tab(from, onto, edge.as_deref());
             }
+            Step::DragTabOut(from) => self.drag_workbench_tab_out(from),
             Step::DropFile(x, y, path) => self.drop_file(*x, *y, std::path::Path::new(path)),
             Step::Scroll(x, y, dx, dy) => self.deliver_wheel(*x, *y, *dx, *dy),
             Step::Divider(ratio) => self.act(Action::SetActivePaneDivider(*ratio)),

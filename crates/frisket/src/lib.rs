@@ -84,15 +84,6 @@ pub enum SplitAxis {
     Vertical,
 }
 
-/// Identity of a single node within a graph. Mirrors petgraph's
-/// `NodeIndex` but kept as an opaque wrapped `u32` here so
-/// `frisket` does not depend on `kernel` / petgraph. The
-/// host resolves these against the leaf's `graph_id` to get the
-/// real node entity. v0: `usize` index as a `u32` — matches
-/// petgraph's `NodeIndex::index()`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LeafNodeRef(pub u32);
-
 /// What a leaf pane shows. Extension point: `Custom` carries a
 /// host-defined content kind for content not yet promoted to a
 /// dedicated mere-domain module.
@@ -122,14 +113,14 @@ pub enum PaneContent {
     Alembic,
     Apparatus,
     System,
-    /// **Pinned tile** — a single specific tile rendered without a
-    /// workbench strip. Per the pane-UX brief §3 frametree
-    /// side-by-side rendering. Pairs with the leaf's existing
-    /// `graph_id` to fully identify the node; document is looked
-    /// up at render time from whichever workbench in the window
-    /// has that tile open (or falls back to re-fetch if no live
-    /// workbench has it cached).
-    Tile(LeafNodeRef),
+    /// **Pinned tile** — a single specific node's tile rendered without a
+    /// workbench strip. Per the pane-UX brief §3 frametree side-by-side
+    /// rendering. Carries the node's stable id (the graph member uuid —
+    /// petgraph indices shift across removals, so an index here would go
+    /// stale in a persisted space); the leaf's `graph_id` scopes it. The
+    /// host renders the node's live document session when one is up, else
+    /// an honest placeholder.
+    Tile(uuid::Uuid),
     Custom(String),
 }
 

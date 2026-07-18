@@ -126,6 +126,9 @@ pub enum AppEvent {
     WindowClosed,
     /// The active pane tore out into a lens window (the leaf arm), by tag.
     PaneTornOut(String),
+    /// A workbench tile tore out into a lens window as a pinned Tile pane
+    /// (the branch arm), by the node's url.
+    TileTornOut(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -169,6 +172,7 @@ impl AppEvent {
             AppEvent::WindowOpened => "window-opened".to_string(),
             AppEvent::WindowClosed => "window-closed".to_string(),
             AppEvent::PaneTornOut(tag) => format!("pane-torn-out {tag}"),
+            AppEvent::TileTornOut(url) => format!("tile-torn-out {url}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
@@ -223,10 +227,16 @@ pub fn snapshot(app: &App) -> Snapshot {
         .frisket
         .iter_leaves()
         .map(|(_, content, _)| {
-            if matches!(content, frisket::PaneContent::Orrery) {
-                "canvas".to_string()
-            } else {
-                "pane".to_string()
+            match content {
+                frisket::PaneContent::Orrery => "canvas".to_string(),
+                // A pinned Tile pane with a live session composites as a
+                // content surface at the pane's rect (the plan's mapping).
+                frisket::PaneContent::Tile(m)
+                    if matches!(app.content.get(*m), Some(NodeContent::Live)) =>
+                {
+                    "content".to_string()
+                }
+                _ => "pane".to_string(),
             }
         })
         .collect();
@@ -257,9 +267,22 @@ pub fn snapshot(app: &App) -> Snapshot {
             .filter_map(|c| c.active_member())
             .collect()
     };
+    // Pinned Tile panes claim their member wherever their space shows (the
+    // same one-session-one-surface rule the workbench tiles follow).
+    let tile_panes: Vec<uuid::Uuid> = app
+        .frisket
+        .iter_leaves()
+        .chain(app.lenses.iter().flatten().flat_map(|s| s.iter_leaves()))
+        .filter_map(|(_, c, _)| match c {
+            frisket::PaneContent::Tile(m) => Some(*m),
+            _ => None,
+        })
+        .collect();
     let tile_content_here = wb_in_primary && tiled.iter().any(|m| live(*m));
     let focused_inset = app.canvas.focused_member().is_some_and(|m| {
-        live(m) && !((wb_in_primary || wb_in_lens) && tiled.contains(&m))
+        live(m)
+            && !((wb_in_primary || wb_in_lens) && tiled.contains(&m))
+            && !tile_panes.contains(&m)
     });
     if tile_content_here || focused_inset {
         surfaces.push("content".to_string());
