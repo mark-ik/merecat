@@ -22,8 +22,14 @@
 //! - `styled_text_field` renders no visible caret glyph (its caret is a
 //!   position for a host overlay); merecat's caret-split rendering (the "▍"
 //!   at the true position, preedit underlined beside it) is the receipt-
-//!   proven IME/caret honesty, so the input row keeps it. A catalog
-//!   caret-rendering field is the noted follow-on.
+//!   proven IME/caret honesty, so the input row keeps it. The follow-on
+//!   `cambium::caret_text_field` (3d0edc7a) now renders that same triple —
+//!   but adoption here stays rejected: `lens` shares the Action type, so
+//!   the `()`-typed field needs an unreachable `map_action` intent to sit
+//!   in this `ChromeIntent` tree, and its `edit` key handler is an editor
+//!   the mirror must never have (omnibar keys lower through the spine).
+//!   The caret field's consumers are cambium-native apps whose state IS
+//!   the `TextInput`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
