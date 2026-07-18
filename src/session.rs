@@ -90,6 +90,36 @@ pub fn save_workbench(data_root: &Path, workbench: &mere::platen::Workbench) {
     }
 }
 
+/// Persist the browser-state sidecar (`browser_nodes.json` beside
+/// `graph.json`): per-node browser handling — viewer override, compat mode,
+/// and whether live content was ON, so a restart respawns it (rung 6).
+/// Best-effort, like the rest.
+pub fn save_browser_nodes(
+    data_root: &Path,
+    states: &session_runtime::browser_node_state::BrowserNodeStates,
+) {
+    if let Err(err) =
+        session_runtime::browser_node_state::save_browser_node_states(data_root, states)
+    {
+        tracing::warn!(%err, "failed to persist the browser-state sidecar");
+    }
+}
+
+/// Restore the browser-state sidecar. A missing or corrupt sidecar starts
+/// empty (the graph stays correct without it, by the sidecar's own charter).
+pub fn load_browser_nodes(
+    data_root: &Path,
+) -> session_runtime::browser_node_state::BrowserNodeStates {
+    match session_runtime::browser_node_state::load_browser_node_states(data_root) {
+        Ok(Some(states)) => states,
+        Ok(None) => session_runtime::browser_node_state::BrowserNodeStates::new(),
+        Err(err) => {
+            tracing::warn!(%err, "failed to load the browser-state sidecar; starting empty");
+            session_runtime::browser_node_state::BrowserNodeStates::new()
+        }
+    }
+}
+
 /// Restore the workbench tiling, pruned to `present` (the live graph's
 /// members, so a tile whose node vanished between sessions collapses away).
 /// A missing or corrupt sidecar starts on an empty workbench.

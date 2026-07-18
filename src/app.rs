@@ -82,6 +82,10 @@ pub struct App {
     /// stack, every mutator. App truth (data, no handles); persisted as the
     /// canonical `(Arrangement, geometry)` pair beside `graph.json`.
     pub workbench: mere::platen::Workbench,
+    /// The browser-state sidecar (rung 6): per-node browser handling (viewer
+    /// override, compat mode, content-on), persisted at `browser_nodes.json`.
+    /// The graph stays correct without it (the sidecar's charter).
+    pub browser: session_runtime::browser_node_state::BrowserNodeStates,
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
@@ -157,17 +161,42 @@ impl App {
         let history = chrome::nav::History::new(
             canvas.focused_url().map(str::to_string).unwrap_or_default(),
         );
+        // Restore WHERE the user was (rung 6): a restored session boots with
+        // nothing selected, which silently hid restored live content (the
+        // inset composes for the FOCUSED node). Graph truth already records
+        // visits, so re-select the most recently visited node still present.
+        if canvas.focused_member().is_none()
+            && let Some(last) = canvas.graph().recent_visited(1).into_iter().next()
+        {
+            canvas.select_by_url(&last.url);
+        }
+        // The browser-state sidecar, and the content-state restore (rung 6):
+        // every restored node whose content was ON respawns its session
+        // through the ordinary port, so `Live` after a restart is the same
+        // spawned truth as before it — never a painted memory.
+        let browser = session::load_browser_nodes(&data_root);
+        let mut content = ContentStates::default();
+        for (_, node) in canvas.graph().nodes() {
+            if browser.get(node.id).is_some_and(|b| b.content_on) {
+                content.note_requested(node.id);
+                effects.push(Effect::SpawnContent {
+                    node: node.id,
+                    url: node.url().to_string(),
+                });
+            }
+        }
         (
             Self {
                 canvas,
                 omnibar,
                 data_root,
-                content: ContentStates::default(),
+                content,
                 focus,
                 frisket,
                 history,
                 active_pane: None,
                 workbench,
+                browser,
                 maximized: None,
                 roster_tab: 0,
                 next_pane_id,
@@ -181,6 +210,34 @@ impl App {
     /// hands them to the scenario's log, diagnostics, or drops them).
     pub fn take_events(&mut self) -> Vec<AppEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Refresh the browser-state sidecar from live truth before a save
+    /// (rung 6): each graph node's `content_on` mirrors its content
+    /// lifecycle (live or in flight), and entries for vanished nodes drop.
+    pub fn refresh_browser_states(&mut self) {
+        use crate::content::NodeContent;
+        let present: std::collections::HashSet<uuid::Uuid> =
+            self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
+        let stale: Vec<uuid::Uuid> = self
+            .browser
+            .nodes
+            .keys()
+            .copied()
+            .filter(|id| !present.contains(id))
+            .collect();
+        for id in stale {
+            self.browser.remove(id);
+        }
+        for id in present {
+            let on = matches!(
+                self.content.get(id),
+                Some(NodeContent::Live | NodeContent::Requested)
+            );
+            if on || self.browser.get(id).is_some() {
+                self.browser.entry(id).content_on = on;
+            }
+        }
     }
 
     /// Note a semantic event from outside `update` — the shell's own divergence
@@ -618,6 +675,7 @@ impl App {
             history: chrome::nav::History::new(""),
             active_pane: None,
             workbench: mere::platen::Workbench::new(),
+            browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
             maximized: None,
             roster_tab: 0,
             next_pane_id: 1,
@@ -804,6 +862,37 @@ mod tests {
         app.update(Action::CloseWorkbenchTile);
         assert_eq!(app.workbench.tile_count(), 1);
         assert!(app.workbench.has_tile(a));
+    }
+
+    /// The browser-state sidecar (rung 6): content-on mirrors live truth at
+    /// refresh, prunes vanished nodes, and round-trips through the store.
+    #[test]
+    fn browser_states_refresh_and_round_trip() {
+        let mut app = App::test_stub();
+        app.update(Action::OpenAddress("https://example.com/a".to_string()));
+        let a = app.canvas.focused_member().unwrap();
+        app.apply_update(Update::ContentSpawned { node: a, facts: None });
+        app.update(Action::OpenAddress("https://example.com/b".to_string()));
+        app.refresh_browser_states();
+        assert!(app.browser.get(a).is_some_and(|b| b.content_on));
+        assert!(
+            app.browser.get(app.canvas.focused_member().unwrap()).is_none(),
+            "a node without content stays out of the sidecar"
+        );
+        // Round trip through the store.
+        let dir = std::env::temp_dir().join(format!("merecat-bn-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::session::save_browser_nodes(&dir, &app.browser);
+        let restored = crate::session::load_browser_nodes(&dir);
+        assert!(restored.get(a).is_some_and(|b| b.content_on));
+        // Content off -> the refresh clears the flag.
+        app.content.note_closed(a);
+        app.refresh_browser_states();
+        assert!(
+            !app.browser.get(a).is_some_and(|b| b.content_on),
+            "closed content clears the flag on the next refresh"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The workbench sidecar round-trips through the persistence port,

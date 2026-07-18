@@ -1,0 +1,17 @@
+# Rung 6 receipt, part 1: build the state a restart must bring back — a
+# graph, a live content session on the focused node, and the sidecars
+# (graph.json + browser_nodes.json + workbench.json + frame.json). Network-
+# dependent (example.com); run on a FRESH profile; part 2 reuses it.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+act Toggle live content
+settle 30
+assert content-live
+act Save session
+settle 5
+capture 01_before_restart
+
+log rung 6 restore receipt part 1 complete

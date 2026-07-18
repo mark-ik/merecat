@@ -327,7 +327,18 @@ how a rung-5 receipt came to read as rung-4-completable.
     bar, split on an edge, restore the tiling. Tear-out is **rung 7**, not this row: it
     is multi-window by definition, and its supply (`2026-07-08_portable_tiles_plan.md`)
     is itself blocked on step 3 of the forest-DOM plan.
-- (r6) Restore graph, browser state, and content state after a restart.
+- (r6) Restore graph, browser state, and content state after a restart. **Met
+  2026-07-18** for the single-session shape: `browser_nodes.json` lands as app
+  truth (`App.browser`, refreshed at save — `content_on` is the new additive
+  sidecar field, mere a32443a), boot respawns every content-on node through the
+  ordinary port (Live after restart is spawned truth, never a painted memory),
+  and boot re-selects the most recently visited node (graph truth) — restored
+  live content was silently invisible without focus, a real bug the receipt
+  caught. The Inspector's Viewer/Compat rows joined with the sidecar. Receipts:
+  67 unit tests; `rung6_restore.scn` + `rung6_restore_verify.scn` headed, both
+  RESULT ok (the fresh process finds the node focused, live, and inspected off
+  the RESPAWNED session's facts). Multi-session (manifests, `sessions/<id>/`, a
+  switcher) is the rung's remaining half, not claimed here.
 - (r4, not r6) Change engine/viewer settings and see them apply. The module map filed
   settings under `session`, gated on rung 6, so the matrix demanded at rung 4 what the
   map delivered at rung 6. Settings now have their own module-map row.

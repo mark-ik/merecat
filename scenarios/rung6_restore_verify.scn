@@ -1,0 +1,21 @@
+# Rung 6 receipt, part 2: run on part 1's profile. A fresh process restores
+# the graph, the browser-state sidecar, AND the content state — the node
+# whose content was ON comes back LIVE, respawned through the ordinary port
+# at boot (never a painted memory), with its spawn-time facts refreshed
+# (the Inspector reads them live).
+settle 40
+key escape
+assert focused example.com
+assert content-live
+assert surface content
+
+# The respawned session's structural read is real: the Inspector shows the
+# live document's own title through the trait accessor, post-restart.
+act Open Inspector pane
+settle 5
+assert row Content state: live
+assert row Engine: genet.web
+assert row Document title: Example Domain
+capture 01_restored_live
+
+log rung 6 restore receipt part 2 complete

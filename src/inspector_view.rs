@@ -12,11 +12,11 @@
 //! renders these sections on cambium's `detail_panel`, and the observation
 //! snapshot flattens them so a scenario can assert a row.
 //!
-//! Not carried from meerkat (deliberately): the sidecar rows (viewer
-//! override, compat mode) — they read `BrowserNodeState`, which is rung-6
-//! persistence merecat does not hold yet; and the re-parse of the fetched
+//! Not carried from meerkat (deliberately): the re-parse of the fetched
 //! body through nematic engines — merecat's structural read comes from the
-//! LIVE session, not a second parse (one truth, no drift).
+//! LIVE session, not a second parse (one truth, no drift). The sidecar rows
+//! (viewer override, compat mode) joined at rung 6 with the browser-state
+//! sidecar itself.
 
 use crate::app::App;
 use crate::content::NodeContent;
@@ -59,6 +59,19 @@ pub fn inspector_sections(app: &App) -> Vec<InspectorSection> {
             (
                 "Mime hint".to_string(),
                 node.mime_hint.as_deref().unwrap_or("none").to_string(),
+            ),
+            // The sidecar rows (rung 6): the browser's handling of the node.
+            (
+                "Viewer".to_string(),
+                app.browser
+                    .get(node.id)
+                    .and_then(|b| b.viewer_override.as_deref())
+                    .unwrap_or("auto")
+                    .to_string(),
+            ),
+            (
+                "Compat".to_string(),
+                yes_no(app.browser.get(node.id).is_some_and(|b| b.compat_mode)),
             ),
         ],
         None => vec![("Focused node".to_string(), "none".to_string())],

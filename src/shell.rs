@@ -236,6 +236,10 @@ impl Shell {
                     // The workbench tiling persists as platen's canonical pair
                     // (rung 5 slice E), so tiles/stacks/fractions survive too.
                     session::save_workbench(&self.app.data_root, &self.app.workbench);
+                    // The browser-state sidecar (rung 6): content-on refreshed
+                    // from live truth, so a restart respawns what was showing.
+                    self.app.refresh_browser_states();
+                    session::save_browser_nodes(&self.app.data_root, &self.app.browser);
                 }
                 // The content port (rung 4, live since genet-documents
                 // landed): route the address to an engine id, spawn through
