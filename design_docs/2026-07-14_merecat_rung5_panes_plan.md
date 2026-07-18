@@ -282,8 +282,26 @@ Roster: grid event dispatch (`runner.dispatch_click`) replaces the hand-DOM
 click stopgap and enables sort/scroll; then Links/Graphlets/Fields tabs. Trail and
 the chrome migrate onto cambium after.
 
-**Still to do in this slice: inspector, then gloss** (the dependency-weight order
-below). Original scope follows.
+**Inspector LANDED 2026-07-17:** detail sections over app truth, on cambium's
+new `detail_panel` catalog entry (key/value sections, all inert — the
+surfaces-in-cambium mapping's named expression). The data half
+(`inspector_view.rs`) re-cuts meerkat's `inspector.rs` for merecat's shape:
+node facts off the kernel node; content facts off a spawn-time mirror
+(`ContentFacts` on `Update::ContentSpawned`, the adapter conversion) whose
+structural half arrives through **`DocumentSession::inspect`** — the genet
+accessor this plan's slice F booked as "the genet ask", landed genet-side with
+this slice (`ContentReport`/`OutlineEntry` moved to inker as the contract
+types, genet-render re-exports, the static lane overrides; lanes without a
+read return None and the pane says "none for this lane", per the no-placebo
+rule). Not carried from the donor: the sidecar rows (viewer/compat —
+rung-6 `BrowserNodeState`) and the nematic re-parse of the fetched body (the
+structural read comes from the LIVE session; one truth, no drift).
+Receipts: 5 new unit tests (49 total), `assert row` reads the snapshot's new
+`inspector_rows`, and `rung5_inspector.scn` headed RESULT ok — the capture
+shows both sections with example.com's real title, structure, and link count.
+
+**Still to do in this slice: gloss** — LANDED (d75f070, the minimap on
+cambium's swatch). Slice D is complete. Original scope follows.
 
 Render a pane's content as a `ScriptedDom` subtree laid out by genet-layout into a paint
 list and composited at its surface rect. That is exactly the path `ui::chrome_scene`
