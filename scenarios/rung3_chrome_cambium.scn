@@ -1,0 +1,37 @@
+# The chrome-on-cambium receipt: the migrated chrome's NEW capabilities.
+# (The regression bar is rung3_omnibar.scn passing unchanged on the retained
+# renderer — run it alongside.) New here: a suggestion ROW CLICK commits (the
+# retained view's on_click handlers, lowered as OmnibarCommitRow), and a lens
+# window carries chrome (the caption chip) as its own forest projection of
+# the ONE shared chrome document. Offline.
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+open mere://beta
+settle 5
+
+# Find lane; the top row is the alpha node. A POINTER PRESS on the row
+# commits it — the hand chrome had no row handlers; the cambium chrome does.
+# (Row geometry: card at (232,96) in the 1024-wide window; first row centres
+# near y=148.)
+omnibar find
+type alp
+assert suggestions >= 1
+click-at 512 148
+settle 5
+assert omnibar closed
+assert focused alpha
+assert event omnibar-committed
+
+# Lens chrome: a lens window renders the caption chip from ITS window-root
+# in the shared chrome forest.
+act New window
+settle 20
+assert windows == 2
+capture-lens 01_lens_chrome
+settle 10
+capture 02_primary_after
+
+log chrome-on-cambium (row commit + lens chip) complete

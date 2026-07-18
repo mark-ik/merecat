@@ -187,6 +187,11 @@ pub struct Shell {
     /// The Apparatus pane (the settings row): the focused node's viewer
     /// override on a cambium radio_group. Retained like the others.
     apparatus_pane: Option<crate::apparatus_pane::ApparatusPane>,
+    /// The chrome, as a cambium view over a FOREST of window-roots (one
+    /// shared document, one projection per window): retained + diffed, row
+    /// clicks live, lens windows carry the caption chip. Replaces the
+    /// hand-built `ui::chrome_scene`.
+    chrome: crate::chrome_view::ChromeSurfaces,
     /// A workbench tab drag in flight: the pressed tab's member, held from
     /// press to release. Release over another cell stacks (the model's
     /// `move_to_slot_of`); release on the same cell is a click (activate).
@@ -282,6 +287,7 @@ impl Shell {
             inspector_pane: None,
             workbench_pane: None,
             apparatus_pane: None,
+            chrome: crate::chrome_view::ChromeSurfaces::new(),
             wb_tab_drag: None,
             wb_divider_drag: None,
             divider_drag: None,
@@ -578,7 +584,16 @@ impl Shell {
         // A press while the omnibar is open dismisses it and is swallowed, so
         // the surface beneath never also reacts to the same press.
         if self.app.omnibar.open {
-            self.act(Action::OmnibarClose);
+            // A press on a suggestion row COMMITS it (the retained chrome's
+            // row handlers); anywhere else is the click-away dismiss.
+            let intents = self.chrome.click(0, x, y, self.width.max(1), self.height.max(1));
+            if let Some(crate::chrome_view::ChromeIntent::CommitRow(index)) =
+                intents.into_iter().next()
+            {
+                self.act(Action::OmnibarCommitRow(index));
+            } else {
+                self.act(Action::OmnibarClose);
+            }
             self.pointer_capture = None;
             return;
         }
@@ -1209,8 +1224,14 @@ impl Shell {
                     (Scene::default(), crate::ui::SEAM_CLEAR)
                 }
                 crate::surface::SurfaceKind::Chrome => {
-                    let scene =
-                        crate::ui::chrome_scene(&self.app.omnibar, caption.as_deref(), rw, rh);
+                    // One sync rebuilds every window's chrome projection (the
+                    // one-state contract); this window paints ITS root.
+                    let mut sizes = vec![(0usize, rw as f32, rh as f32)];
+                    sizes.extend(self.lens_windows.values().map(|lens| {
+                        (lens.ordinal + 1, lens.width as f32, lens.height as f32)
+                    }));
+                    self.chrome.sync(&self.app, &sizes);
+                    let scene = self.chrome.scene(0, rw, rh);
                     (scene, wgpu::Color::TRANSPARENT)
                 }
             };
@@ -1435,6 +1456,21 @@ impl Shell {
                 dims: (rw, rh),
                 scene,
                 clear,
+            });
+        }
+        // The lens's chrome (its window-root in the shared chrome forest):
+        // the caption chip, composited on top when there is one to show.
+        if crate::app::focused_caption(&self.app.canvas).is_some() {
+            let slot = ordinal + 1;
+            self.chrome.ensure_slot(slot);
+            let scene = self.chrome.scene(slot, lw, lh);
+            scenes.push(PlannedScene {
+                id: crate::surface::SurfaceId::CHROME.0,
+                kind: crate::surface::SurfaceKind::Chrome,
+                placement: ExternalTexturePlacement::new([0.0, 0.0, lw as f32, lh as f32]),
+                dims: (lw, lh),
+                scene,
+                clear: wgpu::Color::TRANSPARENT,
             });
         }
         // Pass 2 (immutable host): rasterize + compose, keyed per surface.

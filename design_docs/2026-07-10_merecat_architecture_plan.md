@@ -449,9 +449,37 @@ because frisket (the app-vocabulary crate) is the one that left the library.
   runners) returns as Action-driven automation per the native-automation
   plan.
 
-## The toolkit question, deferred not answered
+## The toolkit question — ANSWERED IN FULL 2026-07-18
 
-Recorded so it stops being decided by omission.
+Rung 5 slice D answered it for panes (cambium adopted); the chrome migration
+closed the last hand-DOM surface ("naw, let's just do it" — Mark). The
+chrome is a retained cambium view over a FOREST of window-roots
+(`chrome_view.rs`): one shared chrome document, one `push_forest_projection`
+per window — merecat consuming cambium's forest mode and genet's multi-root
+layout literally. What it bought, receipt-proven: retained diffing instead
+of wholesale-rebuild-per-frame; suggestion rows with real `on_click`
+handlers (a row click COMMITS, `OmnibarCommitRow` — the hand chrome had no
+row handlers); and lens windows carrying chrome (the caption chip) from
+their own window-roots. `ui::chrome_scene` retired; the sheet + caret
+constants stay as the styling contract. Receipts: 72 unit tests (forest
+topology, row-click bubbling, caret-split mirror), rung3_omnibar.scn passing
+UNCHANGED on the new renderer (the regression bar, captures included), and
+rung3_chrome_cambium.scn (row commit + lens chip).
+
+Consumer-pull lessons recorded against the mapping's predictions (in
+`chrome_view.rs`'s module doc): `command_palette`/`action_list` own their
+query and filter static items — merecat's omnibar keys are Actions and its
+suggestions are graph truth, so the rows render state they do not own;
+`styled_text_field` paints no visible caret glyph, so the receipt-proven
+caret-split rendering stays (a catalog caret-rendering field is the noted
+follow-on). And one genet bug filed by this migration: a `SubtreeView`
+cascade trips genet-stylo's style-sharing cache (`sharing/mod.rs:259`
+unwraps an inheritance parent a subtree root lacks) on same-class sibling
+runs; until the subtree cascade is sharing-safe, per-window rendering rides
+the proven multi-root whole-document path with non-target window-roots
+display:none'd around the pass.
+
+The original question, kept for the record:
 
 Merecat has no view framework in its dependency graph. Rung 3's chrome hand-builds a
 `ScriptedDom` and, per its own module doc, "rebuilds wholesale per state change rather

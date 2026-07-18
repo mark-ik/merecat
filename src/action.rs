@@ -99,6 +99,9 @@ pub enum Action {
     /// Commit the highlighted suggestion (or literal-go on address-shaped
     /// text with nothing highlighted).
     OmnibarCommit,
+    /// Commit the suggestion row at this index — a ROW CLICK in the retained
+    /// chrome (select, then the ordinary commit path).
+    OmnibarCommitRow(usize),
     /// Summon a pane beside the active one, splitting the frisket tree (rung 5
     /// slice C). Meerkat's fixed Right-split off the graph pane, generalized to
     /// the active pane.

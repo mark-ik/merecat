@@ -24,9 +24,9 @@ use uuid::Uuid;
 /// How many node matches the find lane shows.
 const MAX_NODE_MATCHES: usize = 6;
 /// The palette card's fixed width (px).
-const CARD_W: f32 = 560.0;
+pub(crate) const CARD_W: f32 = 560.0;
 /// The palette card's top offset (px).
-const CARD_TOP: f32 = 96.0;
+pub(crate) const CARD_TOP: f32 = 96.0;
 
 /// One suggestion row.
 #[derive(Clone, Debug, PartialEq)]
@@ -214,7 +214,7 @@ pub fn normalize_address(text: &str) -> Option<String> {
 /// The chrome stylesheet: the palette card, its input line, and the
 /// suggestion rows. Accent values quote the node palette (selection amber)
 /// so a highlighted row reads as the thing it commits to.
-const CHROME_SHEET: &str = "\
+pub(crate) const CHROME_SHEET: &str = "\
     .omni { position: absolute; background-color: rgb(24, 30, 44); \
             border: 1px solid rgb(70, 82, 110); border-radius: 8px; \
             padding: 8px; } \
@@ -254,91 +254,10 @@ pub fn chrome_has_content(state: &OmnibarState, caption: Option<&str>) -> bool {
     state.open || caption.is_some()
 }
 
-/// Build the chrome layer's scene: the omnibar card when open, and the
-/// at-rest "where am I" caption chip (the focused node's label) at the
-/// bottom edge. The shell rasterizes it onto a transparent-cleared texture
-/// and composes it above the canvas layer.
-pub fn chrome_scene(
-    state: &OmnibarState,
-    caption: Option<&str>,
-    w: u32,
-    h: u32,
-) -> netrender::Scene {
-    let mut dom = ScriptedDom::new();
-    let root = dom.document();
-
-    if let Some(caption) = caption {
-        let chip = dom.create_element(qual("div"));
-        dom.set_attribute(chip, qual("class"), "whereami");
-        let bottom = (h as f32 - 34.0).max(0.0);
-        dom.set_attribute(
-            chip,
-            qual("style"),
-            &format!("transform: translate(12px, {bottom}px);"),
-        );
-        let chip_text = dom.create_text(caption);
-        dom.append_child(chip, chip_text);
-        dom.append_child(root, chip);
-    }
-
-    if !state.open {
-        return finish_scene(&dom, w, h);
-    }
-
-    let card = dom.create_element(qual("div"));
-    dom.set_attribute(card, qual("class"), "omni");
-    // Positioned by transform-translate, the property the canvas gnode pool
-    // proves genet-layout honors (left/top on absolutes are not it).
-    let left = ((w as f32 - CARD_W) / 2.0).max(8.0);
-    dom.set_attribute(
-        card,
-        qual("style"),
-        &format!("transform: translate({left}px, {CARD_TOP}px); width: {CARD_W}px;"),
-    );
-    dom.append_child(root, card);
-
-    // The input line, split at the caret: text-before, the in-flight IME
-    // preedit (underlined, not yet part of the text), the caret glyph at its
-    // TRUE position, text-after. Inline spans, so the line flows as one run.
-    let input = dom.create_element(qual("div"));
-    dom.set_attribute(input, qual("class"), "omni-input");
-    let before = dom.create_text(&state.text[..state.cursor]);
-    dom.append_child(input, before);
-    if let Some(preedit) = state.preedit.as_deref() {
-        let span = dom.create_element(qual("span"));
-        dom.set_attribute(span, qual("class"), "omni-preedit");
-        let t = dom.create_text(preedit);
-        dom.append_child(span, t);
-        dom.append_child(input, span);
-    }
-    let caret = dom.create_text("\u{258d}");
-    dom.append_child(input, caret);
-    let after = dom.create_text(&state.text[state.cursor..]);
-    dom.append_child(input, after);
-    dom.append_child(card, input);
-
-    for (i, suggestion) in state.suggestions.iter().enumerate() {
-        let row = dom.create_element(qual("div"));
-        let class = match suggestion {
-            Suggestion::Hint(_) => "omni-row-muted",
-            _ if i == state.selected => "omni-row-sel",
-            _ => "omni-row",
-        };
-        dom.set_attribute(row, qual("class"), class);
-        let text = match suggestion {
-            Suggestion::Node { label, host, .. } if host.is_empty() => label.clone(),
-            Suggestion::Node { label, host, .. } => format!("{label}  \u{00b7}  {host}"),
-            Suggestion::Go { url } => format!("\u{2192} open {url}"),
-            Suggestion::Act { label, .. } => format!("\u{203a} {label}"),
-            Suggestion::Hint(hint) => (*hint).to_string(),
-        };
-        let row_text = dom.create_text(&text);
-        dom.append_child(row, row_text);
-        dom.append_child(card, row);
-    }
-
-    finish_scene(&dom, w, h)
-}
+// The hand-built chrome_scene retired 2026-07-18: the chrome is a retained
+// cambium view now (`crate::chrome_view`, a forest of window-roots), diffed
+// per state change instead of rebuilt wholesale. The sheet + caret constants
+// above are its styling contract.
 
 /// Lay out the chrome document and composite its paint list into a scene.
 /// A pane placeholder (rung 5 slice C): a panel filling the pane's rect with its

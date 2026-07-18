@@ -30,6 +30,7 @@ mod app;
 mod apparatus_pane;
 mod browse;
 mod cambium_pane;
+mod chrome_view;
 mod content;
 mod gloss_pane;
 mod inspector_pane;

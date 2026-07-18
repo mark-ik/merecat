@@ -584,6 +584,15 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
+            Action::OmnibarCommitRow(index) => {
+                // A row click: select that row, then the ordinary commit path
+                // (one commit vocabulary, whatever pointed at the row).
+                if !self.omnibar.open || index >= self.omnibar.suggestions.len() {
+                    return vec![Effect::Redraw];
+                }
+                self.omnibar.selected = index;
+                return self.update(Action::OmnibarCommit);
+            }
             Action::OmnibarCommit => {
                 // Commit always ends with the omnibar closed, so chrome hands
                 // focus back to the canvas. (A committed OpenAddress may later
