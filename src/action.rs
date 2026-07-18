@@ -22,6 +22,17 @@
 //!   types at the boundary. The universal vocabulary must not depend on one
 //!   port implementation.
 
+/// Which window's frisket space a tree op targets: the primary tree or a live
+/// lens's. Pane ids are unique across every space, so a pane-anchored op
+/// resolves its own space ([`crate::app::App::space_of`]); only the
+/// path-addressed divider drag names its tree explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpaceRef {
+    Primary,
+    /// A lens window's space, by ordinal into `App::lenses`.
+    Lens(usize),
+}
+
 /// A typed app intent. The shell (keys, later the omnibar / command palette /
 /// automation adapters) produces these; [`crate::app::update`] consumes them.
 #[derive(Clone, Debug, PartialEq)]
@@ -112,8 +123,10 @@ pub enum Action {
     /// by the geometry walker so neither side collapses.
     SetActivePaneDivider(f32),
     /// Set a split's ratio by its path — the divider drag's lowering. Redraw
-    /// only; the shell saves the session once, on release.
+    /// only; the shell saves the session once, on release. `space` names the
+    /// tree the path walks (a lens's seam drags reweight the LENS's split).
     SetSplitRatio {
+        space: SpaceRef,
         path: Vec<frisket::SplitChoice>,
         ratio: f32,
     },

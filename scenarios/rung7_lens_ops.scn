@@ -1,0 +1,47 @@
+# Rung 7 depth receipt, self-driven: frisket ops LIVE in a lens. A pane tears
+# out and STAYS active, so the pane-anchored ops follow it to its window:
+# summon-beside lands in the lens's tree, the divider op reweights the lens's
+# split, close collapses it back — all through the same Action spine, aimed
+# by space resolution (pane ids are unique across every window's tree).
+# Offline (mere://).
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+act Open Roster pane
+settle 5
+assert pane roster
+
+# Tear out: the roster moves to a lens and REMAINS the active pane.
+act Tear out pane
+settle 30
+assert windows == 2
+assert lens-pane 0:roster
+assert no-pane roster
+
+# Summon-beside follows the active pane into the lens: the trail splits off
+# the roster IN THE LENS, never touching the primary tree.
+act Open Trail pane
+settle 5
+assert lens-pane 0:trail
+assert no-pane trail
+capture-lens 01_summoned_into_lens
+
+# The divider op reweights the ACTIVE pane's split — the lens's split. The
+# readback is active-ratio: the same op, the same assert shape as the
+# primary's divider receipt, landing in another window's tree.
+divider 0.7
+settle 5
+assert active-ratio >= 0.65
+
+# Close collapses the lens split back to the roster alone.
+act Close pane
+settle 5
+assert event pane-closed
+assert no-lens-pane 0:trail
+assert lens-pane 0:roster
+capture-lens 02_after_close
+settle 10
+
+log rung 7 depth (frisket ops live in a lens) complete

@@ -79,6 +79,10 @@ pub struct Snapshot {
     /// Each live lens window's panes, as "ordinal:tag" strings (rung 7 depth:
     /// windows are pane hosts). Empty when no lens is open.
     pub lens_panes: Vec<String>,
+    /// The ACTIVE pane's parent-split ratio, in whichever space (primary or
+    /// lens) holds the pane — the honest readback of the divider op, wherever
+    /// it lands. `None` with no active pane or an unsplit tree.
+    pub active_ratio: Option<f32>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -341,6 +345,17 @@ pub fn snapshot(app: &App) -> Snapshot {
                     .collect::<Vec<_>>()
             })
             .collect(),
+        active_ratio: app.active_pane.and_then(|active| {
+            let layout = app.space(app.space_of(active)?)?;
+            let mut path = crate::pane::path_of(layout, active)?;
+            // The parent split holds the divider; a root leaf has none.
+            path.pop()?;
+            crate::pane::place_panes(layout, crate::surface::Rect::full(100, 100), None)
+                .dividers
+                .iter()
+                .find(|d| d.path == path)
+                .map(|d| d.ratio)
+        }),
     }
 }
 

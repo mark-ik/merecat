@@ -205,6 +205,10 @@ pub struct Shell {
     /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
     /// the component owns the gesture math; the shell only feeds it points.
     divider_drag: Option<crate::pane::DividerPlacement>,
+    /// A LENS window's seam drag in flight: which lens (ordinal) plus the
+    /// pressed seam's placement in that window's tiling. Moves lower
+    /// `SetSplitRatio` aimed at the lens's space; release persists once.
+    lens_divider_drag: Option<(usize, crate::pane::DividerPlacement)>,
     /// Lens windows (rung 7, one-state-N-windows): the same graph through a
     /// window-owned camera. The primary window keeps the full pane/chrome
     /// experience; each lens renders the canvas with ITS `Viewport` installed
@@ -291,6 +295,7 @@ impl Shell {
             wb_tab_drag: None,
             wb_divider_drag: None,
             divider_drag: None,
+            lens_divider_drag: None,
             lens_windows: std::collections::HashMap::new(),
             pending_windows: Vec::new(),
         };
@@ -848,6 +853,7 @@ impl Shell {
             y - drag.area.y,
         );
         self.act(Action::SetSplitRatio {
+            space: crate::action::SpaceRef::Primary,
             path: drag.path,
             ratio,
         });
@@ -1635,6 +1641,11 @@ impl Shell {
                 {
                     match hit.kind {
                         crate::surface::SurfaceKind::Pane(pid) => {
+                            // The press anchors pane ops here, exactly as in
+                            // the primary — the active pane is GLOBAL (ids are
+                            // unique across spaces), so close/divider/summon-
+                            // beside now aim at this lens's tree.
+                            self.app.active_pane = Some(pid);
                             if let Some(content) = self.lens_pane_content(ordinal, pid) {
                                 let dims = plan
                                     .iter()
@@ -1667,10 +1678,57 @@ impl Shell {
                             }
                             return;
                         }
+                        // A lens seam drag: capture the band; moves lower
+                        // SetSplitRatio at THIS lens's space (same spine as
+                        // the primary's seam, different target tree).
+                        crate::surface::SurfaceKind::Divider(index) => {
+                            if let Some(Some(space)) = self.app.lenses.get(ordinal) {
+                                let area = Rect::full(lw, lh);
+                                let tiling = crate::pane::place_panes(space, area, None);
+                                self.lens_divider_drag = tiling
+                                    .dividers
+                                    .into_iter()
+                                    .find(|d| d.index == index)
+                                    .map(|d| (ordinal, d));
+                            }
+                            return;
+                        }
                         _ => {}
                     }
                 }
                 // Canvas press: handled by the gesture block below.
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let (x, y) = (position.x as f32, position.y as f32);
+                lens.cursor = (x, y);
+                // A held lens seam: each move becomes a ratio through the
+                // same component math as the primary's seam, lowered at the
+                // LENS's space. Falls through to the camera block otherwise.
+                if let Some((ord, drag)) = self.lens_divider_drag.clone() {
+                    let split = crate::pane::cambium_split(drag.axis, drag.ratio);
+                    let ratio =
+                        split.ratio_at(drag.area.w, drag.area.h, x - drag.area.x, y - drag.area.y);
+                    self.act(Action::SetSplitRatio {
+                        space: crate::action::SpaceRef::Lens(ord),
+                        path: drag.path,
+                        ratio,
+                    });
+                    if let Some(lens) = self.lens_windows.get_mut(&id) {
+                        lens.window.request_redraw();
+                    }
+                    return;
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                // Like the primary seam: moves rode Redraw; persist once.
+                if self.lens_divider_drag.take().is_some() {
+                    self.act(Action::SaveSession);
+                    return;
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 // Wheel over a tile scrolls the PAGE (the rung-5 slice-B rule,
@@ -2292,6 +2350,16 @@ impl Shell {
                     ));
                 }
             }
+            Step::AssertActiveRatio(op, want) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let ok = snap.active_ratio.is_some_and(|r| cmp_f32(op, r, *want));
+                if !ok {
+                    return Err(format!(
+                        "assert active-ratio {op:?} {want}: the active pane's split is {:?}",
+                        snap.active_ratio
+                    ));
+                }
+            }
             Step::AssertSuggestions(op, n) => {
                 let snap = crate::observe::snapshot(&self.app);
                 let len = snap.omnibar.suggestions.len();
@@ -2421,6 +2489,15 @@ impl Shell {
                     let kinds: Vec<_> = plan.iter().map(|s| s.kind.label()).collect();
                     return Err(format!(
                         "assert lens-surface '{kind}': the lens plan is {kinds:?}"
+                    ));
+                }
+            }
+            Step::AssertNoLensPane(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.lens_panes.iter().any(|p| p.contains(substr)) {
+                    return Err(format!(
+                        "assert no-lens-pane '{substr}': the lens spaces hold {:?}",
+                        snap.lens_panes
                     ));
                 }
             }

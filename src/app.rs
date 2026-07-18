@@ -9,7 +9,7 @@ use mere::canvas::Canvas;
 
 use frisket::{FrisketLayout, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
 
-use crate::action::{Action, Effect, PaneKind, Update};
+use crate::action::{Action, Effect, PaneKind, SpaceRef, Update};
 use crate::content::ContentStates;
 use crate::observe::AppEvent;
 use crate::surface::FocusTarget;
@@ -272,6 +272,37 @@ impl App {
         ordinal
     }
 
+    /// The space holding `pane`: the primary tree, else the live lens whose
+    /// tree carries it. Pane ids are minted from one counter, so the answer is
+    /// unique — this is how a pane-anchored op (close, divider, summon-beside,
+    /// tear-out) finds which window's tree to mutate.
+    pub fn space_of(&self, pane: PaneId) -> Option<SpaceRef> {
+        if self.frisket.iter_leaves().any(|(id, _, _)| id == pane) {
+            return Some(SpaceRef::Primary);
+        }
+        self.lenses.iter().enumerate().find_map(|(i, s)| {
+            s.as_ref()
+                .filter(|space| space.iter_leaves().any(|(id, _, _)| id == pane))
+                .map(|_| SpaceRef::Lens(i))
+        })
+    }
+
+    /// The layout a [`SpaceRef`] names, when it is live.
+    pub fn space(&self, space: SpaceRef) -> Option<&FrisketLayout> {
+        match space {
+            SpaceRef::Primary => Some(&self.frisket),
+            SpaceRef::Lens(i) => self.lenses.get(i).and_then(Option::as_ref),
+        }
+    }
+
+    /// Mutable [`Self::space`].
+    fn space_mut(&mut self, space: SpaceRef) -> Option<&mut FrisketLayout> {
+        match space {
+            SpaceRef::Primary => Some(&mut self.frisket),
+            SpaceRef::Lens(i) => self.lenses.get_mut(i).and_then(Option::as_mut),
+        }
+    }
+
     /// Note a semantic event from outside `update` — the shell's own divergence
     /// (an interaction that missed, an affordance not yet wired) joins the same
     /// drained stream the update path feeds, so automation reads one channel.
@@ -395,29 +426,42 @@ impl App {
                 let Some(active) = self.active_pane else {
                     return vec![Effect::Redraw];
                 };
+                // The pane leaves whichever window's tree holds it (a lens
+                // pane tears out onward, not just primary panes out).
+                let Some(source) = self.space_of(active) else {
+                    return vec![Effect::Redraw];
+                };
                 // Read the leaf wholesale (id + content + graph binding), then
-                // remove it from the primary tree.
-                let Some((pane_id, content, graph_id)) = self
-                    .frisket
+                // remove it from its source tree.
+                let Some(layout) = self.space_mut(source) else {
+                    return vec![Effect::Redraw];
+                };
+                let Some((pane_id, content, graph_id)) = layout
                     .iter_leaves()
                     .find(|(id, _, _)| *id == active)
                     .map(|(id, c, g)| (id, c.clone(), g))
                 else {
                     return vec![Effect::Redraw];
                 };
-                let Some(path) = crate::pane::path_of(&self.frisket, active) else {
+                let Some(path) = crate::pane::path_of(layout, active) else {
                     return vec![Effect::Redraw];
                 };
-                if !self.frisket.close_leaf(&path) {
+                if !layout.close_leaf(&path) {
                     return vec![Effect::Redraw];
                 }
                 if self.maximized == Some(active) {
                     self.maximized = None;
                 }
-                self.active_pane = None;
                 let mut effects = Vec::new();
-                // Land in the newest live lens, else spawn one for the pane.
-                let target = self.lenses.iter().rposition(Option::is_some);
+                // Land in the newest live lens that is NOT the source, else
+                // spawn one for the pane.
+                let target = self
+                    .lenses
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(i, s)| s.is_some() && source != SpaceRef::Lens(*i))
+                    .map(|(i, _)| i);
                 let ordinal = match target {
                     Some(ordinal) => ordinal,
                     None => {
@@ -447,6 +491,11 @@ impl App {
                         },
                     );
                 }
+                // The moved pane STAYS active: it kept living (same runner,
+                // same id), so pane-anchored ops now follow it to its new
+                // window — summon-beside lands there, the divider op reweights
+                // there (the lens-frisket-ops receipt's hinge).
+                self.active_pane = Some(pane_id);
                 self.events.push(AppEvent::PaneTornOut(content.tag().to_string()));
                 effects.push(Effect::Redraw);
                 effects
@@ -646,23 +695,35 @@ impl App {
             Action::SummonPane(kind) => {
                 let content = pane_content(kind);
                 let id = PaneId(self.next_pane_id);
-                // Anchor on the active pane, else the Orrery (graph) leaf —
-                // meerkat's fixed Right-split off the graph pane, generalized.
-                let anchor = self.active_pane.or_else(|| {
-                    self.frisket
-                        .iter_leaves()
-                        .find(|(_, c, _)| matches!(c, PaneContent::Orrery))
-                        .map(|(id, _, _)| id)
-                });
+                // Anchor on the active pane IN ITS OWN SPACE (a pane torn out
+                // to a lens summons its neighbors there — the window as pane
+                // host), else the primary Orrery (graph) leaf — meerkat's
+                // fixed Right-split off the graph pane, generalized.
+                let (space, anchor) = match self
+                    .active_pane
+                    .and_then(|a| self.space_of(a).map(|s| (s, a)))
+                {
+                    Some((s, a)) => (s, Some(a)),
+                    None => (
+                        SpaceRef::Primary,
+                        self.frisket
+                            .iter_leaves()
+                            .find(|(_, c, _)| matches!(c, PaneContent::Orrery))
+                            .map(|(id, _, _)| id),
+                    ),
+                };
+                let Some(layout) = self.space_mut(space) else {
+                    return vec![Effect::Redraw];
+                };
                 let anchor_path = anchor
-                    .and_then(|a| crate::pane::path_of(&self.frisket, a))
+                    .and_then(|a| crate::pane::path_of(layout, a))
                     .unwrap_or_default();
                 let new_leaf = PaneNode::Leaf {
                     pane_id: id,
                     content,
                     graph_id: GraphId::nil(),
                 };
-                if self.frisket.summon_leaf(&anchor_path, InsertSide::Right, new_leaf) {
+                if layout.summon_leaf(&anchor_path, InsertSide::Right, new_leaf) {
                     self.next_pane_id += 1;
                     self.active_pane = Some(id);
                     self.events.push(AppEvent::PaneSummoned(kind.label()));
@@ -672,14 +733,21 @@ impl App {
                 }
             }
             Action::CloseActivePane => {
-                // The canvas (no active pane) has nothing to close.
-                let Some(active) = self.active_pane else {
+                // The canvas (no active pane) has nothing to close. The op
+                // lands in whichever window's tree holds the pane.
+                let Some((active, space)) = self
+                    .active_pane
+                    .and_then(|a| self.space_of(a).map(|s| (a, s)))
+                else {
                     return vec![Effect::Redraw];
                 };
-                let Some(path) = crate::pane::path_of(&self.frisket, active) else {
+                let Some(layout) = self.space_mut(space) else {
                     return vec![Effect::Redraw];
                 };
-                if self.frisket.close_leaf(&path) {
+                let Some(path) = crate::pane::path_of(layout, active) else {
+                    return vec![Effect::Redraw];
+                };
+                if layout.close_leaf(&path) {
                     if self.maximized == Some(active) {
                         self.maximized = None;
                     }
@@ -690,27 +758,40 @@ impl App {
                     vec![Effect::Redraw]
                 }
             }
-            Action::SetSplitRatio { path, ratio } => {
-                self.frisket.set_split_ratio(&path, ratio);
+            Action::SetSplitRatio { space, path, ratio } => {
+                if let Some(layout) = self.space_mut(space) {
+                    layout.set_split_ratio(&path, ratio);
+                }
                 vec![Effect::Redraw]
             }
             Action::SetActivePaneDivider(ratio) => {
-                let Some(active) = self.active_pane else {
+                let Some((active, space)) = self
+                    .active_pane
+                    .and_then(|a| self.space_of(a).map(|s| (a, s)))
+                else {
                     return vec![Effect::Redraw];
                 };
-                let Some(mut path) = crate::pane::path_of(&self.frisket, active) else {
+                let Some(layout) = self.space_mut(space) else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(mut path) = crate::pane::path_of(layout, active) else {
                     return vec![Effect::Redraw];
                 };
                 // The active leaf's parent split holds the divider.
                 path.pop();
-                if self.frisket.set_split_ratio(&path, ratio) {
+                if layout.set_split_ratio(&path, ratio) {
                     vec![Effect::SaveSession, Effect::Redraw]
                 } else {
                     vec![Effect::Redraw]
                 }
             }
             Action::ToggleMaximizePane => {
-                if let Some(active) = self.active_pane {
+                // Maximize is a PRIMARY view state (a lens's walk ignores it);
+                // a lens pane no-ops honestly instead of setting a flag its
+                // window would never show.
+                if let Some(active) = self.active_pane
+                    && self.space_of(active) == Some(SpaceRef::Primary)
+                {
                     self.maximized = (self.maximized != Some(active)).then_some(active);
                 }
                 vec![Effect::Redraw]
@@ -976,8 +1057,25 @@ mod tests {
             .find(|(_, c, _)| matches!(c, PaneContent::Roster))
             .expect("the roster landed in the lens");
         assert_eq!(moved.0, roster_id, "same pane id across the move");
-        // A second tear-out lands in the SAME lens (no window spam).
+        // The moved pane STAYS active, so pane-anchored ops follow it: a
+        // summon lands beside it IN THE LENS (the window as pane host).
+        assert_eq!(app.active_pane, Some(roster_id), "the moved pane stays active");
         app.update(Action::SummonPane(PaneKind::Trail));
+        let lens = app.lenses[0].as_ref().unwrap();
+        assert!(
+            lens.iter_leaves()
+                .any(|(_, c, _)| matches!(c, PaneContent::Trail)),
+            "summon-beside followed the active pane into the lens"
+        );
+        assert!(
+            !app.frisket
+                .iter_leaves()
+                .any(|(_, c, _)| matches!(c, PaneContent::Trail)),
+            "the summoned trail is not in the primary tree"
+        );
+        // A PRIMARY pane tearing out reuses the open lens (no window spam).
+        app.active_pane = None;
+        app.update(Action::SummonPane(PaneKind::Gloss));
         let effects = app.update(Action::TearOutActivePane);
         assert!(
             !effects
@@ -988,8 +1086,8 @@ mod tests {
         let lens = app.lenses[0].as_ref().unwrap();
         assert!(
             lens.iter_leaves()
-                .any(|(_, c, _)| matches!(c, PaneContent::Trail)),
-            "the trail joined the existing lens"
+                .any(|(_, c, _)| matches!(c, PaneContent::Gloss)),
+            "the gloss joined the existing lens"
         );
     }
 

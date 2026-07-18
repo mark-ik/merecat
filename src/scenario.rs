@@ -46,7 +46,9 @@
 //! assert lens-pane <substr> # a lens window's "ordinal:tag" pane contains substr
 //! assert lens-surface <kind> # the FIRST lens window's live plan composites that kind
 //! assert no-pane <tag>      # NO pane with that tag is in the PRIMARY tree
+//! assert no-lens-pane <substr> # NO lens "ordinal:tag" pane contains substr
 //! assert no-surface <kind>  # NO surface of that kind in the PRIMARY plan
+//! assert active-ratio ==|>=|<= <f> # the ACTIVE pane's parent-split ratio (any space)
 //! capture-lens <name>       # self-capture the first lens window's frame
 //! assert omnibar open|closed
 //! assert omnibar-text <str>  # the omnibar text is exactly <str>
@@ -123,6 +125,12 @@ pub enum Step {
     /// NO surface of the named kind is in the PRIMARY plan (the one-session-
     /// one-surface rule's cross-window half).
     AssertNoSurface(String),
+    /// NO lens pane's "ordinal:tag" contains the substring (the lens close
+    /// op's departure half).
+    AssertNoLensPane(String),
+    /// The ACTIVE pane's parent-split ratio compares as given, in whichever
+    /// space holds the pane — the divider op's readback, primary or lens.
+    AssertActiveRatio(CmpOp, f32),
     /// Self-capture the first live lens window's composed frame.
     CaptureLens(String),
     /// The root split's ratio compares as given.
@@ -320,6 +328,9 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                         Step::AssertLensSurface(arg.to_string())
                     }
                     "no-pane" if !arg.is_empty() => Step::AssertNoPane(arg.to_string()),
+                    "no-lens-pane" if !arg.is_empty() => {
+                        Step::AssertNoLensPane(arg.to_string())
+                    }
                     "no-surface" if !arg.is_empty() => Step::AssertNoSurface(arg.to_string()),
                     "windows" => {
                         let (op, n) = arg
@@ -370,7 +381,7 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                             .map_err(|_| format!("line {}: bad wb-fraction", i + 1))?;
                         Step::AssertWbFraction(op, f)
                     }
-                    "ratio" => {
+                    "ratio" | "active-ratio" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)
                             .ok_or_else(|| format!("line {}: assert ratio wants '<op> <r>'", i + 1))?;
@@ -384,7 +395,11 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                             .trim()
                             .parse()
                             .map_err(|_| format!("line {}: bad ratio", i + 1))?;
-                        Step::AssertRatio(op, n)
+                        if what == "active-ratio" {
+                            Step::AssertActiveRatio(op, n)
+                        } else {
+                            Step::AssertRatio(op, n)
+                        }
                     }
                     "suggestions" => {
                         let (op, n) = arg
