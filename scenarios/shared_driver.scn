@@ -1,0 +1,32 @@
+# The SHARED genet-probe scenario driver, driving the real merecat Shell through
+# its Automatable/Driveable impl — proof that merecat and the shared driver are
+# one loop, not two. Generic verbs only (act / click by selector / assert snap /
+# assert text / assert event / capture); merecat's app-specific verbs are the
+# coordinated follow-on behind Driveable::app_step. FRESH profile; no network.
+settle 30
+# `key escape` is an app-specific verb: the generic grammar does not know it, so
+# the loop passes it to Driveable::app_step, which closes the fresh-run omnibar.
+# This is the app_step seam working — an app verb flowing through the shared loop.
+key escape
+settle 3
+
+# Open the Roster pane — a palette command, run through Automatable::act.
+act Open Roster pane
+settle 5
+assert snap panes ~ roster
+assert text Node
+capture 01_shared_roster
+
+# Click the Links tab by selector, resolved over the surfaces and pressed through
+# Automatable — the same shared path every genet app inherits.
+click .tab Links
+settle 5
+assert snap roster-tab == Links
+capture 02_shared_tab
+
+# A miss attributes itself into the event stream, so a scenario can assert it —
+# the "loud AND attributable" rule, now a property of the shared loop itself.
+click .tab NoSuchTab
+settle 3
+assert event interaction-missed .tab 'NoSuchTab'
+log shared driver drives the real Shell — one loop

@@ -45,6 +45,40 @@ fn pane_display_label(content: &PaneContent) -> String {
     }
 }
 
+/// The shared genet-probe scenario, parsed from `MERECAT_SHARED_SCENARIO` (a
+/// path). A parse error yields a stillborn scenario whose first `finish` reports
+/// the failure — the harness learns WHY instead of timing out. `None` when the
+/// env var is unset (the merecat driver, or no driver, runs instead).
+fn shared_scenario_from_env() -> Option<genet_probe::Scenario> {
+    let path = std::path::PathBuf::from(std::env::var_os("MERECAT_SHARED_SCENARIO")?);
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    // A parse error becomes a scenario that logs why and fails a step (an
+    // assert on a field no snapshot has), so the run reports RESULT fail with the
+    // reason rather than timing out — the same courtesy merecat's own driver pays.
+    Some(match genet_probe::Scenario::parse(&body) {
+        Ok(sc) => sc,
+        Err(err) => {
+            let fallback = format!("log parse error: {err}\nassert snap __never__ == 1");
+            genet_probe::Scenario::parse(&fallback).expect("fallback scenario parses")
+        }
+    })
+}
+
+/// Where a shared run writes its captures and sentinel: `MERECAT_CAPTURE_DIR`, or
+/// the scenario file's own directory.
+fn shared_out_dir_from_env() -> std::path::PathBuf {
+    let dir = std::env::var_os("MERECAT_CAPTURE_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("MERECAT_SHARED_SCENARIO")
+                .map(std::path::PathBuf::from)
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 /// The canvas's `PointerButton` for a winit `MouseButton`, or `None` for
 /// buttons the canvas does not handle.
 fn pointer_button(button: MouseButton) -> Option<PointerButton> {
@@ -99,6 +133,15 @@ pub struct Shell {
     /// The self-drive scenario, when `MERECAT_SCENARIO` is set: pumped once
     /// after every rendered frame; steps lower to ordinary Actions.
     scenario: Option<crate::scenario::Scenario>,
+    /// The SHARED genet-probe scenario driver (activated by `MERECAT_SHARED_SCENARIO`
+    /// instead of `MERECAT_SCENARIO`): the same one-step-per-frame loop, but the
+    /// generic one every genet app shares, driving this Shell through its
+    /// `Automatable`/`Driveable` impl. Proves merecat and the shared driver are
+    /// one loop; mutually exclusive with `scenario` above. `shared_out_dir` stays
+    /// on `self` (the scenario is taken out during a tick) so `capture` can reach
+    /// it. `shared_done` guards writing the sentinel exactly once.
+    shared_scenario: Option<genet_probe::Scenario>,
+    shared_out_dir: std::path::PathBuf,
     /// A capture the next `render` fulfills from the very views it presents
     /// (never a re-rasterization — the receipt must be the presented frame).
     pending_capture: Option<std::path::PathBuf>,
@@ -207,6 +250,8 @@ impl Shell {
             ctrl: false,
             alt: false,
             scenario: crate::scenario::Scenario::from_env(),
+            shared_scenario: shared_scenario_from_env(),
+            shared_out_dir: shared_out_dir_from_env(),
             pending_capture: None,
             window: None,
             host: None,
@@ -1288,7 +1333,39 @@ impl Shell {
     /// Steps lower to Actions through the same spine as a keypress; a Done
     /// tick writes the sentinel and exits WITHOUT saving the session (a
     /// scenario never mutates the profile it ran against).
+    /// Write the shared driver's outcome in merecat's `scenario.done` format
+    /// (first line `RESULT ok`/`RESULT fail`, then the log), so the same headed
+    /// harness that waits on the merecat driver reads a shared run identically.
+    fn write_shared_done(&self, outcome: &genet_probe::Outcome) {
+        let result = if outcome.ok { "ok" } else { "fail" };
+        let mut body = format!("RESULT {result}\n");
+        for line in &outcome.log {
+            body.push_str(line);
+            body.push('\n');
+        }
+        let _ = std::fs::write(self.shared_out_dir.join("scenario.done"), body);
+    }
+
     fn scenario_pump(&mut self, event_loop: &ActiveEventLoop) {
+        // The shared genet-probe driver, when active, takes the frame: take the
+        // scenario out (so `tick(self)` can borrow the Shell mutably), tick it,
+        // put it back — or, on Done, write the `scenario.done` sentinel in
+        // merecat's format and exit. Mutually exclusive with the merecat driver.
+        if let Some(mut shared) = self.shared_scenario.take() {
+            use genet_probe::Progress;
+            match shared.tick(self) {
+                Progress::Done => {
+                    let outcome = shared.finish();
+                    self.write_shared_done(&outcome);
+                    event_loop.exit();
+                }
+                Progress::Running => {
+                    self.request_redraw();
+                    self.shared_scenario = Some(shared);
+                }
+            }
+            return;
+        }
         // Drain the semantic event stream every frame: into the scenario's
         // log when one is running, dropped otherwise (a future diagnostics
         // subscriber taps in here).
@@ -1589,8 +1666,15 @@ impl genet_probe::Automatable for Shell {
         let mut out = genet_probe::ProbeSnapshot::default()
             .with_field("focus", snap.focus)
             .with_field("node-count", snap.node_count.to_string())
-            .with_field("roster-tab", snap.roster_tab);
-        out.focused = snap.focused.map(|n| n.caption);
+            .with_field("roster-tab", snap.roster_tab)
+            // The panes and surfaces as joined tags, so a generic scenario can
+            // `assert snap panes ~ roster` without an app-specific verb. This is
+            // minimal-shared-and-grow: the app adds the fields its scenarios name.
+            .with_field("panes", snap.panes.join(","))
+            .with_field("surfaces", snap.surfaces.join(","));
+        // Fold the url in with the caption, so `assert snap focused ~ example.com`
+        // can name the navigated address, not only the display caption.
+        out.focused = snap.focused.map(|n| format!("{}  {}", n.caption, n.url));
         out
     }
 
@@ -1627,6 +1711,49 @@ impl genet_probe::Automatable for Shell {
         self.deliver_release(x, y, MouseButton::Left);
     }
 }
+
+/// The `Driveable` half: the two things the shared genet-probe scenario loop
+/// cannot do itself. `capture` queues a screenshot the next render fulfills (into
+/// the active shared run's dir); `app_step` is left at its default (unknown verb
+/// fails loudly) — merecat's ~30 app-specific verbs are the coordinated
+/// follow-on, homed here when the harness fully retires `scenario.rs`. Until
+/// then the shared loop drives merecat through its generic verbs, proving the
+/// two grammars are one loop.
+impl genet_probe::Driveable for Shell {
+    fn capture(&mut self, name: &str) -> bool {
+        self.pending_capture = Some(self.shared_out_dir.join(format!("{name}.png")));
+        self.request_redraw();
+        true
+    }
+
+    /// merecat's app-specific verbs, reached when the generic grammar passes a
+    /// line through. A representative slice today (`key`, `open`) — enough to
+    /// prove the seam and drive the omnibar/navigation the generic verbs cannot;
+    /// the full ~30-verb re-homing (the asserts, drag, the Piccolo `script` step)
+    /// is the coordinated retirement of `scenario.rs`. An unrecognized verb is a
+    /// loud failure, never a silent skip.
+    fn app_step(&mut self, line: &str) -> Result<(), String> {
+        let (verb, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let rest = rest.trim();
+        match verb {
+            "key" => {
+                let action = match rest {
+                    "escape" => Action::OmnibarClose,
+                    "enter" => Action::OmnibarCommit,
+                    other => return Err(format!("app_step: unknown key '{other}'")),
+                };
+                Shell::act(self, action);
+                Ok(())
+            }
+            "open" if !rest.is_empty() => {
+                Shell::act(self, Action::OpenAddress(rest.to_string()));
+                Ok(())
+            }
+            _ => Err(format!("app_step: unknown verb: {line}")),
+        }
+    }
+}
+
 
 impl ApplicationHandler for Shell {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {

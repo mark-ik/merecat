@@ -274,17 +274,37 @@ each of those two widgets wants regardless.
   stream as `interaction-missed <selector>` — the divergence rule, generalized
   off merecat into the loop. 11 crate-side tests over a mock `Driveable`.
 
-## Remaining, and a convergence to reconcile
+## The two flags — RESOLVED 2026-07-18
 
-- **merecat migration onto the shared driver.** Its ~30 scenario verbs split:
-  the generic ones run through `genet_probe::Scenario`, the ~20 app-specific ones
-  (`assert pane`/`focused`/`tab`/`ratio`/`surface`/`suggestions`, `divider`, the
-  omnibar verbs) become `Driveable::app_step` arms, and `scenario_pump` calls
-  `tick`. Sizable and receipt-critical, so its own focused pass.
-- **Adjacent sibling work.** 2026-07-18 a sibling landed merecat `401d21f`
-  *"scenario parity: the Piccolo automation runner drives the grammar"* — a
-  second automation path (Piccolo scripts) over a scenario grammar. That and this
-  shared driver want reconciling into one grammar/loop rather than two; flag for
-  whoever takes the merecat migration.
-- **Second consumer (isometry)** — the real proof the driver is generic: a fresh
-  app implementing `Driveable`, driven by a scenario with zero new harness code.
+Both flags (the grammar convergence and the merecat migration) turned out to be
+**one question**, because the sibling's Piccolo runner (`401d21f`) is not a rival
+loop — it is a `script` *step* inside merecat's own grammar. So there were only
+ever two loops to reconcile: merecat's `scenario.rs` and `genet_probe::Scenario`.
+The resolution: **prove they are one loop by driving the real Shell with the
+shared driver**, rather than rip out merecat's mature, receipt-critical,
+actively-developed harness mid-flight.
+
+Landed (merecat, this session): `Shell` implements `genet_probe::Driveable`
+(`capture` + `app_step`), a `MERECAT_SHARED_SCENARIO` activation runs
+`genet_probe::Scenario` against the real Shell in the winit pump (additive — it
+does not touch `scenario.rs`, so no collision with the Piccolo work), and
+`snapshot()` grew `panes` / `surfaces` fields so a generic scenario can assert app
+state without an app verb. `shared_driver.scn` is **RESULT ok** headed: it opens
+a pane (`act` -> `Automatable::act`), asserts state (`assert snap`/`text`), clicks
+a tab by selector (the shared resolver + `Automatable::press`), and drives a miss
+that attributes itself as an assertable `interaction-missed` event — with one
+app-specific verb (`key escape`) flowing through `app_step` to prove that seam
+too. The convergence is now demonstrated, not asserted: **one loop, driving the
+real app.**
+
+Remaining (a de-risked mechanical follow-on, now that the seam is proven):
+
+- **Full retirement of `scenario.rs`'s loop** — re-home its remaining ~28
+  app-specific verbs (the asserts, drag/dropfile, divider, the omnibar verbs, and
+  the Piccolo `script` step) into `Driveable::app_step`, then delete the
+  duplicated parser/loop/sentinel. Coordinate with whoever owns the Piccolo
+  runner, since `script` is theirs; the path is validated, so this is moving
+  handlers, not designing.
+- **Second consumer (isometry)** — the driver now has a proven real consumer
+  (merecat); isometry is the proof it is *generic*: a fresh app implementing
+  `Driveable`, driven by a scenario with zero new harness code.
