@@ -105,6 +105,13 @@ pub enum Action {
         axis: WbAxis,
         after: bool,
     },
+    /// Split `dragged` out of its OWN cell onto that cell's edge — a tab
+    /// dragged to an edge of the stack it lives in (platen's `split_out`).
+    WorkbenchSplitOut {
+        dragged: uuid::Uuid,
+        axis: WbAxis,
+        after: bool,
+    },
     /// Set the fractions of the workbench split at `path` — a workbench
     /// divider drag. Redraw only; the shell saves once, on release.
     WorkbenchSetFractions {

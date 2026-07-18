@@ -337,7 +337,48 @@ Order matters, and it is set by dependency weight:
   a roster with hundreds of rows and clickable facet cards. That pressure is the trigger
   for the toolkit question below, not a reason to defer this slice.
 
-### E. The workbench pane: platen inside a frisket leaf
+### E. The workbench pane: platen inside a frisket leaf — LANDED 2026-07-17
+
+Option (b) won, transformed by the cambium adoption: the plan's "re-derive
+~1,500 LOC of tab/divider/drop machinery" collapsed to ~600 LOC of host code
+because the catalog now supplies the parts (tab_strip per cell, the placed/
+arrangement positioning). What landed:
+
+- **Model**: `App.workbench: mere::platen::Workbench` — platen untouched, its
+  mutators driven by new Actions (`OpenInWorkbench`, `WorkbenchActivate`,
+  `CloseWorkbenchTile`, `WorkbenchStackOnto`, `WorkbenchSplitBeside`,
+  `WorkbenchSplitOut`, `WorkbenchSetFractions`; `WbAxis` keeps the vocabulary
+  crate free of pelt — `app` maps it at the platen call, and `pelt-core` is
+  now a named dep for exactly that line).
+- **Geometry**: `workbench_tiling.rs` walks the canonical `TreeGeometry` (the
+  persistence pair's layout half — no pelt TileTree needed) into pane-local
+  cells + N-ary divider bands, with `drag_fractions` (pair re-weights, 10%
+  clamp) and `wb_drop_action` (the drop-zone decision table: different-cell
+  tab bar/centre stacks, edge bands split beside, own-cell edges split OUT,
+  own-cell centre is a click).
+- **View**: `workbench_pane.rs` — cells as placed boxes each wearing a
+  cambium `tab_strip` (the strip owns selection; the shell lowers the diff as
+  `WorkbenchActivate`, the Roster's mirror-out generalized to N strips), body
+  hints honest per content state. Tile CONTENT composites as its own surface
+  at the cell body (the surface plan gained a `tiles` layer), so tile input
+  (wheel/click/focus) arrived FREE through the existing Content arms; a node
+  showing as a tile is excluded from the canvas inset (one session, one
+  surface).
+- **Gestures**: press on a tab starts a drag resolved at release; press on a
+  band starts a fraction drag; `drag-tab <a> onto <b> [@ edge]` drives the
+  same path by name (genet-probe over the pane's DOM).
+- **Persistence**: `workbench.json` beside graph.json via
+  `to_persisted_json`/`from_persisted_json` — platen's canonical-pair
+  discipline verbatim (the debug-assert rides), pruned to present members at
+  boot.
+
+Receipts: 62 unit tests green (walk, drop zones, fractions, spine flow,
+persistence pruning, strip DOM); `rung5_workbench.scn` headed RESULT ok —
+two live tiles side by side, divider drag asserted by fraction, stack by
+name, edge-split (Column below) by name — and `rung5_workbench_restore.scn`
+finds the split tiling back in a fresh process. Not carried (follow-ons, not
+bars): tab reorder within a cell, tab close glyphs, live drop-zone hover
+feedback. Original scope below.
 
 `PaneContent::Workbench` is one frisket leaf whose content is a platen `Workbench`. This is
 where platen earns its place and where the renderer question bites. Two options, and this

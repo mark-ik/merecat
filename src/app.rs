@@ -518,6 +518,18 @@ impl App {
                     vec![Effect::Redraw]
                 }
             }
+            Action::WorkbenchSplitOut { dragged, axis, after } => {
+                let axis = match axis {
+                    crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
+                    crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
+                };
+                if self.workbench.split_out(dragged, axis, after) {
+                    self.events.push(AppEvent::WorkbenchSplit);
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
             Action::WorkbenchSetFractions { path, fractions } => {
                 self.workbench.set_split_fractions(&path, &fractions);
                 vec![Effect::Redraw]

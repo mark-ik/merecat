@@ -1,11 +1,12 @@
 # Rung 5 slice E restore receipt: run AFTER rung5_workbench.scn on the SAME
-# profile (the harness's -Root). A fresh process finds the stacked workbench
-# back off workbench.json — platen's canonical (Arrangement, geometry) pair,
-# pruned to the restored graph's members.
+# profile (the harness's -Root). A fresh process finds the workbench exactly
+# where the gestures left it — the edge-split's two cells — back off
+# workbench.json: platen's canonical (Arrangement, geometry) pair, pruned to
+# the restored graph's members.
 settle 30
 key escape
 assert pane workbench
-assert wb-cells == 1
+assert wb-cells == 2
 assert wb-cell Example Domain
 assert wb-cell Internet
 capture 01_restored

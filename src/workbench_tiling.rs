@@ -164,21 +164,27 @@ fn walk(node: &TreeGeometry, area: Rect, path: &mut Vec<usize>, out: &mut Workbe
 }
 
 /// The action a workbench tab drop resolves to, from WHERE in the target cell
-/// it released: the tab bar or the body's centre stacks (join the tabs); a
-/// body edge band (the outer quarter on each side) splits the dragged tile
-/// out beside the target on that side. Pure, so the zones are testable; the
-/// shell calls it at the tab gesture's release.
+/// it released. A body edge band (the outer quarter on each side) splits: out
+/// of its OWN cell when the drop cell already holds the dragged tab
+/// (platen's `split_out`), beside the target otherwise (`split_beside_axis`).
+/// The tab bar or the body's centre stacks into a DIFFERENT cell; on the own
+/// cell it is no drop at all (`None` — the shell treats it as a click). Pure,
+/// so the zones are testable; the shell calls it at the tab gesture's release.
 pub fn wb_drop_action(
     dragged: Uuid,
     target: Uuid,
     cell: &CellPlacement,
     lx: f32,
     ly: f32,
-) -> crate::action::Action {
+) -> Option<crate::action::Action> {
     use crate::action::{Action, WbAxis};
+    let same_cell = cell.members.contains(&dragged);
     let body = cell.body();
+    let stack = || {
+        (!same_cell).then_some(Action::WorkbenchStackOnto { dragged, target })
+    };
     if ly < body.y {
-        return Action::WorkbenchStackOnto { dragged, target };
+        return stack();
     }
     const EDGE: f32 = 0.25;
     let fx = (lx - body.x) / body.w.max(1.0);
@@ -195,13 +201,18 @@ pub fn wb_drop_action(
         (None, false)
     };
     match axis {
-        Some(axis) => Action::WorkbenchSplitBeside {
+        Some(axis) if same_cell => Some(Action::WorkbenchSplitOut {
+            dragged,
+            axis,
+            after,
+        }),
+        Some(axis) => Some(Action::WorkbenchSplitBeside {
             dragged,
             target,
             axis,
             after,
-        },
-        None => Action::WorkbenchStackOnto { dragged, target },
+        }),
+        None => stack(),
     }
 }
 
@@ -334,31 +345,33 @@ mod tests {
         assert_eq!(wb.split_fractions(&[]).unwrap().len(), 2);
     }
 
-    /// The drop zones: tab bar and body centre stack; body edge bands split
-    /// on their side. The gesture's whole decision table, headless.
+    /// The drop zones: on a DIFFERENT cell, the tab bar and body centre
+    /// stack and the edge bands split beside; on the OWN cell the edges split
+    /// out and everything else is a click (`None`). The gesture's whole
+    /// decision table, headless.
     #[test]
     fn drop_zones_resolve_stack_and_edge_splits() {
         use crate::action::{Action, WbAxis};
         let (d, t) = (Uuid::new_v4(), Uuid::new_v4());
-        let cell = CellPlacement {
+        let other_cell = CellPlacement {
             members: vec![t],
             active: 0,
             rect: Rect::new(100.0, 50.0, 400.0, 430.0),
             path: vec![],
         };
-        let body = cell.body();
+        let body = other_cell.body();
         let stack = |lx: f32, ly: f32| {
             matches!(
-                wb_drop_action(d, t, &cell, lx, ly),
-                Action::WorkbenchStackOnto { .. }
+                wb_drop_action(d, t, &other_cell, lx, ly),
+                Some(Action::WorkbenchStackOnto { .. })
             )
         };
         // Tab bar and body centre: stack.
-        assert!(stack(300.0, cell.rect.y + 10.0));
+        assert!(stack(300.0, other_cell.rect.y + 10.0));
         assert!(stack(body.x + body.w / 2.0, body.y + body.h / 2.0));
         // Each edge band: split beside on that side.
-        let split_at = |lx: f32, ly: f32| match wb_drop_action(d, t, &cell, lx, ly) {
-            Action::WorkbenchSplitBeside { axis, after, .. } => Some((axis, after)),
+        let split_at = |lx: f32, ly: f32| match wb_drop_action(d, t, &other_cell, lx, ly) {
+            Some(Action::WorkbenchSplitBeside { axis, after, .. }) => Some((axis, after)),
             _ => None,
         };
         assert_eq!(
@@ -380,6 +393,27 @@ mod tests {
             split_at(body.x + body.w * 0.5, body.y + body.h * 0.9),
             Some((WbAxis::Column, true)),
             "bottom band"
+        );
+        // The OWN cell (a stack holding the dragged tab): edges split OUT,
+        // the centre and tab bar are a click.
+        let own_cell = CellPlacement {
+            members: vec![d, t],
+            active: 1,
+            rect: other_cell.rect,
+            path: vec![],
+        };
+        assert!(matches!(
+            wb_drop_action(d, t, &own_cell, body.x + body.w * 0.5, body.y + body.h * 0.9),
+            Some(Action::WorkbenchSplitOut { axis: WbAxis::Column, after: true, .. })
+        ));
+        assert!(
+            wb_drop_action(d, t, &own_cell, body.x + body.w / 2.0, body.y + body.h / 2.0)
+                .is_none(),
+            "own-cell centre is a click, not a drop"
+        );
+        assert!(
+            wb_drop_action(d, t, &own_cell, 300.0, own_cell.rect.y + 10.0).is_none(),
+            "own-cell tab bar is a click"
         );
     }
 

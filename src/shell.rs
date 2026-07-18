@@ -788,25 +788,23 @@ impl Shell {
         };
         let target_cell = pane.tiling().cell_at(lx, ly).cloned();
         match target_cell {
-            Some(cell) if !cell.members.contains(&dragged) => {
-                if let Some(target) = cell.active_member() {
-                    // WHERE in the cell decides the gesture (meerkat's drop
-                    // resolution, re-derived): the tab bar or the body's
-                    // centre stacks; a body edge band splits the dragged tile
-                    // out on that side.
-                    self.act(crate::workbench_tiling::wb_drop_action(
-                        dragged, target, &cell, lx, ly,
-                    ));
+            Some(cell) => {
+                // WHERE in the cell decides the gesture (meerkat's drop
+                // resolution, re-derived): edge bands split (out of the own
+                // cell, or beside another's); a different cell's tab bar or
+                // centre stacks; anywhere else it is a click — the strip's
+                // selection moves and the diff lowers through the spine.
+                let target = cell.active_member().unwrap_or(dragged);
+                match crate::workbench_tiling::wb_drop_action(dragged, target, &cell, lx, ly) {
+                    Some(action) => self.act(action),
+                    None => {
+                        let activations = pane.click(lx, ly, rw, rh);
+                        for a in activations {
+                            self.act(Action::WorkbenchActivate(a.0));
+                        }
+                        self.request_redraw();
+                    }
                 }
-            }
-            Some(_) => {
-                // Same cell: a click. The strip's selection moves; lower the
-                // diff through the spine.
-                let activations = pane.click(lx, ly, rw, rh);
-                for a in activations {
-                    self.act(Action::WorkbenchActivate(a.0));
-                }
-                self.request_redraw();
             }
             None => {
                 self.request_redraw();
