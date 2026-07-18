@@ -232,6 +232,13 @@ impl RosterGrid {
         genet_probe::resolve(&surfaces, sel).map(|h| h.point)
     }
 
+    /// Borrow this pane's DOM for the shared driver's `with_surfaces`. The Ref
+    /// guard lives for the caller's scope, which is why the trait hands surfaces
+    /// to a visitor rather than returning them.
+    pub fn dom_ref(&self) -> std::cell::Ref<'_, ScriptedDom> {
+        self.dom.borrow()
+    }
+
     /// The grid's scene at the pane's size, under the host's cambium sheet.
     pub fn scene(&self, w: u32, h: u32) -> netrender::Scene {
         crate::ui::scene_from_dom(&self.dom.borrow(), crate::ui::CAMBIUM_SHEET, w, h)

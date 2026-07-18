@@ -293,6 +293,11 @@ impl GlossPane {
         }];
         genet_probe::resolve(&surfaces, sel).map(|h| h.point)
     }
+
+    /// Borrow this pane's DOM for the shared driver's `with_surfaces`.
+    pub fn dom_ref(&self) -> std::cell::Ref<'_, ScriptedDom> {
+        self.dom.borrow()
+    }
 }
 
 #[cfg(test)]

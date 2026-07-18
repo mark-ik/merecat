@@ -249,6 +249,20 @@ each of those two widgets wants regardless.
   scenario is RESULT ok. **Merecat's three interaction verbs — click-tab,
   click-row, click-node — are now one shared path over one substrate.**
 
-Next: the `Automatable` trait + scenario-loop extraction (so the parser and
-verb loop leave merecat, not just the resolver), then the second-consumer proof
-on isometry.
+- 2026-07-18 — **Slice 4: the `Automatable` trait, and merecat implements it.**
+  Crate-side first (genet `5844cede`): the trait plus `AutomatableExt`'s provided
+  `resolve` / `click`, so an app that supplies the small surface gets the driving
+  verbs for free. Then the real consumer immediately **corrected the abstract
+  shape**: merecat's pane DOMs are `Rc<RefCell<ScriptedDom>>`, so
+  `surfaces() -> Vec<ProbeSurface>` could not compile (the `Ref` guards would
+  drop), and it became a **visitor**, `with_surfaces(&self, f)`, where the guards
+  live for the callback. This is the plan's "add the trait as consumers pull it"
+  working exactly as intended — the mock held a plain DOM and hid the borrow; the
+  first real impl found it. `Shell` now implements the trait, and the three
+  `click_pane_*` methods collapsed onto `self.click(sel)` (all-surface resolution,
+  no per-pane dispatch). 69 tests + the roster/trail/gloss/divergence scenarios
+  green through the trait.
+
+Next: move the scenario parser + verb loop into genet-probe too (so the harness
+itself is shared, calling `Automatable` on `Shell`), then the second-consumer
+proof on isometry. The trait is the seam that makes both possible.

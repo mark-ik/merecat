@@ -26,6 +26,7 @@ use winit::window::{Window, WindowId};
 use frisket::PaneContent;
 
 use crate::action::{Action, CaretMove, Effect, Update};
+use genet_probe::AutomatableExt as _;
 use crate::app::App;
 use crate::surface::{Rect, SurfaceKind};
 use crate::{browse, session};
@@ -435,103 +436,49 @@ impl Shell {
     /// resolves the row's window position and delivers a real click through the
     /// shared pointer path — a receipt names a row by text, not pixels.
     fn click_pane_row(&mut self, substr: &str) {
-        let plan = self.surface_plan();
-        for surface in &plan {
-            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
-                continue;
-            };
-            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
-            // Both list panes resolve through the shared genet-probe path: a
-            // Trail `list-row` or a grid `roster-cell` whose text contains
-            // `substr`. Resolving off the DOM (what is drawn) rather than graph
-            // truth means the Roster's non-Nodes tabs need no explicit guard —
-            // they simply have no row spans, so nothing resolves.
-            let hit = match self.pane_content(id) {
-                Some(PaneContent::Trail) => self.trail_pane.as_ref().and_then(|p| {
-                    p.resolve(
-                        &genet_probe::Selector::class("list-row").containing(substr),
-                        rect,
-                    )
-                }),
-                Some(PaneContent::Roster) => self.roster_grid.as_ref().and_then(|g| {
-                    g.resolve(
-                        &genet_probe::Selector::class("roster-cell").containing(substr),
-                        rect,
-                    )
-                }),
-                _ => None,
-            };
-            if let Some((x, y)) = hit {
-                self.deliver_press(x, y, MouseButton::Left);
-                self.deliver_release(x, y, MouseButton::Left);
-                return;
-            }
+        // Both list panes resolve through the shared driver's `click`: a Trail
+        // `list-row` or a grid `roster-cell` whose text contains `substr`, over
+        // all surfaces at once (no per-pane dispatch). Short-circuit `||` means a
+        // hit presses once; only a total miss is attributable.
+        let hit = self.click(&genet_probe::Selector::class("roster-cell").containing(substr))
+            || self.click(&genet_probe::Selector::class("list-row").containing(substr));
+        if !hit {
+            self.app.note(crate::observe::AppEvent::InteractionMissed {
+                what: "click-row",
+                target: substr.to_string(),
+            });
+            tracing::warn!(%substr, "click-row: no list-pane row matched");
         }
-        self.app.note(crate::observe::AppEvent::InteractionMissed {
-            what: "click-row",
-            target: substr.to_string(),
-        });
-        tracing::warn!(%substr, "click-row: no list-pane row matched");
     }
 
     /// Click the Roster's tab labelled `label` (the scenario's `click-tab`),
-    /// through the shared genet-probe resolver: a `.tab` element whose text is
-    /// `label`, resolved to a window point over the pane's DOM. The strip's
-    /// geometry is the layout's to know; the host names the target and the
-    /// resolver finds it — the same substrate every genet app shares.
+    /// through the shared driver: a `.tab` element whose text is `label`. The
+    /// strip's geometry is the layout's to know; the host names the target and
+    /// the resolver finds it — the same substrate every genet app shares.
     fn click_pane_tab(&mut self, label: &str) {
-        let sel = genet_probe::Selector::class("tab").containing(label);
-        let plan = self.surface_plan();
-        for surface in &plan {
-            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
-                continue;
-            };
-            if self.pane_content(id) != Some(PaneContent::Roster) {
-                continue;
-            }
-            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
-            if let Some((x, y)) = self.roster_grid.as_ref().and_then(|g| g.resolve(&sel, rect)) {
-                self.deliver_press(x, y, MouseButton::Left);
-                self.deliver_release(x, y, MouseButton::Left);
-                return;
-            }
+        if !self.click(&genet_probe::Selector::class("tab").containing(label)) {
+            self.app.note(crate::observe::AppEvent::InteractionMissed {
+                what: "click-tab",
+                target: label.to_string(),
+            });
+            tracing::warn!(%label, "click-tab: no Roster tab matched");
         }
-        self.app.note(crate::observe::AppEvent::InteractionMissed {
-            what: "click-tab",
-            target: label.to_string(),
-        });
-        tracing::warn!(%label, "click-tab: no Roster tab matched");
     }
 
     /// Click the Gloss minimap's node matching `substr` (the scenario's
-    /// `click-node`). Same shape as `click_pane_tab`: only the pane knows where
-    /// its nodes are, so ask it, then press at the answer.
+    /// `click-node`), through the shared driver. The node buttons carry their url
+    /// as `data-key`, so the driver selects on it — unique where the display
+    /// label (two "Example Domain" pages) is not.
     fn click_pane_node(&mut self, substr: &str) {
-        // The minimap node buttons carry their url as `data-key`, so the driver
-        // selects on it — unique where the display label (two "Example Domain"
-        // pages) is not. Same shared-resolver path as click-row / click-tab.
         let sel = genet_probe::Selector::class("graph-canvas-swatch-node")
             .with_attr("data-key", substr);
-        let plan = self.surface_plan();
-        for surface in &plan {
-            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
-                continue;
-            };
-            if self.pane_content(id) != Some(PaneContent::Gloss) {
-                continue;
-            }
-            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
-            if let Some((x, y)) = self.gloss_pane.as_ref().and_then(|p| p.resolve(&sel, rect)) {
-                self.deliver_press(x, y, MouseButton::Left);
-                self.deliver_release(x, y, MouseButton::Left);
-                return;
-            }
+        if !self.click(&sel) {
+            self.app.note(crate::observe::AppEvent::InteractionMissed {
+                what: "click-node",
+                target: substr.to_string(),
+            });
+            tracing::warn!(%substr, "click-node: no Gloss node matched");
         }
-        self.app.note(crate::observe::AppEvent::InteractionMissed {
-            what: "click-node",
-            target: substr.to_string(),
-        });
-        tracing::warn!(%substr, "click-node: no Gloss node matched");
     }
 
     /// Route a wheel event to the surface under `(x, y)` (rung 5 slice B). The
@@ -1548,6 +1495,101 @@ fn read_texture_rgba(
         out.extend_from_slice(&mapped[start..start + row_bytes as usize]);
     }
     out
+}
+
+/// merecat drives through the shared genet-probe harness: implementing this
+/// small surface grants the `resolve` / `click` verbs (used by the collapsed
+/// `click_pane_*` above) for free. `with_surfaces` hands the retained pane DOMs
+/// to a visitor — the borrow guards live only for the callback, which is why the
+/// trait takes a visitor rather than returning a `Vec` (merecat's DOMs are behind
+/// `RefCell`). Inspector/Workbench panes join by adding their `dom_ref` here when
+/// they grow click verbs.
+impl genet_probe::Automatable for Shell {
+    fn with_surfaces<R>(&self, f: impl FnOnce(&[genet_probe::ProbeSurface<'_>]) -> R) -> R {
+        let plan = self.surface_plan();
+        let mut guards: Vec<(
+            &'static str,
+            [f32; 4],
+            std::cell::Ref<'_, genet_scripted_dom::ScriptedDom>,
+        )> = Vec::new();
+        for surface in &plan {
+            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
+                continue;
+            };
+            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
+            match self.pane_content(id) {
+                Some(PaneContent::Roster) => {
+                    if let Some(g) = &self.roster_grid {
+                        guards.push(("roster", rect, g.dom_ref()));
+                    }
+                }
+                Some(PaneContent::Trail) => {
+                    if let Some(pane) = &self.trail_pane {
+                        guards.push(("trail", rect, pane.dom_ref()));
+                    }
+                }
+                Some(PaneContent::Gloss) => {
+                    if let Some(pane) = &self.gloss_pane {
+                        guards.push(("gloss", rect, pane.dom_ref()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let surfaces: Vec<genet_probe::ProbeSurface> = guards
+            .iter()
+            .map(|(name, rect, r)| genet_probe::ProbeSurface {
+                name,
+                dom: r,
+                rect: *rect,
+                sheet: crate::ui::CAMBIUM_SHEET,
+            })
+            .collect();
+        f(&surfaces)
+    }
+
+    fn snapshot(&self) -> genet_probe::ProbeSnapshot {
+        let snap = crate::observe::snapshot(&self.app);
+        let mut out = genet_probe::ProbeSnapshot::default()
+            .with_field("focus", snap.focus)
+            .with_field("node-count", snap.node_count.to_string())
+            .with_field("roster-tab", snap.roster_tab);
+        out.focused = snap.focused.map(|n| n.caption);
+        out
+    }
+
+    fn drain_events(&mut self) -> Vec<String> {
+        self.app
+            .take_events()
+            .iter()
+            .map(crate::observe::AppEvent::describe)
+            .collect()
+    }
+
+    fn act(&mut self, label: &str) -> bool {
+        match crate::action::palette_actions()
+            .into_iter()
+            .find(|(l, _)| *l == label)
+        {
+            Some((_, action)) => {
+                Shell::act(self, action);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn press(&mut self, x: f32, y: f32) {
+        self.deliver_press(x, y, MouseButton::Left);
+    }
+
+    fn moved(&mut self, x: f32, y: f32) {
+        self.deliver_move(x, y);
+    }
+
+    fn release(&mut self, x: f32, y: f32) {
+        self.deliver_release(x, y, MouseButton::Left);
+    }
 }
 
 impl ApplicationHandler for Shell {
