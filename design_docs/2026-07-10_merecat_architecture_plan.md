@@ -316,6 +316,21 @@ daily-driver value, not by meerkat's module sizes.
    content tiles + chrome in lenses, lens frisket ops (summon/divider in a
    lens), the drag gesture over `frisket::tearout` (branch/fork arms), and
    window-record persistence.
+   **Depth remainder LANDED 2026-07-18** (commits acc13f1, 2c7df85, 7f3615b,
+   5280859): (a) content tiles follow their pane — a torn-out workbench's
+   live tiles composite in the lens's plan, one-session-one-surface holds
+   across windows, receipt `rung7_wb_lens.scn`; (b) frisket ops live in a
+   lens — `SpaceRef` + `App::space_of` aim close/divider/summon-beside at
+   whichever tree holds the active pane (which now FOLLOWS a tear-out), lens
+   seam drags lower `SetSplitRatio` at the lens's space, receipt
+   `rung7_lens_ops.scn`; (c) window records persist — `windows.json`
+   (frisket::store), restored slots reopen through the ordinary OpenWindow
+   effect, restore twin `rung7_persist`/`rung7_persist_verify`; (d) the
+   BRANCH arm, gesture-first — `PaneContent::Tile` hardened to carry the
+   member uuid, a tab dragged out of the workbench lowers `TearOutTile`,
+   the pinned Tile pane composites its live session strip-less in the lens,
+   receipt `rung7_tile_tearout.scn` (`drag-tab <a> out`). The fork arm
+   (duplicate-view semantics) stays named-not-built with multi-session.
 8. **The long tail**. Comms and community services (Murm direct exchange +
    Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
    scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a
