@@ -208,20 +208,21 @@ impl RosterGrid {
         (i, ROSTER_TABS[i.min(ROSTER_TABS.len() - 1)])
     }
 
-    /// The pane-local centre of the tab labelled `label`, at the pane's size.
-    /// Asks the LAYOUT where the tab is rather than recomputing its geometry:
-    /// the strip is a flex row of text-sized tabs, so a tab's x is whatever the
-    /// host sheet's padding and the label's own measured width put it at, and
-    /// only the layout knows that. `None` when no such tab is drawn.
-    pub fn tab_center(&self, label: &str, w: u32, h: u32) -> Option<(f32, f32)> {
+    /// Resolve a selector to a point within this pane's DOM at window rect
+    /// `rect` (`[x, y, w, h]`), via the shared genet-probe resolver — the strip's
+    /// bespoke `tab_center` collapsed onto the generic path. Returns the
+    /// window-space centre of the first match, or `None` (not drawn). This is
+    /// the "extraction simplifies the consumer" claim in the small: the pane no
+    /// longer owns tab geometry, it forwards its DOM to the shared resolver.
+    pub fn resolve(&self, sel: &genet_probe::Selector, rect: [f32; 4]) -> Option<(f32, f32)> {
         let dom = self.dom.borrow();
-        let layout = IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
-        let tab = dom
-            .all_with_class(dom.document(), "tab")
-            .into_iter()
-            .find(|&t| dom.dom_children(t).any(|c| dom.text(c) == Some(label)))?;
-        let (x, y, tw, th) = layout.absolute_rect(&*dom, tab)?;
-        Some((x + tw / 2.0, y + th / 2.0))
+        let surfaces = [genet_probe::ProbeSurface {
+            name: "roster",
+            dom: &dom,
+            rect,
+            sheet: crate::ui::CAMBIUM_SHEET,
+        }];
+        genet_probe::resolve(&surfaces, sel).map(|h| h.point)
     }
 
     /// The grid's scene at the pane's size, under the host's cambium sheet.
@@ -332,7 +333,10 @@ mod tests {
         let mut g = grid_with_rows();
         assert_eq!(g.selected_tab(), (0, "Nodes"));
         let (x, y) = g
-            .tab_center("Links", 512, 600)
+            .resolve(
+                &genet_probe::Selector::class("tab").containing("Links"),
+                [0.0, 0.0, 512.0, 600.0],
+            )
             .expect("the strip must draw a Links tab");
         g.click(x, y, 512, 600);
         assert_eq!(
@@ -354,16 +358,20 @@ mod tests {
         );
     }
 
-    /// `tab_center` must agree with the strip the sheet actually lays out: every
+    /// The shared resolver must agree with the strip the sheet lays out: every
     /// declared tab is drawn, in order, inside the strip's height. The scenario's
-    /// `click-tab` aims here, so a drift means receipts click the wrong tab.
+    /// `click-tab` aims through the same resolver, so a drift means receipts click
+    /// the wrong tab.
     #[test]
     fn every_tab_is_drawn_in_the_strip() {
         let g = grid_with_rows();
         let mut last_x = 0.0;
         for label in ROSTER_TABS {
             let (x, y) = g
-                .tab_center(label, 512, 600)
+                .resolve(
+                    &genet_probe::Selector::class("tab").containing(label),
+                    [0.0, 0.0, 512.0, 600.0],
+                )
                 .unwrap_or_else(|| panic!("the strip must draw a {label} tab"));
             assert!(x > last_x, "tabs must run left to right: {label} at {x}");
             assert!(

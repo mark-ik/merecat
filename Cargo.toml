@@ -65,6 +65,7 @@ genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # (rung 3: the omnibar is merecat's first DOM surface, composited above the
 # canvas by the layered present).
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+genet-probe = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }

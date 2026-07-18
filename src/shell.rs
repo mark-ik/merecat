@@ -375,10 +375,13 @@ impl Shell {
         tracing::warn!(%substr, "click-row: no list-pane row matched");
     }
 
-    /// Click the Roster's tab labelled `label` (the scenario's `click-tab`). The
-    /// strip is a flex row of text-sized tabs, so the host cannot compute a tab's
-    /// x — it asks the layout, then presses at the tab the strip actually drew.
+    /// Click the Roster's tab labelled `label` (the scenario's `click-tab`),
+    /// through the shared genet-probe resolver: a `.tab` element whose text is
+    /// `label`, resolved to a window point over the pane's DOM. The strip's
+    /// geometry is the layout's to know; the host names the target and the
+    /// resolver finds it — the same substrate every genet app shares.
     fn click_pane_tab(&mut self, label: &str) {
+        let sel = genet_probe::Selector::class("tab").containing(label);
         let plan = self.surface_plan();
         for surface in &plan {
             let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
@@ -387,21 +390,12 @@ impl Shell {
             if self.pane_content(id) != Some(PaneContent::Roster) {
                 continue;
             }
-            let dims = (
-                surface.rect.w.round().max(1.0) as u32,
-                surface.rect.h.round().max(1.0) as u32,
-            );
-            let Some(center) = self
-                .roster_grid
-                .as_ref()
-                .and_then(|g| g.tab_center(label, dims.0, dims.1))
-            else {
-                continue;
-            };
-            let (x, y) = (surface.rect.x + center.0, surface.rect.y + center.1);
-            self.deliver_press(x, y, MouseButton::Left);
-            self.deliver_release(x, y, MouseButton::Left);
-            return;
+            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
+            if let Some((x, y)) = self.roster_grid.as_ref().and_then(|g| g.resolve(&sel, rect)) {
+                self.deliver_press(x, y, MouseButton::Left);
+                self.deliver_release(x, y, MouseButton::Left);
+                return;
+            }
         }
         self.app.note(crate::observe::AppEvent::InteractionMissed {
             what: "click-tab",

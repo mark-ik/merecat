@@ -181,9 +181,48 @@ here so it is not mistaken for something `genet-probe` covers.
   structurally? Palette-label is stringly-typed but matches how a human or model
   would name the action, which is the automatability goal.
 
+## Finding: a widget is only genet-probe-resolvable if its identity is in the DOM
+
+Wiring merecat's first verb surfaced the sharp edge of the whole idea. The
+resolver can only find what the **semantic DOM** carries — a selectable class
+(or role) plus the target text reachable as the element's own text or its
+`aria-label`. Against merecat's four widget shapes:
+
+- **Tab strip** — resolvable. `.tab` with the label as direct child text. Wired.
+- **Sectioned list (Trail)** — resolvable. `.list-row` with direct child text.
+  Ready to wire.
+- **data_grid (Roster rows)** — NOT yet. The clickable cell is a bare `<span>`
+  (no class) and its text sits one level below the `.grid-cell` wrapper, so a
+  `.grid-cell` selector with shallow text matching misses it, and a deep match
+  would first hit the enclosing `.grid` container. Needs a small cambium change:
+  give the grid cell (or its clickable) a stable class with reachable text.
+- **graph-canvas node (Gloss)** — NOT yet, for a different reason. The scenario
+  targets a node by **url**, and the url is only in pane state, not the DOM (the
+  node button's `aria-label` is the display label). The node needs its url in
+  the DOM — a `data-url` attribute or the aria-label — before a url-selector
+  resolves it.
+
+This is the automatability baseline made concrete at the widget level: **an app
+is drivable exactly to the extent its targetable identity lives in the semantic
+DOM.** It sharpens the accessibility axis too — the same DOM identity a driver
+needs is what an AT tool reads. So the follow-on is not just "wire the other
+verbs"; it is "put the missing identity in the DOM," which is a cambium/app fix
+each of those two widgets wants regardless.
+
 ## Progress
 
 - 2026-07-17 — Spike written. Prior same-session groundwork that makes this
   cheap: merecat's divergence events landed (`94d685a`), and the four catalog
   components this crate's verbs resolve against (tab strip, split, sectioned
   list, the graph-canvas leaf) are all in cambium with ARIA semantics.
+- 2026-07-17 — **Slice 1: resolver founded** in genet (`genet-probe`,
+  `ProbeSurface` + `Selector` + `resolve` + `text_present`, 5 tests, MIT/Apache).
+  Proven to resolve within merecat's dependency graph via the local patch (genet
+  main is 12 commits ahead of origin with foreign work, so `genet-probe` is NOT
+  yet on origin/main — a clean merecat checkout needs it pushed there; deferred,
+  not forced with foreign commits in the way).
+- 2026-07-17 — **Slice 2 (partial): merecat is the first consumer.** `click-tab`
+  routes through `genet_probe::resolve`; `RosterGrid::tab_center`'s bespoke
+  geometry collapsed to a 3-line `resolve` delegation. Unit tests + the roster
+  and divergence scenarios green through the shared crate. `click-row` /
+  `click-node` await the DOM-identity fixes above before they collapse too.
