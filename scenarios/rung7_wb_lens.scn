@@ -1,0 +1,36 @@
+# Rung 7 depth receipt, self-driven: content tiles FOLLOW their pane. A live
+# page opens into the workbench (its tile composites in the primary), then
+# the workbench pane tears out into a lens window. The receipt: the LENS's
+# live plan now composites the content surface (the same session, framed at
+# the lens cell's size), and the primary composites NO content at all — the
+# one-session-one-surface rule holding across windows. capture-lens is the
+# pixel half. Network-dependent (example.com); FRESH profile.
+settle 30
+key escape
+
+open https://example.com/
+settle 30
+act Open node in Workbench
+settle 40
+assert pane workbench
+assert wb-cells == 1
+assert surface content
+capture 01_tile_in_primary
+
+# Tear out: OpenInWorkbench summoned the pane, so it is the active pane.
+act Tear out pane
+settle 30
+assert windows == 2
+assert lens-pane 0:workbench
+assert no-pane workbench
+
+# THE receipt pair: the tile composites in the lens's plan, and nowhere in
+# the primary's (no tile there, no inset either — the focused node tiles in
+# a visible workbench, so the inset stays suppressed).
+assert lens-surface content
+assert no-surface content
+capture 02_primary_without_tile
+capture-lens 03_tile_in_lens
+settle 10
+
+log rung 7 depth (workbench tiles follow the pane to a lens) complete

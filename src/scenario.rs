@@ -44,7 +44,9 @@
 //! assert wb-fraction ==|>=|<= <f>  # the workbench root split's FIRST fraction
 //! assert a11y <substr>      # an a11y-projection line ("role: label") contains substr
 //! assert lens-pane <substr> # a lens window's "ordinal:tag" pane contains substr
+//! assert lens-surface <kind> # the FIRST lens window's live plan composites that kind
 //! assert no-pane <tag>      # NO pane with that tag is in the PRIMARY tree
+//! assert no-surface <kind>  # NO surface of that kind in the PRIMARY plan
 //! capture-lens <name>       # self-capture the first lens window's frame
 //! assert omnibar open|closed
 //! assert omnibar-text <str>  # the omnibar text is exactly <str>
@@ -112,9 +114,15 @@ pub enum Step {
     AssertWindows(CmpOp, usize),
     /// A lens window holds a pane whose "ordinal:tag" contains the substring.
     AssertLensPane(String),
+    /// The FIRST lens window's live surface plan composites a surface of the
+    /// named kind (the tiles-follow-the-pane receipt).
+    AssertLensSurface(String),
     /// NO pane with the given tag is in the PRIMARY tree (the tear-out's
     /// departure half).
     AssertNoPane(String),
+    /// NO surface of the named kind is in the PRIMARY plan (the one-session-
+    /// one-surface rule's cross-window half).
+    AssertNoSurface(String),
     /// Self-capture the first live lens window's composed frame.
     CaptureLens(String),
     /// The root split's ratio compares as given.
@@ -308,7 +316,11 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
                     "a11y" if !arg.is_empty() => Step::AssertA11y(arg.to_string()),
                     "lens-pane" if !arg.is_empty() => Step::AssertLensPane(arg.to_string()),
+                    "lens-surface" if !arg.is_empty() => {
+                        Step::AssertLensSurface(arg.to_string())
+                    }
                     "no-pane" if !arg.is_empty() => Step::AssertNoPane(arg.to_string()),
+                    "no-surface" if !arg.is_empty() => Step::AssertNoSurface(arg.to_string()),
                     "windows" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)

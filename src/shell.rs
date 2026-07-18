@@ -471,13 +471,32 @@ impl Shell {
         // Content overlays the canvas pane (when it is shown); a live node's
         // document insets within the graph, not over a maximized pane. A node
         // showing as a workbench tile is not ALSO inset over the canvas: one
-        // session, one surface, or the two frame at fighting sizes.
+        // session, one surface, or the two frame at fighting sizes. That rule
+        // holds ACROSS windows too — when the workbench pane tore out to a
+        // lens, its tiles render THERE (the lens's plan walks them), so the
+        // same membership excludes the inset here.
+        let wb_in_lens = wb_rect.is_none()
+            && self.app.lenses.iter().flatten().any(|space| {
+                space
+                    .iter_leaves()
+                    .any(|(_, c, _)| matches!(c, PaneContent::Workbench))
+            });
+        let tiled_in_lens = |id: &uuid::Uuid| {
+            wb_in_lens && {
+                let geom = self.app.workbench.to_arrangement().1;
+                crate::workbench_tiling::place_workbench(geom.as_ref(), area)
+                    .cells
+                    .iter()
+                    .any(|c| c.active_member() == Some(*id))
+            }
+        };
         let content = canvas_rect.and_then(|cr| {
             self.app
                 .canvas
                 .focused_member()
                 .filter(|id| self.content_sessions.contains_key(id))
                 .filter(|id| !tiles.iter().any(|(t, _)| t == id))
+                .filter(|id| !tiled_in_lens(id))
                 .map(|node| (node, crate::surface::content_rect(cr)))
         });
         let caption = crate::app::focused_caption(&self.app.canvas);
@@ -1384,7 +1403,29 @@ impl Shell {
                 .iter()
                 .map(|d| (SurfaceKind::Divider(d.index), d.rect)),
         );
-        crate::surface::assemble(&base, &[], None, None)
+        // Workbench tiles in a LENS (rung-7 depth: content tiles follow the
+        // pane): when the workbench pane tore out to this window, its cells'
+        // live tiles compose as content surfaces at their body rects — the
+        // same walk the primary plan does, at the lens pane's rect.
+        let wb_rect = tiling
+            .panes
+            .iter()
+            .find(|p| matches!(p.content, PaneContent::Workbench))
+            .map(|p| p.rect);
+        let tiles: Vec<(uuid::Uuid, Rect)> = wb_rect
+            .map(|rect| {
+                let geom = self.app.workbench.to_arrangement().1;
+                crate::workbench_tiling::place_workbench(geom.as_ref(), rect)
+                    .cells
+                    .iter()
+                    .filter_map(|c| {
+                        let m = c.active_member()?;
+                        self.content_sessions.contains_key(&m).then(|| (m, c.body()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        crate::surface::assemble(&base, &tiles, None, None)
     }
 
     /// A pane's `PaneContent` in a LENS window's space.
@@ -1418,8 +1459,19 @@ impl Shell {
             return;
         }
         // Pass 1 (mutable): produce each surface's scene at its rect size.
-        let mut new_viewport = lens_viewport;
+        // Sessions pump here too (the bug-#2 discipline): a lens hosting the
+        // workbench must keep its tiles' clocks honest even while the primary
+        // idles. The pump clock is shared and monotonic, so double-pumping in
+        // a frame where both windows render is a no-op.
+        let now_ms = self.epoch.elapsed().as_secs_f64() * 1000.0;
         let mut animating = false;
+        for session in self.content_sessions.values_mut() {
+            session.pump(now_ms);
+            if !session.settled() {
+                animating = true;
+            }
+        }
+        let mut new_viewport = lens_viewport;
         let mut scenes: Vec<PlannedScene> = Vec::with_capacity(surfaces.len());
         for surface in &surfaces {
             let rect = surface.rect;
@@ -1443,10 +1495,21 @@ impl Shell {
                     let scene = self.pane_scene_by_kind(content.as_ref(), rw, rh);
                     (scene, wgpu::Color::TRANSPARENT)
                 }
+                // A workbench tile whose pane tore out here: the SAME session
+                // the primary would frame, at this cell's size (already pumped
+                // above).
+                crate::surface::SurfaceKind::Content(node) => {
+                    let Some(session) = self.content_sessions.get_mut(&node) else {
+                        continue;
+                    };
+                    let scene = session.frame(rw, rh);
+                    (scene, wgpu::Color::WHITE)
+                }
                 crate::surface::SurfaceKind::Divider(_) => {
                     (Scene::default(), crate::ui::SEAM_CLEAR)
                 }
-                // No content inset / chrome in a lens (v1).
+                // No canvas-inset content / chrome layer in a lens's plan
+                // (chrome composites separately below).
                 _ => continue,
             };
             scenes.push(PlannedScene {
@@ -1560,35 +1623,79 @@ impl Shell {
                 ..
             } => {
                 // A press routes by the lens's OWN plan: a pane press
-                // dispatches into the shared runner; a canvas press falls
-                // through to the camera-gesture block below.
+                // dispatches into the shared runner; a tile press routes into
+                // the shared SESSION (a link is a durable navigation through
+                // the spine); a canvas press falls through to the
+                // camera-gesture block below.
                 let (x, y) = lens.cursor;
                 let (lw, lh, ordinal) = (lens.width, lens.height, lens.ordinal);
                 let plan = self.lens_plan(ordinal, lw, lh);
                 if let Some(hit) =
                     crate::surface::hit_test(&plan, crate::surface::FocusTarget::Canvas, x, y)
-                    && let crate::surface::SurfaceKind::Pane(pid) = hit.kind
                 {
-                    if let Some(content) = self.lens_pane_content(ordinal, pid) {
-                        let dims = plan
-                            .iter()
-                            .find(|s| s.id == hit.id)
-                            .map(|s| {
-                                (
-                                    s.rect.w.round().max(1.0) as u32,
-                                    s.rect.h.round().max(1.0) as u32,
-                                )
-                            })
-                            .unwrap_or((lw, lh));
-                        let actions = self.pane_click_actions(&content, hit.local, dims);
-                        for action in actions {
-                            self.act(action);
+                    match hit.kind {
+                        crate::surface::SurfaceKind::Pane(pid) => {
+                            if let Some(content) = self.lens_pane_content(ordinal, pid) {
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| {
+                                        (
+                                            s.rect.w.round().max(1.0) as u32,
+                                            s.rect.h.round().max(1.0) as u32,
+                                        )
+                                    })
+                                    .unwrap_or((lw, lh));
+                                let actions = self.pane_click_actions(&content, hit.local, dims);
+                                for action in actions {
+                                    self.act(action);
+                                }
+                            }
+                            self.request_redraw();
+                            return;
                         }
+                        crate::surface::SurfaceKind::Content(node) => {
+                            self.app.focus = crate::surface::FocusTarget::Content(node);
+                            if let Some(session) = self.content_sessions.get_mut(&node)
+                                && let SessionClick::Navigate(url) =
+                                    session.click_at(hit.local.0, hit.local.1)
+                            {
+                                self.act(Action::OpenAddress(url));
+                            }
+                            if let Some(lens) = self.lens_windows.get_mut(&id) {
+                                lens.window.request_redraw();
+                            }
+                            return;
+                        }
+                        _ => {}
                     }
-                    self.request_redraw();
-                    return;
                 }
                 // Canvas press: handled by the gesture block below.
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Wheel over a tile scrolls the PAGE (the rung-5 slice-B rule,
+                // per window); off-tile falls through to the camera pan below.
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (x * WHEEL_PAN_SCALE, y * WHEEL_PAN_SCALE)
+                    }
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                };
+                let (x, y) = lens.cursor;
+                let (lw, lh, ordinal) = (lens.width, lens.height, lens.ordinal);
+                let plan = self.lens_plan(ordinal, lw, lh);
+                if let Some(hit) =
+                    crate::surface::hit_test(&plan, crate::surface::FocusTarget::Canvas, x, y)
+                    && let crate::surface::SurfaceKind::Content(node) = hit.kind
+                    && let Some(session) = self.content_sessions.get_mut(&node)
+                {
+                    if session.scroll_at(hit.local.0, hit.local.1, dx, dy)
+                        && let Some(lens) = self.lens_windows.get_mut(&id)
+                    {
+                        lens.window.request_redraw();
+                    }
+                    return;
+                }
             }
             _ => {}
         }
@@ -2294,6 +2401,35 @@ impl Shell {
                     return Err(format!(
                         "assert no-pane '{tag}': the primary tree still holds {:?}",
                         snap.panes
+                    ));
+                }
+            }
+            Step::AssertLensSurface(kind) => {
+                // The first lens window's LIVE plan — the same one its render
+                // and input use — so a green assert certifies what that window
+                // actually composites.
+                let Some((lw, lh, ordinal)) = self
+                    .lens_windows
+                    .values()
+                    .next()
+                    .map(|l| (l.width, l.height, l.ordinal))
+                else {
+                    return Err(format!("assert lens-surface '{kind}': no lens window"));
+                };
+                let plan = self.lens_plan(ordinal, lw, lh);
+                if !plan.iter().any(|s| s.kind.label() == kind) {
+                    let kinds: Vec<_> = plan.iter().map(|s| s.kind.label()).collect();
+                    return Err(format!(
+                        "assert lens-surface '{kind}': the lens plan is {kinds:?}"
+                    ));
+                }
+            }
+            Step::AssertNoSurface(kind) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if snap.surfaces.iter().any(|s| s == kind) {
+                    return Err(format!(
+                        "assert no-surface '{kind}': the primary plan is {:?}",
+                        snap.surfaces
                     ));
                 }
             }

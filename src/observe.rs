@@ -230,11 +230,34 @@ pub fn snapshot(app: &App) -> Snapshot {
     if matches!(app.frisket.root, frisket::PaneNode::Split { .. }) && app.maximized.is_none() {
         surfaces.push("divider".to_string());
     }
-    let focused_live = app
-        .canvas
-        .focused_member()
-        .is_some_and(|m| matches!(app.content.get(m), Some(NodeContent::Live)));
-    if focused_live {
+    // Content surfaces, honestly: a live tile composites where its workbench
+    // PANE lives (primary or a lens it tore out to), and the focused node's
+    // inset is suppressed while that node tiles in a visible workbench — the
+    // one-session-one-surface rule, across windows, mirrored from the shell's
+    // plan so this report never claims a surface the frame won't compose.
+    let wb_in_primary = app
+        .frisket
+        .iter_leaves()
+        .any(|(_, c, _)| matches!(c, frisket::PaneContent::Workbench));
+    let wb_in_lens = app.lenses.iter().flatten().any(|space| {
+        space
+            .iter_leaves()
+            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Workbench))
+    });
+    let live = |m: uuid::Uuid| matches!(app.content.get(m), Some(NodeContent::Live));
+    let tiled: Vec<uuid::Uuid> = {
+        let geom = app.workbench.to_arrangement().1;
+        crate::workbench_tiling::place_workbench(geom.as_ref(), crate::surface::Rect::full(1, 1))
+            .cells
+            .iter()
+            .filter_map(|c| c.active_member())
+            .collect()
+    };
+    let tile_content_here = wb_in_primary && tiled.iter().any(|m| live(*m));
+    let focused_inset = app.canvas.focused_member().is_some_and(|m| {
+        live(m) && !((wb_in_primary || wb_in_lens) && tiled.contains(&m))
+    });
+    if tile_content_here || focused_inset {
         surfaces.push("content".to_string());
     }
     if crate::ui::chrome_has_content(&app.omnibar, crate::app::focused_caption(&app.canvas).as_deref())
