@@ -201,11 +201,16 @@ resolver can only find what the **semantic DOM** carries — a selectable class
   a class and reachable text** — inline text is neither hit-testable-by-centre
   nor box-resolvable. The fix was merecat-side (the cell content is merecat's
   closure, not cambium's), so no cambium change was needed.
-- **graph-canvas node (Gloss)** — NOT yet, for a different reason. The scenario
-  targets a node by **url**, and the url is only in pane state, not the DOM (the
-  node button's `aria-label` is the display label). The node needs its url in
-  the DOM — a `data-url` attribute or the aria-label — before a url-selector
-  resolves it.
+- **graph-canvas node (Gloss)** — resolvable after a cambium change (done). The
+  scenario targets a node by **url**, and two nodes can share a display label
+  (two pages both titled "Example Domain"), so the label is not enough. The fix
+  is the general one: `GraphCanvasNode.key: Option<String>`, emitted as
+  `data-key` on the node button, plus `Selector::with_attr` in genet-probe to
+  select on it. merecat sets `key = url`. This is the first case that needed a
+  cambium touch (the others were merecat-side), and it is the same lesson
+  again — a target is findable only through identity the DOM carries — now
+  extended from "class + text" to "a stable key attribute" for the
+  ambiguous-label case.
 
 This is the automatability baseline made concrete at the widget level: **an app
 is drivable exactly to the extent its targetable identity lives in the semantic
@@ -233,6 +238,17 @@ each of those two widgets wants regardless.
   graph truth — the Roster's non-Nodes-tab guard fell away for free (no row
   spans are drawn, so nothing resolves). The grid cell went inline-span ->
   block-div (the finding above). Unit tests + the roster, trail, and divergence
-  scenarios green through the shared crate. `click-node` (gloss) still needs the
-  url in the node's DOM before it collapses too — a `data-url` on the swatch node
-  plus an attribute-matching selector, its own small slice.
+  scenarios green through the shared crate.
+- 2026-07-17 — **Slice 3: click-node too — all three interaction verbs now
+  resolve through genet-probe.** Needed the session's first cambium touch:
+  `GraphCanvasNode.key` -> `data-key` (cambium `fd57c2d5`) and
+  `Selector::with_attr` (genet `5f735354`), so a node is targeted by its url
+  where its label is not unique. `GlossPane::node_center`'s projection-plus-leaf
+  math collapsed to the same `resolve` delegation (the node button is a real
+  positioned element; `absolute_rect` already knows where it is). The gloss
+  scenario is RESULT ok. **Merecat's three interaction verbs — click-tab,
+  click-row, click-node — are now one shared path over one substrate.**
+
+Next: the `Automatable` trait + scenario-loop extraction (so the parser and
+verb loop leave merecat, not just the resolver), then the second-consumer proof
+on isometry.

@@ -42,6 +42,7 @@ fn pane_content(kind: PaneKind) -> PaneContent {
         PaneKind::Steward => PaneContent::Steward,
         PaneKind::Comms => PaneContent::Comms,
         PaneKind::Apparatus => PaneContent::Apparatus,
+        PaneKind::Workbench => PaneContent::Workbench,
     }
 }
 
@@ -72,6 +73,11 @@ pub struct App {
     /// The active pane — the anchor a summon splits from and a close removes.
     /// `None` means the canvas (the Orrery leaf).
     pub active_pane: Option<PaneId>,
+    /// The node-tiling model INSIDE the Workbench pane leaf (rung 5 slice E):
+    /// platen's `Workbench` — the split tree of tab-stacks, the active tab per
+    /// stack, every mutator. App truth (data, no handles); persisted as the
+    /// canonical `(Arrangement, geometry)` pair beside `graph.json`.
+    pub workbench: mere::platen::Workbench,
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
@@ -138,6 +144,10 @@ impl App {
         // later summon cannot collide with a persisted pane.
         let frisket = session::load_frisket_layout(&data_root).unwrap_or_default();
         let next_pane_id = frisket.iter_leaves().map(|(id, _, _)| id.0).max().unwrap_or(0) + 1;
+        // Restore the workbench tiling, pruned to the live graph's members (a
+        // tile whose node vanished between sessions collapses away).
+        let present = canvas.graph().nodes().map(|(_, n)| n.id).collect();
+        let workbench = session::load_workbench(&data_root, &present);
         (
             Self {
                 canvas,
@@ -147,6 +157,7 @@ impl App {
                 focus,
                 frisket,
                 active_pane: None,
+                workbench,
                 maximized: None,
                 roster_tab: 0,
                 next_pane_id,
@@ -423,6 +434,94 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
+            // Workbench ops (rung 5 slice E). Platen owns the model and every
+            // mutator; these arms lower intents onto it and persist. The
+            // Workbench PANE (the frisket leaf) is where the tiling shows;
+            // opening a tile summons it if absent, through the same summon
+            // path as a palette summon (one spine, no side door).
+            Action::OpenInWorkbench => {
+                let Some(target) = self
+                    .canvas
+                    .focused_member()
+                    .zip(self.canvas.focused_url().map(str::to_string))
+                else {
+                    return Vec::new();
+                };
+                let (member, url) = target;
+                self.workbench.ensure_tiled();
+                self.workbench.open_tile(member);
+                self.events.push(AppEvent::WorkbenchTileOpened(url.clone()));
+                let mut effects = Vec::new();
+                let has_pane = self
+                    .frisket
+                    .iter_leaves()
+                    .any(|(_, c, _)| matches!(c, PaneContent::Workbench));
+                if !has_pane {
+                    effects.extend(self.update(Action::SummonPane(PaneKind::Workbench)));
+                }
+                // A tile wants live content; spawn it unless it already has
+                // some (live or in flight). Failure surfaces as ever.
+                if self.content.flip_spawns(member) {
+                    self.content.note_requested(member);
+                    self.events.push(AppEvent::ContentState {
+                        node: member,
+                        state: "requested".to_string(),
+                    });
+                    effects.push(Effect::SpawnContent { node: member, url });
+                }
+                effects.push(Effect::SaveSession);
+                effects.push(Effect::Redraw);
+                effects
+            }
+            Action::WorkbenchActivate(member) => {
+                if self.workbench.activate(member) {
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::CloseWorkbenchTile => {
+                let Some(member) = self.canvas.focused_member() else {
+                    return vec![Effect::Redraw];
+                };
+                if self.workbench.close_tile(member) {
+                    self.events.push(AppEvent::WorkbenchTileClosed);
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::WorkbenchStackOnto { dragged, target } => {
+                if self.workbench.move_to_slot_of(dragged, target) {
+                    self.events.push(AppEvent::WorkbenchStacked);
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::WorkbenchSplitBeside {
+                dragged,
+                target,
+                axis,
+                after,
+            } => {
+                // The app vocabulary's axis maps onto pelt's at the platen
+                // call (the one place the tile contract is named).
+                let axis = match axis {
+                    crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
+                    crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
+                };
+                if self.workbench.split_beside_axis(dragged, target, axis, after) {
+                    self.events.push(AppEvent::WorkbenchSplit);
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
+            Action::WorkbenchSetFractions { path, fractions } => {
+                self.workbench.set_split_fractions(&path, &fractions);
+                vec![Effect::Redraw]
+            }
         }
     }
 
@@ -436,6 +535,7 @@ impl App {
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
             active_pane: None,
+            workbench: mere::platen::Workbench::new(),
             maximized: None,
             roster_tab: 0,
             next_pane_id: 1,
@@ -542,6 +642,71 @@ mod tests {
                 .any(|e| matches!(e, Effect::SpawnContent { .. })),
             "a failed node retries on the next flip"
         );
+    }
+
+    /// The workbench lane end to end at the App tier: opening the focused
+    /// node tiles it, summons the Workbench pane, and spawns its content;
+    /// stacking collapses cells; closing empties honestly.
+    #[test]
+    fn workbench_actions_flow_through_the_spine() {
+        let mut app = App::test_stub();
+        app.update(Action::OpenAddress("mere://alpha".to_string()));
+        let a = app.canvas.focused_member().unwrap();
+        let effects = app.update(Action::OpenInWorkbench);
+        assert!(app.workbench.is_tiled());
+        assert_eq!(app.workbench.tile_count(), 1);
+        assert!(
+            app.frisket
+                .iter_leaves()
+                .any(|(_, c, _)| matches!(c, PaneContent::Workbench)),
+            "opening a tile summons the Workbench pane"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnContent { .. })),
+            "a tile wants live content: {effects:?}"
+        );
+        // Re-opening the same node adds nothing.
+        app.update(Action::OpenInWorkbench);
+        assert_eq!(app.workbench.tile_count(), 1);
+        // A second node tiles beside it; stacking collapses to one cell.
+        app.update(Action::OpenAddress("mere://beta".to_string()));
+        let b = app.canvas.focused_member().unwrap();
+        app.update(Action::OpenInWorkbench);
+        assert_eq!(app.workbench.slot_count(), 2);
+        app.update(Action::WorkbenchStackOnto { dragged: b, target: a });
+        assert_eq!(app.workbench.slot_count(), 1);
+        assert_eq!(app.workbench.tile_count(), 2);
+        // Activate the buried tab; close the focused (beta) tile.
+        app.update(Action::WorkbenchActivate(a));
+        app.update(Action::CloseWorkbenchTile);
+        assert_eq!(app.workbench.tile_count(), 1);
+        assert!(app.workbench.has_tile(a));
+    }
+
+    /// The workbench sidecar round-trips through the persistence port,
+    /// pruned to present members (platen's canonical pair underneath).
+    #[test]
+    fn workbench_persists_and_restores_pruned() {
+        let dir = std::env::temp_dir().join(format!("merecat-wb-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let mut wb = mere::platen::Workbench::new();
+        wb.ensure_tiled();
+        wb.open_tile(a);
+        wb.open_tile(b);
+        crate::session::save_workbench(&dir, &wb);
+        // Both present: both tiles come back.
+        let present: std::collections::HashSet<_> = [a, b].into_iter().collect();
+        let restored = crate::session::load_workbench(&dir, &present);
+        assert_eq!(restored.tile_count(), 2);
+        // b's node vanished between sessions: its tile is reconciled away.
+        let present: std::collections::HashSet<_> = [a].into_iter().collect();
+        let restored = crate::session::load_workbench(&dir, &present);
+        assert_eq!(restored.tile_count(), 1);
+        assert!(restored.has_tile(a));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Committing a find-lane node row selects without fetching.

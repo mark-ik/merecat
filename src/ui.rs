@@ -483,6 +483,8 @@ pub const CAMBIUM_SHEET: &str = "\
                   white-space: nowrap; overflow: hidden; } \
     .detail-value { color: rgb(200, 208, 224); font-size: 12px; \
                     white-space: nowrap; overflow: hidden; } \
+    .wb-body { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; \
+               background-color: rgb(25, 30, 44); white-space: nowrap; overflow: hidden; } \
     .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
                            border: 1px solid rgb(52, 62, 86); border-radius: 7px; } \
     .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; } \

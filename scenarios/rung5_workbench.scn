@@ -1,0 +1,54 @@
+# Rung 5 slice E receipt, self-driven: the Workbench pane — platen's tiling
+# model inside one frisket leaf, rendered on the cambium path (tab strips +
+# host-walked cells; live tile documents composite as their own surfaces at
+# the cell bodies). Network-dependent (example.com + iana.org, distinct
+# titles so tabs resolve by name); run on a FRESH profile.
+settle 30
+key escape
+
+# Two pages, each opened into the workbench: two cells side by side, each
+# tile's content spawned and composited at its cell body.
+open https://example.com/
+settle 30
+act Open node in Workbench
+settle 30
+assert pane workbench
+assert wb-cells == 1
+open https://www.iana.org/
+settle 40
+act Open node in Workbench
+settle 40
+assert wb-cells == 2
+assert wb-cell Example Domain
+assert wb-cell Internet
+assert surface content
+capture 01_two_tiles
+
+# Drag the workbench divider: the pair re-weights toward the pointer. The
+# pane is the Right-split half (x 515..1024); its root seam sits near
+# pane-local 252 (window ~769). Drag to ~3/4 and assert the fraction.
+drag 769 300 892 300
+settle 5
+assert wb-fraction >= 0.65
+capture 02_divider
+
+# Drag iana's tab onto example.com's cell: the two stack into one cell with
+# the dragged tab active — platen's move_to_slot_of, driven by name through
+# the shared pointer path.
+drag-tab Internet onto Example Domain
+settle 10
+assert wb-cells == 1
+assert wb-cell Internet
+assert event workbench-stacked
+capture 03_stacked
+
+# Split on an edge (the deletion matrix's tile-tier row): drag example.com's
+# tab out of the stack, releasing on the cell's BOTTOM edge band — platen's
+# split_beside_axis, Column below. Two cells again, stacked vertically.
+drag-tab Example Domain onto Internet @ bottom
+settle 10
+assert wb-cells == 2
+assert event workbench-split
+capture 04_edge_split
+
+log rung 5 slice E (Workbench on cambium) self-drive complete

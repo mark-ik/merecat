@@ -84,6 +84,10 @@ genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "mai
 # adopt it first.
 cambium = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
 sprigging = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
+# The tile CONTRACT (rung 5 slice E): platen's split_beside_axis takes pelt's
+# SplitAxis, so the edge-drop gesture names it. Already in the lock through
+# platen; this names it (the supply plan's one-dep-line precedent).
+pelt-core = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # Pins match mere's workspace so the shared subtrees unify.
 winit = "0.30.13"
 # PNG encode for the scenario lane's GPU self-capture (composed-frame

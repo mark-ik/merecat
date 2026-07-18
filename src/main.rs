@@ -44,6 +44,8 @@ mod shell;
 mod surface;
 mod trail_view;
 mod ui;
+mod workbench_pane;
+mod workbench_tiling;
 
 use winit::event_loop::EventLoop;
 

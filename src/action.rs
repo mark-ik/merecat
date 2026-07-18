@@ -81,6 +81,36 @@ pub enum Action {
     /// Toggle maximize on the active pane (a host view state; frisket has no
     /// maximize op). A maximized pane takes the whole pane area.
     ToggleMaximizePane,
+    /// Open the focused node as a workbench tile (rung 5 slice E): summons the
+    /// Workbench pane if absent, opens the tile in platen's model, and spawns
+    /// the node's content if it has none.
+    OpenInWorkbench,
+    /// Make `member`'s tab the active (visible) one in its workbench cell.
+    WorkbenchActivate(uuid::Uuid),
+    /// Close the focused node's workbench tile (its cell collapses when
+    /// emptied). A no-op when the focused node has no tile.
+    CloseWorkbenchTile,
+    /// Stack `dragged` into the cell holding `target` — the tab-drag gesture's
+    /// lowering (platen's `move_to_slot_of`).
+    WorkbenchStackOnto {
+        dragged: uuid::Uuid,
+        target: uuid::Uuid,
+    },
+    /// Split `dragged` out as its own cell beside `target`, on the `after`
+    /// side of `axis` — the edge-drop half of the tab-drag gesture (platen's
+    /// `split_beside_axis`).
+    WorkbenchSplitBeside {
+        dragged: uuid::Uuid,
+        target: uuid::Uuid,
+        axis: WbAxis,
+        after: bool,
+    },
+    /// Set the fractions of the workbench split at `path` — a workbench
+    /// divider drag. Redraw only; the shell saves once, on release.
+    WorkbenchSetFractions {
+        path: Vec<usize>,
+        fractions: Vec<f32>,
+    },
 }
 
 /// A summonable pane kind. A small Copy vocabulary the app maps to
@@ -96,6 +126,8 @@ pub enum PaneKind {
     Steward,
     Comms,
     Apparatus,
+    /// The node-tiling workbench: platen's model inside one frisket leaf.
+    Workbench,
 }
 
 impl PaneKind {
@@ -109,8 +141,19 @@ impl PaneKind {
             PaneKind::Steward => "Steward",
             PaneKind::Comms => "Comms",
             PaneKind::Apparatus => "Apparatus",
+            PaneKind::Workbench => "Workbench",
         }
     }
+}
+
+/// A workbench split axis, in the app's own vocabulary (this module stays
+/// free of the tile-contract crate; `app` maps it onto pelt's `SplitAxis` at
+/// the platen call). `Row` lays the new cell left/right of the target,
+/// `Column` above/below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WbAxis {
+    Row,
+    Column,
 }
 
 /// A caret movement within the omnibar's single line.
@@ -139,6 +182,9 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Trail pane", Action::SummonPane(PaneKind::Trail)),
         ("Open Gloss pane", Action::SummonPane(PaneKind::Gloss)),
         ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
+        ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
+        ("Open node in Workbench", Action::OpenInWorkbench),
+        ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),
     ]

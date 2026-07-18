@@ -30,7 +30,13 @@
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
 //! assert pane <tag>         # a pane with that PaneContent tag is in the tree
 //! assert maximized | not-maximized
+//! drag-tab <a> onto <b>     # drag workbench tab <a> onto tab <b>'s cell (stack)
+//! drag-tab <a> onto <b> @ <edge>  # ...releasing on the cell's left|right|top|bottom
+//!                           # edge band (split beside instead of stack)
 //! assert row <substr>       # a Trail/Roster/Inspector row's text contains substr
+//! assert wb-cells ==|>=|<= <n>  # the workbench has n cells
+//! assert wb-cell <substr>   # a workbench cell's tab string contains substr
+//! assert wb-fraction ==|>=|<= <f>  # the workbench root split's FIRST fraction
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -90,6 +96,16 @@ enum Step {
     ClickNode(String),
     /// Press at the first point, move through it, release at the second.
     Drag((f32, f32), (f32, f32)),
+    /// Drag the workbench tab labelled like the first substring onto the cell
+    /// of the tab labelled like the second (the stack gesture, by name). The
+    /// optional edge releases on that band of the cell body (split beside).
+    DragTab(String, String, Option<String>),
+    /// The workbench has this many cells.
+    AssertWbCells(CmpOp, usize),
+    /// A workbench cell's tab string contains this substring.
+    AssertWbCell(String),
+    /// The workbench root split's FIRST fraction compares as given.
+    AssertWbFraction(CmpOp, f32),
     /// The root split's ratio compares as given.
     AssertRatio(CmpOp, f32),
     Settle(u32),
@@ -156,6 +172,14 @@ pub enum Tick {
     ClickTab { label: String },
     ClickNode { substr: String },
     Drag { from: (f32, f32), to: (f32, f32) },
+    /// Drag workbench tab `from` onto tab `onto`'s cell; the shell resolves
+    /// both by label and drives the shared pointer path. `edge` aims the
+    /// release at that band of the cell body instead of the tab.
+    DragTab {
+        from: String,
+        onto: String,
+        edge: Option<String>,
+    },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -272,6 +296,52 @@ impl Scenario {
                 from: *from,
                 to: *to,
             },
+            Step::DragTab(from, onto, edge) => Tick::DragTab {
+                from: from.clone(),
+                onto: onto.clone(),
+                edge: edge.clone(),
+            },
+            Step::AssertWbCells(op, n) => {
+                let snap = crate::observe::snapshot(app);
+                let len = snap.workbench_cells.len();
+                let ok = match op {
+                    CmpOp::Eq => len == *n,
+                    CmpOp::Ge => len >= *n,
+                    CmpOp::Le => len <= *n,
+                };
+                if !ok {
+                    self.fail(format!(
+                        "assert wb-cells: have {len} ({:?}), wanted {op:?} {n}",
+                        snap.workbench_cells
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertWbCell(substr) => {
+                let snap = crate::observe::snapshot(app);
+                if !snap.workbench_cells.iter().any(|c| c.contains(substr)) {
+                    self.fail(format!(
+                        "assert wb-cell '{substr}': the cells are {:?}",
+                        snap.workbench_cells
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertWbFraction(op, want) => {
+                let snap = crate::observe::snapshot(app);
+                let ok = snap.workbench_fractions.first().is_some_and(|f| match op {
+                    CmpOp::Eq => (f - want).abs() < 1e-3,
+                    CmpOp::Ge => *f >= *want,
+                    CmpOp::Le => *f <= *want,
+                });
+                if !ok {
+                    self.fail(format!(
+                        "assert wb-fraction {op:?} {want}: the root fractions are {:?}",
+                        snap.workbench_fractions
+                    ));
+                }
+                Tick::Wait
+            }
             Step::Scroll(x, y, dx, dy) => Tick::Scroll {
                 x: *x,
                 y: *y,
@@ -533,6 +603,26 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                 rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
             }),
             "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
+            "drag-tab" => {
+                let (from, onto) = rest
+                    .split_once(" onto ")
+                    .map(|(a, b)| (a.trim(), b.trim()))
+                    .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+                    .ok_or_else(|| {
+                        format!("line {}: drag-tab wants '<a> onto <b>': '{line}'", i + 1)
+                    })?;
+                let (onto, edge) = match onto.split_once(" @ ") {
+                    Some((b, e)) => {
+                        let e = e.trim();
+                        if !matches!(e, "left" | "right" | "top" | "bottom") {
+                            return err("drag-tab edge wants left|right|top|bottom");
+                        }
+                        (b.trim(), Some(e.to_string()))
+                    }
+                    None => (onto, None),
+                };
+                Step::DragTab(from.to_string(), onto.to_string(), edge)
+            }
             "click-tab" if !rest.is_empty() => Step::ClickTab(rest.to_string()),
             "click-node" if !rest.is_empty() => Step::ClickNode(rest.to_string()),
             "drag" => {
@@ -587,6 +677,39 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "not-maximized" => Step::AssertMaximized(false),
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
+                    "wb-cell" if !arg.is_empty() => Step::AssertWbCell(arg.to_string()),
+                    "wb-cells" => {
+                        let (op, n) = arg
+                            .split_once(char::is_whitespace)
+                            .ok_or_else(|| format!("line {}: assert wb-cells wants '<op> <n>'", i + 1))?;
+                        let op = match op {
+                            "==" => CmpOp::Eq,
+                            ">=" => CmpOp::Ge,
+                            "<=" => CmpOp::Le,
+                            _ => return err("assert wb-cells op wants ==|>=|<="),
+                        };
+                        let n = n
+                            .trim()
+                            .parse()
+                            .map_err(|_| format!("line {}: bad wb-cells count", i + 1))?;
+                        Step::AssertWbCells(op, n)
+                    }
+                    "wb-fraction" => {
+                        let (op, f) = arg
+                            .split_once(char::is_whitespace)
+                            .ok_or_else(|| format!("line {}: assert wb-fraction wants '<op> <f>'", i + 1))?;
+                        let op = match op {
+                            "==" => CmpOp::Eq,
+                            ">=" => CmpOp::Ge,
+                            "<=" => CmpOp::Le,
+                            _ => return err("assert wb-fraction op wants ==|>=|<="),
+                        };
+                        let f = f
+                            .trim()
+                            .parse()
+                            .map_err(|_| format!("line {}: bad wb-fraction", i + 1))?;
+                        Step::AssertWbFraction(op, f)
+                    }
                     "ratio" => {
                         let (op, n) = arg
                             .split_once(char::is_whitespace)
@@ -669,7 +792,8 @@ mod tests {
                 | Tick::ClickRow { .. }
                 | Tick::ClickTab { .. }
                 | Tick::ClickNode { .. }
-                | Tick::Drag { .. } => {}
+                | Tick::Drag { .. }
+                | Tick::DragTab { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }

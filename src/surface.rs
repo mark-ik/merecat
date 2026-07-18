@@ -183,15 +183,17 @@ impl FocusTarget {
 
 /// Assemble the ordered surface plan for a frame, bottom-to-top: the frisket
 /// panes (canvas and any summoned panes) as the base layer at the rects the
-/// pane walker computed, then the focused node's live content inset over the
-/// canvas, then chrome on top.
+/// pane walker computed, then the workbench tiles' live documents at their
+/// cell-body rects (rung 5 slice E), then the focused node's live content
+/// inset over the canvas, then chrome on top.
 ///
-/// Pure: the shell walks the frisket tree (`crate::pane`) and passes the placed
-/// base panes plus the two overlays; this only orders them and assigns ids.
-/// Keeping it a function of plain data is what lets the plan be tested without a
-/// `Shell`, a GPU, or a window.
+/// Pure: the shell walks the frisket tree (`crate::pane`) and the workbench
+/// geometry (`crate::workbench_tiling`) and passes the placed pieces; this
+/// only orders them and assigns ids. Keeping it a function of plain data is
+/// what lets the plan be tested without a `Shell`, a GPU, or a window.
 pub fn assemble(
     base: &[(SurfaceKind, Rect)],
+    tiles: &[(Uuid, Rect)],
     content: Option<(Uuid, Rect)>,
     chrome: Option<Rect>,
 ) -> Vec<Surface> {
@@ -203,6 +205,13 @@ pub fn assemble(
             rect,
         })
         .collect();
+    for &(node, rect) in tiles {
+        surfaces.push(Surface {
+            id: SurfaceId::content(node),
+            kind: SurfaceKind::Content(node),
+            rect,
+        });
+    }
     if let Some((node, rect)) = content {
         surfaces.push(Surface {
             id: SurfaceId::content(node),
@@ -296,9 +305,39 @@ mod tests {
         let full = Rect::full(w, h);
         assemble(
             &[(SurfaceKind::Canvas, full)],
+            &[],
             content_node.map(|n| (n, content_rect(full))),
             chrome_present.then_some(full),
         )
+    }
+
+    /// Workbench tiles compose as content surfaces at their cell-body rects,
+    /// above the base pane and below the focused inset and chrome.
+    #[test]
+    fn workbench_tiles_compose_as_content_surfaces() {
+        let full = Rect::full(1000, 800);
+        let tile_a = Rect::new(500.0, 30.0, 240.0, 770.0);
+        let tile_b = Rect::new(750.0, 30.0, 250.0, 770.0);
+        let plan = assemble(
+            &[(SurfaceKind::Canvas, Rect::new(0.0, 0.0, 500.0, 800.0))],
+            &[(node(2), tile_a), (node(3), tile_b)],
+            None,
+            Some(full),
+        );
+        let kinds: Vec<_> = plan.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SurfaceKind::Canvas,
+                SurfaceKind::Content(node(2)),
+                SurfaceKind::Content(node(3)),
+                SurfaceKind::Chrome,
+            ]
+        );
+        // A pointer over a tile hits THAT tile's content in local space.
+        let hit = hit_test(&plan, FocusTarget::Canvas, 760.0, 100.0).expect("hit");
+        assert_eq!(hit.kind, SurfaceKind::Content(node(3)));
+        assert_eq!(hit.local, (10.0, 70.0));
     }
 
     #[test]

@@ -135,6 +135,17 @@ pub struct Shell {
     /// The Inspector pane: detail sections over app truth (inert content;
     /// the detail_panel's own contract). Retained like the others.
     inspector_pane: Option<crate::inspector_pane::InspectorPane>,
+    /// The Workbench pane (rung 5 slice E): platen's tiling walked into cells
+    /// wearing cambium tab strips. Retained like the others.
+    workbench_pane: Option<crate::workbench_pane::WorkbenchPane>,
+    /// A workbench tab drag in flight: the pressed tab's member, held from
+    /// press to release. Release over another cell stacks (the model's
+    /// `move_to_slot_of`); release on the same cell is a click (activate).
+    wb_tab_drag: Option<uuid::Uuid>,
+    /// A workbench divider drag in flight: the pressed band plus the pane's
+    /// window origin (the walk is pane-local; pointer deliveries are window
+    /// coords).
+    wb_divider_drag: Option<(crate::workbench_tiling::WbDivider, (f32, f32))>,
     /// The divider drag in flight: the pressed seam's placement, held from
     /// press to release (like `pointer_capture`, which also points at it).
     /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
@@ -183,6 +194,9 @@ impl Shell {
             gloss_pane: None,
             trail_pane: None,
             inspector_pane: None,
+            workbench_pane: None,
+            wb_tab_drag: None,
+            wb_divider_drag: None,
             divider_drag: None,
         };
         shell.run_effects(boot_effects);
@@ -216,6 +230,9 @@ impl Shell {
                     // The pane layout persists to frame.json alongside the graph
                     // (rung 5 slice C), so summon/close/divider survive a restart.
                     session::save_frisket_layout(&self.app.data_root, &self.app.frisket);
+                    // The workbench tiling persists as platen's canonical pair
+                    // (rung 5 slice E), so tiles/stacks/fractions survive too.
+                    session::save_workbench(&self.app.data_root, &self.app.workbench);
                 }
                 // The content port (rung 4, live since genet-documents
                 // landed): route the address to an engine id, spawn through
@@ -312,19 +329,45 @@ impl Shell {
                 .iter()
                 .map(|d| (SurfaceKind::Divider(d.index), d.rect)),
         );
+        // Workbench tiles (rung 5 slice E): the Workbench pane's cells, walked
+        // at the pane's WINDOW rect, compose each visible (active) tile with a
+        // live session as its own content surface at the cell's body rect —
+        // the same keyed path the focused inset uses, so tile input routing
+        // (wheel, clicks, focus) arrives through the existing Content arms.
+        let wb_rect = tiling
+            .panes
+            .iter()
+            .find(|p| matches!(p.content, PaneContent::Workbench))
+            .map(|p| p.rect);
+        let tiles: Vec<(uuid::Uuid, Rect)> = wb_rect
+            .map(|rect| {
+                let geom = self.app.workbench.to_arrangement().1;
+                crate::workbench_tiling::place_workbench(geom.as_ref(), rect)
+                    .cells
+                    .iter()
+                    .filter_map(|c| {
+                        let m = c.active_member()?;
+                        self.content_sessions.contains_key(&m).then(|| (m, c.body()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // Content overlays the canvas pane (when it is shown); a live node's
-        // document insets within the graph, not over a maximized pane.
+        // document insets within the graph, not over a maximized pane. A node
+        // showing as a workbench tile is not ALSO inset over the canvas: one
+        // session, one surface, or the two frame at fighting sizes.
         let content = canvas_rect.and_then(|cr| {
             self.app
                 .canvas
                 .focused_member()
                 .filter(|id| self.content_sessions.contains_key(id))
+                .filter(|id| !tiles.iter().any(|(t, _)| t == id))
                 .map(|node| (node, crate::surface::content_rect(cr)))
         });
         let caption = crate::app::focused_caption(&self.app.canvas);
         let chrome =
             crate::ui::chrome_has_content(&self.app.omnibar, caption.as_deref()).then_some(area);
-        crate::surface::assemble(&base, content, chrome)
+        crate::surface::assemble(&base, &tiles, content, chrome)
     }
 
     /// A pane's `PaneContent`, looked up from the frisket tree by id.
@@ -420,6 +463,11 @@ impl Shell {
     /// `click-node`). Same shape as `click_pane_tab`: only the pane knows where
     /// its nodes are, so ask it, then press at the answer.
     fn click_pane_node(&mut self, substr: &str) {
+        // The minimap node buttons carry their url as `data-key`, so the driver
+        // selects on it — unique where the display label (two "Example Domain"
+        // pages) is not. Same shared-resolver path as click-row / click-tab.
+        let sel = genet_probe::Selector::class("graph-canvas-swatch-node")
+            .with_attr("data-key", substr);
         let plan = self.surface_plan();
         for surface in &plan {
             let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
@@ -428,21 +476,12 @@ impl Shell {
             if self.pane_content(id) != Some(PaneContent::Gloss) {
                 continue;
             }
-            let dims = (
-                surface.rect.w.round().max(1.0) as u32,
-                surface.rect.h.round().max(1.0) as u32,
-            );
-            let Some(center) = self
-                .gloss_pane
-                .as_ref()
-                .and_then(|p| p.node_center(substr, dims.0, dims.1))
-            else {
-                continue;
-            };
-            let (x, y) = (surface.rect.x + center.0, surface.rect.y + center.1);
-            self.deliver_press(x, y, MouseButton::Left);
-            self.deliver_release(x, y, MouseButton::Left);
-            return;
+            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
+            if let Some((x, y)) = self.gloss_pane.as_ref().and_then(|p| p.resolve(&sel, rect)) {
+                self.deliver_press(x, y, MouseButton::Left);
+                self.deliver_release(x, y, MouseButton::Left);
+                return;
+            }
         }
         self.app.note(crate::observe::AppEvent::InteractionMissed {
             what: "click-node",
@@ -598,6 +637,28 @@ impl Shell {
                                     }
                                 }
                             }
+                            Some(PaneContent::Workbench) => {
+                                // A press here begins a gesture, resolved on
+                                // RELEASE (a tab click activates; a tab drag
+                                // onto another cell stacks; a seam drag
+                                // re-weights) — so record what was pressed and
+                                // decide in deliver_release / deliver_move.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect, (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32)));
+                                if let (Some((rect, (rw, rh))), Some(pane)) =
+                                    (dims, self.workbench_pane.as_mut())
+                                {
+                                    let (lx, ly) = hit.local;
+                                    if let Some(div) = pane.tiling().divider_at(lx, ly).cloned() {
+                                        self.wb_divider_drag =
+                                            Some((div, (rect.x, rect.y)));
+                                    } else if let Some(member) = pane.tab_at(lx, ly, rw, rh) {
+                                        self.wb_tab_drag = Some(member);
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -639,6 +700,21 @@ impl Shell {
     /// `Split::ratio_at` over the split's own container rect, lowered as an
     /// ordinary Action — the same spine as everything else.
     fn deliver_move(&mut self, x: f32, y: f32) {
+        // A workbench divider drag: the band's pair re-weights toward the
+        // pointer (host math over platen's N-ary fractions), lowered as an
+        // ordinary Action. The walk is pane-local; the origin converts.
+        if let Some((div, origin)) = self.wb_divider_drag.clone() {
+            let fractions = crate::workbench_tiling::drag_fractions(
+                &div,
+                x - origin.0,
+                y - origin.1,
+            );
+            self.act(Action::WorkbenchSetFractions {
+                path: div.path,
+                fractions,
+            });
+            return;
+        }
         let Some(drag) = self.divider_drag.clone() else {
             return;
         };
@@ -661,6 +737,15 @@ impl Shell {
             Some(crate::surface::SurfaceKind::Canvas)
         );
         self.pointer_capture = None;
+        if self.wb_divider_drag.take().is_some() {
+            // Like the frisket seam: moves rode Redraw; persist on release.
+            self.act(Action::SaveSession);
+            return;
+        }
+        if let Some(dragged) = self.wb_tab_drag.take() {
+            self.finish_wb_tab_gesture(dragged, x, y);
+            return;
+        }
         if self.divider_drag.take().is_some() {
             // The drag's ratio moves rode Redraw only; the settled layout
             // persists once, on release.
@@ -673,6 +758,110 @@ impl Shell {
         {
             self.request_redraw();
         }
+    }
+
+    /// Resolve a workbench tab gesture at its release point: released over a
+    /// DIFFERENT cell, the dragged tile stacks into it (platen's
+    /// `move_to_slot_of`, lowered as an Action); released where it began, it
+    /// is a click — routed into the pane's DOM so the strip's own selection
+    /// answers, and the diff lowers as `WorkbenchActivate`.
+    fn finish_wb_tab_gesture(&mut self, dragged: uuid::Uuid, x: f32, y: f32) {
+        let plan = self.surface_plan();
+        let Some(surface) = plan.iter().find(|s| {
+            matches!(s.kind, crate::surface::SurfaceKind::Pane(id)
+                if self.pane_content(id) == Some(PaneContent::Workbench))
+        }) else {
+            return;
+        };
+        if !surface.rect.contains(x, y) {
+            // Released outside the workbench: the gesture dissolves.
+            self.request_redraw();
+            return;
+        }
+        let (lx, ly) = surface.rect.to_local(x, y);
+        let (rw, rh) = (
+            surface.rect.w.round().max(1.0) as u32,
+            surface.rect.h.round().max(1.0) as u32,
+        );
+        let Some(pane) = self.workbench_pane.as_mut() else {
+            return;
+        };
+        let target_cell = pane.tiling().cell_at(lx, ly).cloned();
+        match target_cell {
+            Some(cell) if !cell.members.contains(&dragged) => {
+                if let Some(target) = cell.active_member() {
+                    // WHERE in the cell decides the gesture (meerkat's drop
+                    // resolution, re-derived): the tab bar or the body's
+                    // centre stacks; a body edge band splits the dragged tile
+                    // out on that side.
+                    self.act(crate::workbench_tiling::wb_drop_action(
+                        dragged, target, &cell, lx, ly,
+                    ));
+                }
+            }
+            Some(_) => {
+                // Same cell: a click. The strip's selection moves; lower the
+                // diff through the spine.
+                let activations = pane.click(lx, ly, rw, rh);
+                for a in activations {
+                    self.act(Action::WorkbenchActivate(a.0));
+                }
+                self.request_redraw();
+            }
+            None => {
+                self.request_redraw();
+            }
+        }
+    }
+
+    /// Drive a workbench tab drag by LABEL (the scenario's `drag-tab`): both
+    /// tab centres resolve through the pane's DOM (the shared prober), then
+    /// the gesture runs through the same press/move/release path a pointer
+    /// takes — one description, two runners.
+    fn drag_workbench_tab(&mut self, from: &str, onto: &str, edge: Option<&str>) {
+        let plan = self.surface_plan();
+        let found = plan.iter().find_map(|s| {
+            let crate::surface::SurfaceKind::Pane(id) = s.kind else {
+                return None;
+            };
+            if self.pane_content(id) != Some(PaneContent::Workbench) {
+                return None;
+            }
+            let rect = [s.rect.x, s.rect.y, s.rect.w, s.rect.h];
+            let pane = self.workbench_pane.as_ref()?;
+            let a = pane.resolve(&genet_probe::Selector::class("tab").containing(from), rect)?;
+            let b = pane.resolve(&genet_probe::Selector::class("tab").containing(onto), rect)?;
+            // An edge release aims 10% into that band of the TARGET CELL's
+            // body rather than at the tab (the split-beside zones).
+            let release = match edge {
+                None => b,
+                Some(edge) => {
+                    let local = (b.0 - s.rect.x, b.1 - s.rect.y);
+                    let cell = pane.tiling().cell_at(local.0, local.1)?;
+                    let body = cell.body();
+                    let (px, py) = match edge {
+                        "left" => (body.x + body.w * 0.1, body.y + body.h * 0.5),
+                        "right" => (body.x + body.w * 0.9, body.y + body.h * 0.5),
+                        "top" => (body.x + body.w * 0.5, body.y + body.h * 0.1),
+                        _ => (body.x + body.w * 0.5, body.y + body.h * 0.9),
+                    };
+                    (s.rect.x + px, s.rect.y + py)
+                }
+            };
+            Some((a, release))
+        });
+        let Some(((ax, ay), (bx, by))) = found else {
+            self.app.note(crate::observe::AppEvent::InteractionMissed {
+                what: "drag-tab",
+                target: format!("{from} onto {onto}"),
+            });
+            tracing::warn!(%from, %onto, "drag-tab: no workbench tabs matched");
+            return;
+        };
+        self.deliver_press(ax, ay, MouseButton::Left);
+        self.deliver_move((ax + bx) / 2.0, (ay + by) / 2.0);
+        self.deliver_move(bx, by);
+        self.deliver_release(bx, by, MouseButton::Left);
     }
 
     /// The layered present (born minimal at rung 3, grows into the surface
@@ -775,6 +964,16 @@ impl Shell {
                             let pane = self
                                 .inspector_pane
                                 .get_or_insert_with(crate::inspector_pane::InspectorPane::new);
+                            pane.sync(&self.app, rw as f32, rh as f32);
+                            pane.scene(rw, rh)
+                        }
+                        Some(PaneContent::Workbench) => {
+                            // The tiling's furniture: tab strips + cell bodies.
+                            // Live tile documents composite as their own
+                            // surfaces above this (the surface plan).
+                            let pane = self
+                                .workbench_pane
+                                .get_or_insert_with(crate::workbench_pane::WorkbenchPane::new);
                             pane.sync(&self.app, rw as f32, rh as f32);
                             pane.scene(rw, rh)
                         }
@@ -921,6 +1120,10 @@ impl Shell {
                 self.deliver_move(mid.0, mid.1);
                 self.deliver_move(to.0, to.1);
                 self.deliver_release(to.0, to.1, MouseButton::Left);
+                self.request_redraw();
+            }
+            crate::scenario::Tick::DragTab { from, onto, edge } => {
+                self.drag_workbench_tab(&from, &onto, edge.as_deref());
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),

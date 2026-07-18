@@ -60,6 +60,13 @@ pub struct Snapshot {
     /// The root split's ratio, when the pane tree is split at all. The divider
     /// receipts assert against this after a drag.
     pub split_ratio: Option<f32>,
+    /// The workbench's cells (rung 5 slice E), one string per cell: the tab
+    /// labels joined by `|` with `*` marking the active tab. Empty when the
+    /// workbench holds no tiles.
+    pub workbench_cells: Vec<String>,
+    /// The workbench's ROOT split fractions (empty for a lone cell). The
+    /// workbench-divider receipts assert against these after a drag.
+    pub workbench_fractions: Vec<f32>,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -97,6 +104,14 @@ pub enum AppEvent {
     PaneSummoned(&'static str),
     /// The active pane was closed.
     PaneClosed,
+    /// The focused node opened as a workbench tile (rung 5 slice E).
+    WorkbenchTileOpened(String),
+    /// The focused node's workbench tile closed.
+    WorkbenchTileClosed,
+    /// A tab-drag stacked one tile into another's cell.
+    WorkbenchStacked,
+    /// An edge-drop split a tile out beside another's cell.
+    WorkbenchSplit,
     /// A pane interaction named a target that is not on screen — a
     /// `click-row`/`click-tab`/`click-node` that resolved to nothing. Divergence
     /// a driving script or model must be able to see: the aim missed, and a
@@ -121,6 +136,10 @@ impl AppEvent {
             AppEvent::ContentState { node, state } => format!("content {node} {state}"),
             AppEvent::PaneSummoned(kind) => format!("pane-summoned {kind}"),
             AppEvent::PaneClosed => "pane-closed".to_string(),
+            AppEvent::WorkbenchTileOpened(url) => format!("workbench-opened {url}"),
+            AppEvent::WorkbenchTileClosed => "workbench-closed".to_string(),
+            AppEvent::WorkbenchStacked => "workbench-stacked".to_string(),
+            AppEvent::WorkbenchSplit => "workbench-split".to_string(),
             AppEvent::InteractionMissed { what, target } => {
                 format!("interaction-missed {what} {target}")
             }
@@ -245,7 +264,46 @@ pub fn snapshot(app: &App) -> Snapshot {
             frisket::PaneNode::Split { ratio, .. } => Some(*ratio),
             frisket::PaneNode::Leaf { .. } => None,
         },
+        workbench_cells: workbench_cells(app),
+        workbench_fractions: app.workbench.weights(),
     }
+}
+
+/// The workbench's cells as observation strings: each cell's tab labels (the
+/// node's display label off graph truth) joined by `|`, `*` on the active tab.
+pub fn workbench_cells(app: &App) -> Vec<String> {
+    let label_of = |member: uuid::Uuid| -> String {
+        app.canvas
+            .graph()
+            .nodes()
+            .find(|(_, n)| n.id == member)
+            .map(|(_, n)| {
+                if n.title.trim().is_empty() {
+                    n.url().to_string()
+                } else {
+                    n.title.clone()
+                }
+            })
+            .unwrap_or_else(|| member.to_string())
+    };
+    app.workbench
+        .slot_views()
+        .map(|slot| {
+            slot.members
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let label = label_of(*m);
+                    if i == slot.active {
+                        format!("{label}*")
+                    } else {
+                        label
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect()
 }
 
 /// One suggestion row as its display string (the assert/a11y rendering).

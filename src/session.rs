@@ -69,3 +69,46 @@ pub fn save_frisket_layout(data_root: &Path, layout: &FrisketLayout) {
         tracing::warn!(%err, "failed to persist the pane layout");
     }
 }
+
+/// The workbench tiling sidecar, beside `graph.json` (the meerkat convention:
+/// the tiling is the graph's, so it persists with the session).
+const WORKBENCH_FILE: &str = "workbench.json";
+
+/// Persist the workbench tiling as platen's canonical `(Arrangement, geometry)`
+/// pair (the live `Pane` tree is a derived cache, never serde;
+/// `to_persisted_json` debug-asserts `canonical_roundtrips` — platen's
+/// persistence discipline, preserved verbatim). Best-effort, like the rest.
+pub fn save_workbench(data_root: &Path, workbench: &mere::platen::Workbench) {
+    match workbench.to_persisted_json() {
+        Ok(json) => {
+            let path = data_root.join(WORKBENCH_FILE);
+            if let Err(err) = std::fs::write(&path, json) {
+                tracing::warn!(%err, path = ?path, "failed to persist the workbench tiling");
+            }
+        }
+        Err(err) => tracing::warn!(%err, "failed to serialize the workbench tiling"),
+    }
+}
+
+/// Restore the workbench tiling, pruned to `present` (the live graph's
+/// members, so a tile whose node vanished between sessions collapses away).
+/// A missing or corrupt sidecar starts on an empty workbench.
+pub fn load_workbench(
+    data_root: &Path,
+    present: &std::collections::HashSet<uuid::Uuid>,
+) -> mere::platen::Workbench {
+    let path = data_root.join(WORKBENCH_FILE);
+    let Ok(json) = std::fs::read_to_string(&path) else {
+        return mere::platen::Workbench::new();
+    };
+    match mere::platen::Workbench::from_persisted_json(&json, present) {
+        Some(wb) => {
+            tracing::info!(path = ?path, tiles = wb.tile_count(), "workbench tiling restored");
+            wb
+        }
+        None => {
+            tracing::warn!(path = ?path, "failed to parse the workbench sidecar; starting empty");
+            mere::platen::Workbench::new()
+        }
+    }
+}

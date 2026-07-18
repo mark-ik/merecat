@@ -28,7 +28,6 @@ use cambium::{
 };
 use genet_layout::{IncrementalLayout, ScrollOffsets};
 use genet_scripted_dom::{NodeId, ScriptedDom};
-use layout_dom_api::LayoutDom;
 use mere::canvas::NodeState;
 use mere::canvas::palette;
 use sprigging::{ColorF, LeafRegistry, RenderedLeaves};
@@ -203,12 +202,16 @@ impl GlossPane {
                         )
                     })
                     .unwrap_or_default();
-                urls.insert(id, url);
+                urls.insert(id, url.clone());
                 GraphCanvasNode {
                     id,
                     kind: GlossKind(node_state(app, id)),
                     position: norm(x, y),
                     label,
+                    // The url is the node's stable targeting key: two nodes can
+                    // share a display label (two pages titled "Example Domain"),
+                    // so `click-node` resolves on this `data-key`, not the label.
+                    key: Some(url),
                 }
             })
             .collect();
@@ -274,35 +277,21 @@ impl GlossPane {
         drained
     }
 
-    /// The pane-local centre of the node matching `substr` (against its label
-    /// or url), from the swatch's own projection plus the laid-out leaf box —
-    /// the ask-the-layout rule again: the leaf's origin is only knowable from
-    /// the layout, the node's spot within it only from the swatch's viewport
-    /// projection. `None` when no such node is drawn.
-    pub fn node_center(&self, substr: &str, w: u32, h: u32) -> Option<(f32, f32)> {
-        let state = self.runner.state();
-        let id = state
-            .swatch
-            .graph
-            .nodes
-            .iter()
-            .find(|n| {
-                n.label.contains(substr)
-                    || state.urls.get(&n.id).is_some_and(|u| u.contains(substr))
-            })
-            .map(|n| n.id)?;
-        let (px, py) = state
-            .swatch
-            .projected_positions()
-            .into_iter()
-            .find(|(nid, _)| **nid == id)
-            .map(|(_, p)| p)?;
+    /// Resolve a selector to a window point within this pane's DOM at window
+    /// rect `rect`, via the shared genet-probe resolver. The minimap's node
+    /// buttons carry their url as `data-key`, so `click-node` selects on that —
+    /// unique where the display label is not. `node_center`'s bespoke
+    /// projection-plus-leaf-box math collapsed here: the node button is a real
+    /// positioned DOM element, so `absolute_rect` already knows where it is.
+    pub fn resolve(&self, sel: &genet_probe::Selector, rect: [f32; 4]) -> Option<(f32, f32)> {
         let dom = self.dom.borrow();
-        let layout =
-            IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
-        let leaf = dom.first_tag(dom.document(), "custom-leaf")?;
-        let (lx, ly, _, _) = layout.absolute_rect(&*dom, leaf)?;
-        Some((lx + px, ly + py))
+        let surfaces = [genet_probe::ProbeSurface {
+            name: "gloss",
+            dom: &dom,
+            rect,
+            sheet: crate::ui::CAMBIUM_SHEET,
+        }];
+        genet_probe::resolve(&surfaces, sel).map(|h| h.point)
     }
 }
 
@@ -342,18 +331,27 @@ mod tests {
     }
 
     /// A click on a node's hit target records a Navigate intent for that node's
-    /// url, drained by `click` — the mirror-then-drain contract.
+    /// url, drained by `click` — the mirror-then-drain contract. The node is
+    /// resolved by its `data-key` (url) through genet-probe, the same path the
+    /// shell's `click-node` drives.
     #[test]
     fn clicking_a_node_records_navigate() {
         let (mut pane, _app) = pane_on_sample_graph();
-        let label = pane.runner.state().swatch.graph.nodes[0].label.clone();
+        let key = pane.runner.state().swatch.graph.nodes[0]
+            .key
+            .clone()
+            .expect("every minimap node carries its url as a key");
         let (x, y) = pane
-            .node_center(&label, 480, 400)
-            .expect("the first node must have a drawn hit target");
+            .resolve(
+                &genet_probe::Selector::class("graph-canvas-swatch-node")
+                    .with_attr("data-key", &key),
+                [0.0, 0.0, 480.0, 400.0],
+            )
+            .expect("the node must resolve by its data-key");
         let intents = pane.click(x, y, 480, 400);
         assert!(
-            matches!(&intents[..], [GlossIntent::Navigate(url)] if !url.is_empty()),
-            "a node click must drain exactly its Navigate intent, got {intents:?}"
+            matches!(&intents[..], [GlossIntent::Navigate(url)] if *url == key),
+            "a node click must drain its Navigate intent for that node's url, got {intents:?}"
         );
     }
 }
