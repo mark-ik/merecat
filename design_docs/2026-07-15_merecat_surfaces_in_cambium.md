@@ -5,6 +5,11 @@ surface gets asked the same question: what cambium component expresses it? The
 answer is one of three — an existing catalog entry, a new catalog addition, or
 "stays non-cambium." This doc is that mapping.
 
+> Sibling: the cambium adoption also gave every merecat surface a
+> semantic, hit-testable DOM — the substrate for driving the app by name. Where
+> that generalizes across the genet apps is
+> [`2026-07-17_genet_probe_automatability_plan.md`](2026-07-17_genet_probe_automatability_plan.md).
+
 The framing is the serval/genet-era development pattern: **a consumer's need is a
 good reason to expand the catalog.** Not the only reason — cambium has its own
 sense of what belongs — but a real one. So where a pane wants a primitive cambium
