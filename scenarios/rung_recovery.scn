@@ -1,0 +1,41 @@
+# The recovery matrix row (r4/r6), self-driven: a failed fetch and a failed
+# engine spawn both SURFACE and neither wedges the app — failure is a state,
+# not a latch (the no-placebo rule's other face), and a failed node retries
+# on the next flip. Offline-safe: the addresses are unresolvable by design.
+settle 30
+key escape
+
+# A failed fetch: the address opens (the node exists, focused), the fetch
+# errors on the actor thread, enrichment simply never lands, and the app
+# keeps taking input.
+open https://nonexistent-recovery-probe.invalid/
+settle 40
+assert focused nonexistent-recovery-probe
+assert visible
+
+# A failed content spawn: the static lane's fetcher cannot load the address,
+# so the port answers ContentFailed — surfaced in the event stream and in
+# the Inspector, never a silent spin.
+act Toggle live content
+settle 40
+assert event content
+act Open Inspector pane
+settle 5
+assert row Content state: failed
+capture 01_failure_surfaced
+
+# Failure retries: the next flip spawns AGAIN — a fresh requested->failed
+# pair in the event stream (the spawn fails synchronously, so "requested"
+# is never on screen for a frame; the fresh failure row IS the retry's
+# receipt, and the sentinel's event tail shows both pairs).
+act Toggle live content
+settle 5
+assert row Content state: failed
+capture 02_retry
+
+# And the app is still a working app: open a good offline address.
+open mere://after-failure
+settle 5
+assert focused after-failure
+
+log recovery receipt complete

@@ -353,6 +353,11 @@ how a rung-5 receipt came to read as rung-4-completable.
   available actions). The a11y tree does not exist in merecat at all: no accesskit dep,
   no uxtree dep, no projector call.
 - (r4/r6) Recover from a failed fetch, a failed engine start, and an interrupted save.
+  **Met 2026-07-18** for the first two (`rung_recovery.scn` headed RESULT ok: a failed
+  fetch leaves a working app with the node present; a failed spawn surfaces
+  `ContentFailed` in the stream and the Inspector; the next flip retries fresh —
+  failure is a state, not a latch). Interrupted-save resilience rides the stores'
+  atomic writes (session-runtime); a kill-mid-save receipt is a follow-on.
 - (unrunged) Drop a file on the window: it becomes a node, or textures the node under it.
   **Met 2026-07-18**: `WindowEvent::DroppedFile` routes through `Shell::drop_file` — a
   decodable image over a canvas node lowers `Action::SetNodeSprite` (decode is port
