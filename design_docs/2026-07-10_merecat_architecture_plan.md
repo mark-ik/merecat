@@ -283,7 +283,17 @@ daily-driver value, not by meerkat's module sizes.
    state is worth persisting once nodes hold live content).
 7. **Multi-window**. The one-state-N-windows doctrine over the Action spine
    (a window is a projection, so the spine already has the right shape).
-   Gate: rung 3.
+   Gate: rung 3. **First slice LANDED 2026-07-18**: `Action::NewWindow` opens a
+   LENS — the same graph through a window-owned `mere::canvas::Viewport`,
+   installed around each render/input pass and stashed back (the exact seam the
+   recorded multi-window shape named; no `Arc<Mutex>`, no canvas rewrite). The
+   primary keeps the full pane/chrome experience; a lens takes canvas gestures
+   (pan/zoom/grab) through its own camera and closes independently.
+   `window_count` mirrors into the snapshot (`assert windows`). Receipts: 69
+   unit tests (viewport install/stash keeps two cameras distinct, inertia
+   included) and `rung7_window.scn` headed RESULT ok. NOT claimed: panes/chrome
+   in lens windows, per-window focus records, and tear-out (its own supply
+   chain, still blocked upstream) — the rung's remaining depth.
 8. **The long tail**. Comms and community services (Murm direct exchange +
    Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
    scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a

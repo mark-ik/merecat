@@ -1,0 +1,25 @@
+# Rung 7 first-slice receipt, self-driven: a second window as a LENS — the
+# same graph through its own camera (one-state-N-windows). The scenario
+# drives the primary; the lens opens beside it, mirrored into the window
+# count the snapshot reports. Camera independence is unit-pinned (the
+# viewport install/stash seam); this receipt proves the window lifecycle
+# through the spine. Offline.
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+assert windows == 1
+act New window
+settle 20
+assert event window-opened
+assert windows == 2
+capture 01_two_windows
+
+# The primary still drives: open another address while the lens is up.
+open mere://beta
+settle 5
+assert focused beta
+capture 02_primary_still_drives
+
+log rung 7 lens-window receipt complete

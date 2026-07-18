@@ -74,6 +74,8 @@ pub struct Snapshot {
     /// Whether the visit history can step back / forward (the nav row).
     pub can_back: bool,
     pub can_forward: bool,
+    /// How many windows are open (rung 7; mirrored from the shell).
+    pub windows: usize,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -109,6 +111,10 @@ pub enum AppEvent {
     Reloaded(String),
     /// A dropped image textured this node's sprite face.
     NodeSpriteSet(Uuid),
+    /// A lens window was requested (rung 7).
+    WindowOpened,
+    /// A lens window closed.
+    WindowClosed,
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -148,6 +154,8 @@ impl AppEvent {
             AppEvent::NavigatedForward(url) => format!("nav-forward {url}"),
             AppEvent::Reloaded(url) => format!("reloaded {url}"),
             AppEvent::NodeSpriteSet(node) => format!("sprite-set {node}"),
+            AppEvent::WindowOpened => "window-opened".to_string(),
+            AppEvent::WindowClosed => "window-closed".to_string(),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
@@ -288,6 +296,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         a11y: crate::a11y::a11y_lines(app),
         can_back: app.history.can_back(),
         can_forward: app.history.can_forward(),
+        windows: app.window_count,
     }
 }
 

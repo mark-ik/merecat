@@ -89,6 +89,10 @@ pub struct App {
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
+    /// How many windows are open (rung 7). A MIRROR like `roster_tab`: the
+    /// shell owns the platform windows and copies the count here so
+    /// observation (and a scenario) can see it.
+    pub window_count: usize,
     /// Which Roster tab is showing. A MIRROR, not the truth: cambium's tab strip
     /// owns its selection (the widget's state, in the shell's runner), and the
     /// shell copies it here after each dispatch so observation can see it — the
@@ -198,6 +202,7 @@ impl App {
                 workbench,
                 browser,
                 maximized: None,
+                window_count: 1,
                 roster_tab: 0,
                 next_pane_id,
                 events: Vec::new(),
@@ -347,6 +352,10 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::SaveSession => vec![Effect::SaveSession],
+            Action::NewWindow => {
+                self.events.push(AppEvent::WindowOpened);
+                vec![Effect::OpenWindow, Effect::Redraw]
+            }
             Action::SetNodeSprite { member, data_uri } => {
                 self.canvas.set_node_sprite(member, data_uri);
                 self.events.push(AppEvent::NodeSpriteSet(member));
@@ -682,6 +691,7 @@ impl App {
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
             maximized: None,
+            window_count: 1,
             roster_tab: 0,
             next_pane_id: 1,
             events: Vec::new(),

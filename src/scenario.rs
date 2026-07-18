@@ -114,6 +114,8 @@ enum Step {
     AssertWbFraction(CmpOp, f32),
     /// An a11y-projection line contains this substring.
     AssertA11y(String),
+    /// The window count (primary + lenses) compares as given.
+    AssertWindows(CmpOp, usize),
     /// The root split's ratio compares as given.
     AssertRatio(CmpOp, f32),
     Settle(u32),
@@ -338,6 +340,21 @@ impl Scenario {
                     self.fail(format!(
                         "assert wb-cell '{substr}': the cells are {:?}",
                         snap.workbench_cells
+                    ));
+                }
+                Tick::Wait
+            }
+            Step::AssertWindows(op, n) => {
+                let snap = crate::observe::snapshot(app);
+                let ok = match op {
+                    CmpOp::Eq => snap.windows == *n,
+                    CmpOp::Ge => snap.windows >= *n,
+                    CmpOp::Le => snap.windows <= *n,
+                };
+                if !ok {
+                    self.fail(format!(
+                        "assert windows {op:?} {n}: have {}",
+                        snap.windows
                     ));
                 }
                 Tick::Wait
@@ -714,6 +731,22 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
                     "a11y" if !arg.is_empty() => Step::AssertA11y(arg.to_string()),
+                    "windows" => {
+                        let (op, n) = arg
+                            .split_once(char::is_whitespace)
+                            .ok_or_else(|| format!("line {}: assert windows wants '<op> <n>'", i + 1))?;
+                        let op = match op {
+                            "==" => CmpOp::Eq,
+                            ">=" => CmpOp::Ge,
+                            "<=" => CmpOp::Le,
+                            _ => return err("assert windows op wants ==|>=|<="),
+                        };
+                        let n = n
+                            .trim()
+                            .parse()
+                            .map_err(|_| format!("line {}: bad window count", i + 1))?;
+                        Step::AssertWindows(op, n)
+                    }
                     "wb-cell" if !arg.is_empty() => Step::AssertWbCell(arg.to_string()),
                     "wb-cells" => {
                         let (op, n) = arg

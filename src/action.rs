@@ -43,6 +43,9 @@ pub enum Action {
         member: uuid::Uuid,
         data_uri: String,
     },
+    /// Open another window onto the same state (rung 7): a lens — the same
+    /// graph through its own camera, per the one-state-N-windows doctrine.
+    NewWindow,
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
     /// Toggle the isometric (2.5D foreshortened) view.
@@ -208,6 +211,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Gloss pane", Action::SummonPane(PaneKind::Gloss)),
         ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
         ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
+        ("New window", Action::NewWindow),
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Close pane", Action::CloseActivePane),
@@ -238,6 +242,8 @@ pub enum Effect {
     SpawnContent { node: uuid::Uuid, url: String },
     /// Close `node`'s live session; the port drops the handle.
     CloseContent { node: uuid::Uuid },
+    /// Open a lens window (platform work: window + surface creation).
+    OpenWindow,
     /// The projection is stale; present another frame.
     Redraw,
 }

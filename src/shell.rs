@@ -153,6 +153,30 @@ pub struct Shell {
     /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
     /// the component owns the gesture math; the shell only feeds it points.
     divider_drag: Option<crate::pane::DividerPlacement>,
+    /// Lens windows (rung 7, one-state-N-windows): the same graph through a
+    /// window-owned camera. The primary window keeps the full pane/chrome
+    /// experience; each lens renders the canvas with ITS `Viewport` installed
+    /// around the pass and stashed back after — two windows on one graph hold
+    /// distinct cameras over shared node positions (the canvas's install
+    /// seam, exactly as the multi-window doctrine recorded).
+    lens_windows: std::collections::HashMap<WindowId, LensWindow>,
+    /// Lens windows requested but not yet created (window creation needs the
+    /// `ActiveEventLoop`, which effects don't carry; the event handlers drain
+    /// this while one is in scope).
+    pending_windows: usize,
+}
+
+/// One lens window's record: its platform window, present stack, size,
+/// cursor, and camera.
+struct LensWindow {
+    window: Arc<Window>,
+    host: SurfaceHost,
+    width: u32,
+    height: u32,
+    cursor: (f32, f32),
+    viewport: mere::canvas::Viewport,
+    /// Whether a canvas pointer gesture (grab/pan) is in flight here.
+    pointer_down: bool,
 }
 
 impl Shell {
@@ -201,6 +225,8 @@ impl Shell {
             wb_tab_drag: None,
             wb_divider_drag: None,
             divider_drag: None,
+            lens_windows: std::collections::HashMap::new(),
+            pending_windows: 0,
         };
         shell.run_effects(boot_effects);
         shell
@@ -308,6 +334,9 @@ impl Shell {
                     }
                 }
                 Effect::Redraw => self.request_redraw(),
+                // Window creation needs the ActiveEventLoop; note the request
+                // and let the event handler in scope drain it.
+                Effect::OpenWindow => self.pending_windows += 1,
                 // Fetch-shaped effects were consumed above.
                 Effect::FetchPage { .. } | Effect::FetchFavicon { .. } => {}
             }
@@ -1111,6 +1140,169 @@ impl Shell {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
+        for lens in self.lens_windows.values() {
+            lens.window.request_redraw();
+        }
+    }
+
+    /// Create any requested lens windows (rung 7). Called from the event
+    /// handlers, where an `ActiveEventLoop` is in scope. A lens seeds its
+    /// camera from the canvas's CURRENT viewport (sensible initial framing),
+    /// then owns it.
+    fn drain_pending_windows(&mut self, event_loop: &ActiveEventLoop) {
+        while self.pending_windows > 0 {
+            self.pending_windows -= 1;
+            let attributes = Window::default_attributes()
+                .with_title("Merecat — lens")
+                .with_inner_size(PhysicalSize::new(800u32, 600u32));
+            let Ok(window) = event_loop.create_window(attributes) else {
+                tracing::warn!("lens window creation failed");
+                continue;
+            };
+            let window = Arc::new(window);
+            let size = window.inner_size();
+            let options = NetrenderOptions {
+                tile_cache_size: Some(16),
+                enable_vello: true,
+                ..Default::default()
+            };
+            match SurfaceHost::boot(window.clone(), size.width.max(1), size.height.max(1), options)
+            {
+                Ok(host) => {
+                    window.request_redraw();
+                    self.lens_windows.insert(
+                        window.id(),
+                        LensWindow {
+                            window,
+                            host,
+                            width: size.width.max(1),
+                            height: size.height.max(1),
+                            cursor: (0.0, 0.0),
+                            viewport: self.app.canvas.viewport(),
+                            pointer_down: false,
+                        },
+                    );
+                }
+                Err(err) => tracing::warn!(%err, "lens surface boot failed"),
+            }
+        }
+        self.app.window_count = 1 + self.lens_windows.len();
+    }
+
+    /// Render one lens window: install its viewport, frame the canvas at its
+    /// size, stash the (possibly inertia-advanced) viewport back, compose.
+    fn render_lens(&mut self, id: WindowId) {
+        let Some(lens) = self.lens_windows.get_mut(&id) else {
+            return;
+        };
+        let saved = self.app.canvas.viewport();
+        self.app.canvas.set_viewport(lens.viewport);
+        self.app.canvas.resize(lens.width, lens.height);
+        let (scene, animating) = self.app.canvas.frame(lens.width, lens.height);
+        lens.viewport = self.app.canvas.viewport();
+        self.app.canvas.set_viewport(saved);
+        self.app
+            .canvas
+            .resize(self.width.max(1), self.height.max(1));
+        let (_tex, view) = lens.host.core().rasterize_for(
+            u64::MAX ^ 1,
+            &scene,
+            lens.width,
+            lens.height,
+            ColorLoad::Clear(wgpu::Color::WHITE),
+        );
+        let Some(frame) = lens.host.acquire() else {
+            return;
+        };
+        let target = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        lens.host.renderer().compose_external_texture(
+            &view,
+            &target,
+            lens.host.format(),
+            lens.width,
+            lens.height,
+            ExternalTexturePlacement::new([0.0, 0.0, lens.width as f32, lens.height as f32]),
+        );
+        frame.present();
+        if animating {
+            lens.window.request_redraw();
+        }
+    }
+
+    /// Route one lens window's event: canvas gestures with the lens's own
+    /// viewport installed around the pass (pan, zoom, grab), resize, close.
+    fn lens_event(&mut self, id: WindowId, event: WindowEvent) {
+        let Some(lens) = self.lens_windows.get_mut(&id) else {
+            return;
+        };
+        match event {
+            WindowEvent::CloseRequested => {
+                self.lens_windows.remove(&id);
+                self.app.window_count = 1 + self.lens_windows.len();
+                self.app.note(crate::observe::AppEvent::WindowClosed);
+                return;
+            }
+            WindowEvent::Resized(size) => {
+                lens.width = size.width.max(1);
+                lens.height = size.height.max(1);
+                lens.host.resize(lens.width, lens.height);
+                lens.window.request_redraw();
+                return;
+            }
+            WindowEvent::RedrawRequested => {
+                self.render_lens(id);
+                return;
+            }
+            _ => {}
+        }
+        // Continuous canvas gestures, with the lens camera installed. The
+        // canvas's semantic input methods are the shared vocabulary; only the
+        // viewport differs per window (the gesture law holds unchanged).
+        let saved = self.app.canvas.viewport();
+        self.app.canvas.set_viewport(lens.viewport);
+        self.app.canvas.resize(lens.width, lens.height);
+        let mut redraw = false;
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                lens.cursor = (position.x as f32, position.y as f32);
+                redraw = self.app.canvas.cursor_moved(lens.cursor.0, lens.cursor.1);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x * WHEEL_PAN_SCALE, y * WHEEL_PAN_SCALE),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                };
+                redraw = self.app.canvas.wheel(dx, dy);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(button) = pointer_button(button) {
+                    let (x, y) = lens.cursor;
+                    redraw = match state {
+                        ElementState::Pressed => {
+                            lens.pointer_down = true;
+                            self.app.canvas.pointer_down(button, x, y)
+                        }
+                        ElementState::Released => {
+                            lens.pointer_down = false;
+                            self.app.canvas.pointer_up(button, x, y)
+                        }
+                    };
+                }
+            }
+            _ => {}
+        }
+        // Stash the lens camera back and restore the primary's.
+        let lens = self.lens_windows.get_mut(&id).expect("lens still present");
+        lens.viewport = self.app.canvas.viewport();
+        self.app.canvas.set_viewport(saved);
+        self.app
+            .canvas
+            .resize(self.width.max(1), self.height.max(1));
+        if redraw {
+            lens.window.request_redraw();
+        }
     }
 
     /// Advance the self-drive scenario one step after each rendered frame.
@@ -1213,6 +1405,24 @@ fn decode_sprite_data_uri(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one-state-N-windows invariant (rung 7): two windows on one graph
+    /// hold DISTINCT cameras over shared positions. Install/stash through the
+    /// canvas's viewport seam keeps a pan in one lens out of the other.
+    #[test]
+    fn lens_viewports_stay_distinct() {
+        let mut canvas = mere::canvas::Canvas::with_sample_graph();
+        canvas.resize(800, 600);
+        let a = canvas.viewport();
+        // Drive "window B": install, pan, stash.
+        canvas.set_viewport(a);
+        canvas.wheel(0.0, 240.0);
+        let b = canvas.viewport();
+        // Restore "window A".
+        canvas.set_viewport(a);
+        assert_ne!(a, b, "B's wheel moved B's viewport (inertia counts)");
+        assert_eq!(canvas.viewport(), a, "A's viewport is untouched");
+    }
 
     /// The drop decode: a real PNG round-trips to a data-URI; a non-image
     /// file declines (and so becomes a node instead of a sprite).
@@ -1392,7 +1602,7 @@ impl ApplicationHandler for Shell {
     /// An actor woke us through the proxy: a physics layout snapshot or a
     /// completed fetch is waiting. Drain fetches through the spine, then
     /// redraw so `frame()` folds everything in (and chains while settling).
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: ()) {
         while let Ok(raw) = self.fetch_rx.try_recv() {
             // The port adapter converts the service's types at the boundary;
             // the app only ever sees the app-owned vocabulary.
@@ -1401,6 +1611,7 @@ impl ApplicationHandler for Shell {
                 self.run_effects(effects);
             }
         }
+        self.drain_pending_windows(event_loop);
         self.request_redraw();
     }
 
@@ -1411,6 +1622,12 @@ impl ApplicationHandler for Shell {
         event: WindowEvent,
     ) {
         if self.window.as_ref().map(|w| w.id()) != Some(window_id) {
+            // A lens window's event (rung 7): canvas gestures through the
+            // lens's own camera; everything else is the primary's.
+            if self.lens_windows.contains_key(&window_id) {
+                self.lens_event(window_id, event);
+                self.drain_pending_windows(event_loop);
+            }
             return;
         }
         match event {
@@ -1568,5 +1785,6 @@ impl ApplicationHandler for Shell {
             }
             _ => {}
         }
+        self.drain_pending_windows(event_loop);
     }
 }
