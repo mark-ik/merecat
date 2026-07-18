@@ -191,11 +191,16 @@ resolver can only find what the **semantic DOM** carries — a selectable class
 - **Tab strip** — resolvable. `.tab` with the label as direct child text. Wired.
 - **Sectioned list (Trail)** — resolvable. `.list-row` with direct child text.
   Ready to wire.
-- **data_grid (Roster rows)** — NOT yet. The clickable cell is a bare `<span>`
-  (no class) and its text sits one level below the `.grid-cell` wrapper, so a
-  `.grid-cell` selector with shallow text matching misses it, and a deep match
-  would first hit the enclosing `.grid` container. Needs a small cambium change:
-  give the grid cell (or its clickable) a stable class with reachable text.
+- **data_grid (Roster rows)** — resolvable after a two-line fix (done). The
+  clickable cell was a classless inline `<span>`; giving it a class (`roster-cell`,
+  targeting only) and making it a block `<div>` fixes two things at once: the
+  resolver's `absolute_rect` returns a box for a block but not an inline run, and
+  a block fills the cell width so the resolved *centre* lands on the clickable
+  rather than in empty space past short left-aligned text. This is the widget
+  lesson in miniature: **a genet-probe target must be a block-level element with
+  a class and reachable text** — inline text is neither hit-testable-by-centre
+  nor box-resolvable. The fix was merecat-side (the cell content is merecat's
+  closure, not cambium's), so no cambium change was needed.
 - **graph-canvas node (Gloss)** — NOT yet, for a different reason. The scenario
   targets a node by **url**, and the url is only in pane state, not the DOM (the
   node button's `aria-label` is the display label). The node needs its url in
@@ -221,8 +226,13 @@ each of those two widgets wants regardless.
   main is 12 commits ahead of origin with foreign work, so `genet-probe` is NOT
   yet on origin/main — a clean merecat checkout needs it pushed there; deferred,
   not forced with foreign commits in the way).
-- 2026-07-17 — **Slice 2 (partial): merecat is the first consumer.** `click-tab`
-  routes through `genet_probe::resolve`; `RosterGrid::tab_center`'s bespoke
-  geometry collapsed to a 3-line `resolve` delegation. Unit tests + the roster
-  and divergence scenarios green through the shared crate. `click-row` /
-  `click-node` await the DOM-identity fixes above before they collapse too.
+- 2026-07-17 — **Slice 2: merecat drives click-tab AND click-row through
+  genet-probe.** `tab_center` (Roster) and `row_center` (Trail) collapsed to
+  3-line `resolve` delegations; `click-row` resolves a Trail `.list-row` and a
+  grid `.roster-cell` through one path, and — resolving off the DOM rather than
+  graph truth — the Roster's non-Nodes-tab guard fell away for free (no row
+  spans are drawn, so nothing resolves). The grid cell went inline-span ->
+  block-div (the finding above). Unit tests + the roster, trail, and divergence
+  scenarios green through the shared crate. `click-node` (gloss) still needs the
+  url in the node's DOM before it collapses too — a `data-url` on the swatch node
+  plus an attribute-matching selector, its own small slice.

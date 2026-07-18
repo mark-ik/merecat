@@ -132,6 +132,9 @@ pub struct Shell {
     /// The Trail pane: the sectioned list's first consumer (the hand-DOM Trail
     /// retired). Retained like the others.
     trail_pane: Option<crate::trail_pane::TrailPane>,
+    /// The Inspector pane: detail sections over app truth (inert content;
+    /// the detail_panel's own contract). Retained like the others.
+    inspector_pane: Option<crate::inspector_pane::InspectorPane>,
     /// The divider drag in flight: the pressed seam's placement, held from
     /// press to release (like `pointer_capture`, which also points at it).
     /// Cursor moves turn into ratios through cambium's `Split::ratio_at` —
@@ -179,6 +182,7 @@ impl Shell {
             roster_grid: None,
             gloss_pane: None,
             trail_pane: None,
+            inspector_pane: None,
             divider_drag: None,
         };
         shell.run_effects(boot_effects);
@@ -233,8 +237,27 @@ impl Shell {
                     let update = match self.content_engines.spawn(&decision.engine_id, &spawn) {
                         Ok(session) => {
                             tracing::info!(%node, %url, engine = %decision.engine_id, "content session live");
+                            // Mirror the spawn-time facts into app truth (the
+                            // adapter conversion): the engine id plus the
+                            // structural read through the trait accessor —
+                            // None stays None (a lane without introspection
+                            // is reported, not synthesized).
+                            let facts = crate::content::ContentFacts {
+                                engine: decision.engine_id.clone(),
+                                structure: session.inspect().map(|r| {
+                                    crate::content::StructureFacts {
+                                        title: r.title,
+                                        headings: r.headings.len(),
+                                        links: r.links.len(),
+                                        outline: r.outline.len(),
+                                    }
+                                }),
+                            };
                             self.content_sessions.insert(node, session);
-                            Update::ContentSpawned { node }
+                            Update::ContentSpawned {
+                                node,
+                                facts: Some(facts),
+                            }
                         }
                         Err(err) => {
                             tracing::warn!(%node, %url, engine = %decision.engine_id, %err, "content spawn failed");
@@ -330,39 +353,28 @@ impl Shell {
             let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
                 continue;
             };
-            // Each list pane resolves a row by ITS OWN geometry: Trail's
-            // hand-DOM rows, the Roster's cambium grid (header + row height).
-            let dims = (
-                surface.rect.w.round().max(1.0) as u32,
-                surface.rect.h.round().max(1.0) as u32,
-            );
-            let found = match self.pane_content(id) {
-                // Rows are flow-laid-out under the host sheet now, so the pane's
-                // layout answers (the ask-the-layout rule), not row arithmetic.
-                Some(PaneContent::Trail) => self
-                    .trail_pane
-                    .as_ref()
-                    .and_then(|p| p.row_center(substr, dims.0, dims.1))
-                    .map(|(_, y)| y),
-                // Only the Nodes tab draws rows. On another tab the row exists in
-                // the graph but not on screen, so refuse rather than click a row
-                // that isn't there and report the miss as a hit.
-                Some(PaneContent::Roster)
-                    if self
-                        .roster_grid
-                        .as_ref()
-                        .is_none_or(|g| g.selected_tab().0 == 0) =>
-                {
-                    crate::roster_view::roster_grid_rows(&self.app)
-                        .iter()
-                        .position(|r| r.title.contains(substr) || r.url.contains(substr))
-                        .map(crate::cambium_pane::grid_row_center_y)
-                }
-                _ => continue,
+            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
+            // Both list panes resolve through the shared genet-probe path: a
+            // Trail `list-row` or a grid `roster-cell` whose text contains
+            // `substr`. Resolving off the DOM (what is drawn) rather than graph
+            // truth means the Roster's non-Nodes tabs need no explicit guard —
+            // they simply have no row spans, so nothing resolves.
+            let hit = match self.pane_content(id) {
+                Some(PaneContent::Trail) => self.trail_pane.as_ref().and_then(|p| {
+                    p.resolve(
+                        &genet_probe::Selector::class("list-row").containing(substr),
+                        rect,
+                    )
+                }),
+                Some(PaneContent::Roster) => self.roster_grid.as_ref().and_then(|g| {
+                    g.resolve(
+                        &genet_probe::Selector::class("roster-cell").containing(substr),
+                        rect,
+                    )
+                }),
+                _ => None,
             };
-            if let Some(local_y) = found {
-                let x = surface.rect.x + 20.0;
-                let y = surface.rect.y + local_y;
+            if let Some((x, y)) = hit {
                 self.deliver_press(x, y, MouseButton::Left);
                 self.deliver_release(x, y, MouseButton::Left);
                 return;
@@ -754,6 +766,15 @@ impl Shell {
                             let pane = self
                                 .gloss_pane
                                 .get_or_insert_with(crate::gloss_pane::GlossPane::new);
+                            pane.sync(&self.app, rw as f32, rh as f32);
+                            pane.scene(rw, rh)
+                        }
+                        Some(PaneContent::Inspector) => {
+                            // Detail sections over app truth; inert content, so
+                            // no click routing joins the press path.
+                            let pane = self
+                                .inspector_pane
+                                .get_or_insert_with(crate::inspector_pane::InspectorPane::new);
                             pane.sync(&self.app, rw as f32, rh as f32);
                             pane.scene(rw, rh)
                         }

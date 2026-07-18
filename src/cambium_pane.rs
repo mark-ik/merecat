@@ -131,8 +131,15 @@ fn roster_grid(state: &RosterState) -> RosterView {
                 Some(r) => (r.url.clone(), r.url.clone()),
                 None => (String::new(), String::new()),
             };
+            // `roster-cell` is the genet-probe hit target: a stable class whose
+            // direct child text is the cell's, so `click-row` resolves a grid
+            // row the same way it resolves a Trail `list-row`. A block `div`
+            // (not an inline `span`) so it has a box `absolute_rect` resolves AND
+            // fills the cell width, so the resolved centre lands on the
+            // clickable rather than in empty space past short text. No sheet rule
+            // — `.grid-cell` already styles it; this class is targeting only.
             Box::new(on_click(
-                el::<_, RosterState, RosterAction>("span", text),
+                el::<_, RosterState, RosterAction>("div", text).attr("class", "roster-cell"),
                 move |_state: &mut RosterState, _click: PointerClick| {
                     RosterAction::Navigate(url.clone())
                 },
@@ -150,9 +157,9 @@ fn roster_grid(state: &RosterState) -> RosterView {
 }
 
 /// The pane-local y at the centre of grid row `idx` — below the tab strip and
-/// the grid's sticky header. The scenario's `click-row` aims here, so a receipt
-/// clicks the row the grid actually drew rather than guessing at a list geometry
-/// the grid retired. `grid_row_center_y_hits_that_row` holds this to the layout.
+/// the grid's sticky header. A test helper now that `click-row` resolves off the
+/// DOM through genet-probe (`grid_dom_is_hit_testable` uses it to aim a probe
+/// click at a known row); kept because it pins the grid's row math to the layout.
 pub fn grid_row_center_y(idx: usize) -> f32 {
     let spec = roster_spec();
     crate::ui::TABLIST_HEIGHT + spec.header_height + idx as f32 * spec.row_height
@@ -298,6 +305,25 @@ mod tests {
                 .hit_test(&*d, 20.0, grid_row_center_y(0), &scroll)
                 .is_some(),
             "a point inside the grid's first row must hit a DOM node"
+        );
+    }
+
+    /// Isolates the click-row path: a `roster-cell` must resolve through
+    /// genet-probe to a point, the way the shell's `click-row` drives it.
+    #[test]
+    fn a_roster_cell_resolves_by_text() {
+        let g = grid_with_rows();
+        let hit = g.resolve(
+            &genet_probe::Selector::class("roster-cell").containing("alpha"),
+            [0.0, 0.0, 512.0, 600.0],
+        );
+        // Diagnostic: how many roster-cell elements exist at all.
+        let d = g.dom.borrow();
+        let cells = d.all_with_class(d.document(), "roster-cell");
+        assert!(
+            hit.is_some(),
+            "roster-cell 'alpha' must resolve; {} roster-cell elements in the DOM",
+            cells.len()
         );
     }
 

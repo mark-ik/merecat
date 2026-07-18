@@ -476,7 +476,14 @@ pub const CAMBIUM_SHEET: &str = "\
     .tab.selected { color: rgb(232, 150, 40); \
                     background-color: rgb(22, 27, 40); } \
     .pane-empty { color: rgb(120, 130, 150); font-size: 12px; padding: 12px; } \
-    .list-section-title { color: rgb(150, 160, 180); font-size: 12px;                           padding: 10px 14px 4px 14px; white-space: nowrap; }     .list-row { color: rgb(200, 208, 224); font-size: 13px;                 padding: 5px 14px; white-space: nowrap; overflow: hidden; }     .list-row.muted { color: rgb(120, 130, 150); }     .list-row.action { color: rgb(232, 150, 40); }     .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
+    .list-section-title { color: rgb(150, 160, 180); font-size: 12px;                           padding: 10px 14px 4px 14px; white-space: nowrap; }     .list-row { color: rgb(200, 208, 224); font-size: 13px;                 padding: 5px 14px; white-space: nowrap; overflow: hidden; }     .list-row.muted { color: rgb(120, 130, 150); }     .list-row.action { color: rgb(232, 150, 40); }     .detail-section-title { color: rgb(150, 160, 180); font-size: 12px; \
+                            padding: 10px 14px 4px 14px; white-space: nowrap; } \
+    .detail-row { display: flex; padding: 3px 14px; } \
+    .detail-key { color: rgb(150, 160, 180); font-size: 12px; width: 130px; \
+                  white-space: nowrap; overflow: hidden; } \
+    .detail-value { color: rgb(200, 208, 224); font-size: 12px; \
+                    white-space: nowrap; overflow: hidden; } \
+    .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
                            border: 1px solid rgb(52, 62, 86); border-radius: 7px; } \
     .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; } \
     .graph-canvas-swatch-expand { color: rgb(150, 160, 180); font-size: 10px; \

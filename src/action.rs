@@ -190,8 +190,14 @@ pub enum Update {
         owner_url: String,
         bytes: Vec<u8>,
     },
-    /// The content port spawned a live session for `node`.
-    ContentSpawned { node: uuid::Uuid },
+    /// The content port spawned a live session for `node`. `facts` carries
+    /// the spawn-time mirror (engine id, the structural read's summary) in
+    /// app-owned terms — the adapter converts the service's report type at
+    /// the boundary, like every other port answer.
+    ContentSpawned {
+        node: uuid::Uuid,
+        facts: Option<crate::content::ContentFacts>,
+    },
     /// The content port could not spawn (or lost) `node`'s session.
     ContentFailed { node: uuid::Uuid, error: String },
 }

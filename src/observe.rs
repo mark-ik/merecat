@@ -52,6 +52,9 @@ pub struct Snapshot {
     pub trail_rows: Vec<String>,
     /// When a Roster pane is in the tree, its row texts (the node manifest).
     pub roster_rows: Vec<String>,
+    /// When an Inspector pane is in the tree, its rows as "Key: value" lines
+    /// (node facts + content facts off the spawn-time mirror).
+    pub inspector_rows: Vec<String>,
     /// The Roster's active tab label, mirrored out of the strip's own state.
     pub roster_tab: &'static str,
     /// The root split's ratio, when the pane tree is split at all. The divider
@@ -230,6 +233,12 @@ pub fn snapshot(app: &App) -> Snapshot {
                     .map(|r| r.text)
                     .collect()
             })
+            .unwrap_or_default(),
+        inspector_rows: app
+            .frisket
+            .iter_leaves()
+            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Inspector))
+            .then(|| crate::inspector_view::inspector_lines(app))
             .unwrap_or_default(),
         roster_tab: crate::cambium_pane::tab_label(app.roster_tab),
         split_ratio: match &app.frisket.root {

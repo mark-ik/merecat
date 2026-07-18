@@ -29,15 +29,47 @@ pub enum NodeContent {
     Failed(String),
 }
 
-/// The app-truth side of the content lane: node id -> lifecycle.
+/// App-owned facts about a live session, mirrored out of the content port at
+/// spawn (the adapter converts the service's report type at the boundary, so
+/// this module stays port-agnostic). Data, not a handle: the Inspector pane
+/// and the observation snapshot read these without reaching into the shell.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContentFacts {
+    /// The engine id the route decision picked (e.g. `genet.web`).
+    pub engine: String,
+    /// The structural read, when the lane has one. `None` is reported
+    /// honestly (a lane without introspection, not an empty document).
+    pub structure: Option<StructureFacts>,
+}
+
+/// The structural read's summary numbers (the report itself stays port-side;
+/// the app mirrors what its surfaces present).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructureFacts {
+    /// The document's own `<title>`.
+    pub title: Option<String>,
+    pub headings: usize,
+    pub links: usize,
+    /// Outline entries (painted elements).
+    pub outline: usize,
+}
+
+/// The app-truth side of the content lane: node id -> lifecycle, plus the
+/// spawn-time facts for live nodes.
 #[derive(Debug, Default)]
 pub struct ContentStates {
     states: HashMap<Uuid, NodeContent>,
+    facts: HashMap<Uuid, ContentFacts>,
 }
 
 impl ContentStates {
     pub fn get(&self, node: Uuid) -> Option<&NodeContent> {
         self.states.get(&node)
+    }
+
+    /// The mirrored facts for a live node (absent for requested/failed/none).
+    pub fn facts(&self, node: Uuid) -> Option<&ContentFacts> {
+        self.facts.get(&node)
     }
 
     /// Whether a flip intent on `node` should spawn (true) or close (false):
@@ -52,19 +84,30 @@ impl ContentStates {
 
     pub fn note_requested(&mut self, node: Uuid) {
         self.states.insert(node, NodeContent::Requested);
+        self.facts.remove(&node);
     }
 
-    pub fn note_live(&mut self, node: Uuid) {
+    pub fn note_live(&mut self, node: Uuid, facts: Option<ContentFacts>) {
         self.states.insert(node, NodeContent::Live);
+        match facts {
+            Some(facts) => {
+                self.facts.insert(node, facts);
+            }
+            None => {
+                self.facts.remove(&node);
+            }
+        }
     }
 
     pub fn note_failed(&mut self, node: Uuid, error: String) {
         self.states.insert(node, NodeContent::Failed(error));
+        self.facts.remove(&node);
     }
 
     /// The node's content is gone (closed, or the port dropped it).
     pub fn note_closed(&mut self, node: Uuid) {
         self.states.remove(&node);
+        self.facts.remove(&node);
     }
 
     /// Nodes currently holding live sessions (the shell composes these).
@@ -87,7 +130,7 @@ mod tests {
         assert!(states.flip_spawns(node), "empty flips ON");
         states.note_requested(node);
         assert!(!states.flip_spawns(node), "in-flight flips OFF, not double-spawns");
-        states.note_live(node);
+        states.note_live(node, None);
         assert!(!states.flip_spawns(node), "live flips OFF");
         states.note_closed(node);
         assert!(states.flip_spawns(node), "closed flips ON again");
@@ -100,7 +143,7 @@ mod tests {
     fn live_nodes_lists_only_live() {
         let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let mut states = ContentStates::default();
-        states.note_live(a);
+        states.note_live(a, None);
         states.note_requested(b);
         states.note_failed(c, "x".into());
         let live: Vec<_> = states.live_nodes().collect();

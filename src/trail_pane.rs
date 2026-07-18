@@ -8,9 +8,9 @@
 //! log.
 //!
 //! Row geometry moves from host arithmetic (`pane_rows`' fixed ROW_HEIGHT) to
-//! the ask-the-layout rule: rows are normal-flow blocks whose heights the host
-//! sheet decides, so `row_center` finds a row's rect from the laid-out DOM,
-//! exactly like the Roster's `tab_center`.
+//! the shared genet-probe resolver: rows are normal-flow `list-row` blocks whose
+//! heights the host sheet decides, so `resolve` finds a row's rect from the
+//! laid-out DOM — the same path the Roster grid's rows and tabs take.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,7 +21,6 @@ use cambium::{
 };
 use genet_layout::{IncrementalLayout, ScrollOffsets};
 use genet_scripted_dom::{NodeId, ScriptedDom};
-use layout_dom_api::LayoutDom;
 
 use crate::app::App;
 use crate::trail_view::{RowAction, TrailRow, trail_rows};
@@ -171,23 +170,20 @@ impl TrailPane {
         actions
     }
 
-    /// The pane-local centre of the first row whose text contains `substr`,
-    /// from the layout — rows are flow-laid-out under the host sheet, so only
-    /// the layout knows their heights (the ask-the-layout rule; this retires
-    /// `pane_rows`' fixed-height arithmetic for Trail).
-    pub fn row_center(&self, substr: &str, w: u32, h: u32) -> Option<(f32, f32)> {
+    /// Resolve a selector to a window point within this pane's DOM at window
+    /// rect `rect`, via the shared genet-probe resolver — the same delegation
+    /// the Roster grid uses, so `click-row` finds a Trail `list-row` and a grid
+    /// `roster-cell` through one path. `row_center`'s bespoke walk collapsed
+    /// here.
+    pub fn resolve(&self, sel: &genet_probe::Selector, rect: [f32; 4]) -> Option<(f32, f32)> {
         let dom = self.dom.borrow();
-        let layout =
-            IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
-        let row = dom
-            .all_with_class(dom.document(), "list-row")
-            .into_iter()
-            .find(|&n| {
-                dom.dom_children(n)
-                    .any(|c| dom.text(c).is_some_and(|t| t.contains(substr)))
-            })?;
-        let (x, y, rw, rh) = layout.absolute_rect(&*dom, row)?;
-        Some((x + rw / 2.0, y + rh / 2.0))
+        let surfaces = [genet_probe::ProbeSurface {
+            name: "trail",
+            dom: &dom,
+            rect,
+            sheet: crate::ui::CAMBIUM_SHEET,
+        }];
+        genet_probe::resolve(&surfaces, sel).map(|h| h.point)
     }
 }
 
@@ -232,7 +228,7 @@ mod tests {
     fn clicking_a_row_bubbles_its_affordance() {
         let mut pane = pane_with_rows();
         let (x, y) = pane
-            .row_center("example.com", 400, 600)
+            .resolve(&genet_probe::Selector::class("list-row").containing("example.com"), [0.0, 0.0, 400.0, 600.0])
             .expect("the Recent row must be drawn");
         let actions = pane.click(x, y, 400, 600);
         assert!(
@@ -240,7 +236,7 @@ mod tests {
             "the Recent row must bubble its url"
         );
         let (x, y) = pane
-            .row_center("Recover beta", 400, 600)
+            .resolve(&genet_probe::Selector::class("list-row").containing("Recover beta"), [0.0, 0.0, 400.0, 600.0])
             .expect("the Recover row must be drawn");
         let actions = pane.click(x, y, 400, 600);
         assert!(
@@ -256,7 +252,7 @@ mod tests {
     fn a_muted_row_is_inert() {
         let mut pane = pane_with_rows();
         let (x, y) = pane
-            .row_center("no more", 400, 600)
+            .resolve(&genet_probe::Selector::class("list-row").containing("no more"), [0.0, 0.0, 400.0, 600.0])
             .expect("the muted row is drawn");
         assert!(
             pane.click(x, y, 400, 600).is_empty(),

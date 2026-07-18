@@ -454,8 +454,8 @@ impl App {
                 owner_url,
                 bytes,
             } => browse::apply_favicon(&mut self.canvas, node, &owner_url, &bytes),
-            Update::ContentSpawned { node } => {
-                self.content.note_live(node);
+            Update::ContentSpawned { node, facts } => {
+                self.content.note_live(node, facts);
                 self.events.push(AppEvent::ContentState {
                     node,
                     state: "live".to_string(),

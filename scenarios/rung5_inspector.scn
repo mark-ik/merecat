@@ -1,0 +1,32 @@
+# Rung 5 slice D receipt, self-driven: the Inspector pane. Detail sections
+# over app truth — node facts off the kernel node, content facts off the
+# spawn-time mirror (engine id + the structural read through genet's
+# DocumentSession::inspect, the trait accessor this slice landed). Rendered
+# on cambium's detail_panel (the catalog entry the surfaces-in-cambium
+# mapping named). Network-dependent (opens example.com); run on a FRESH
+# profile so this run owns the state.
+settle 30
+key escape
+
+# Visit a page and flip its live content on: the content port routes, spawns
+# the static lane, and mirrors the spawn-time facts into app truth.
+open https://example.com/
+settle 30
+act Toggle live content
+settle 30
+assert content-live
+
+# Open the Inspector. Its rows are real: graph truth (the node's url) and
+# the live session's structural read (example.com's own title and link).
+act Open Inspector pane
+settle 5
+assert pane inspector
+assert surface pane
+assert row URL: https://example.com/
+assert row Content state: live
+assert row Engine: genet.web
+assert row Document title: Example Domain
+assert row Outgoing links: 1
+capture 01_inspector
+
+log rung 5 slice D (Inspector on detail_panel) self-drive complete

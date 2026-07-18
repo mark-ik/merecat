@@ -30,7 +30,7 @@
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
 //! assert pane <tag>         # a pane with that PaneContent tag is in the tree
 //! assert maximized | not-maximized
-//! assert row <substr>       # a Trail pane row's text contains substr
+//! assert row <substr>       # a Trail/Roster/Inspector row's text contains substr
 //! assert omnibar open|closed
 //! assert text <str>         # the omnibar text is exactly <str>
 //! assert focused <substr>   # focused node's url/caption contains substr
@@ -105,7 +105,7 @@ enum Step {
     AssertPane(String),
     /// Whether a pane is maximized.
     AssertMaximized(bool),
-    /// A Trail pane row's text contains this substring.
+    /// A list/detail pane row's text contains this substring.
     AssertRow(String),
     AssertTab(String),
     /// Set the active pane's divider ratio (drag the seam).
@@ -355,11 +355,12 @@ impl Scenario {
                     .trail_rows
                     .iter()
                     .chain(snap.roster_rows.iter())
+                    .chain(snap.inspector_rows.iter())
                     .any(|r| r.contains(substr));
                 if !hit {
                     self.fail(format!(
-                        "assert row '{substr}': trail {:?} roster {:?}",
-                        snap.trail_rows, snap.roster_rows
+                        "assert row '{substr}': trail {:?} roster {:?} inspector {:?}",
+                        snap.trail_rows, snap.roster_rows, snap.inspector_rows
                     ));
                 }
                 Tick::Wait

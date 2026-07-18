@@ -30,6 +30,8 @@ mod browse;
 mod cambium_pane;
 mod content;
 mod gloss_pane;
+mod inspector_pane;
+mod inspector_view;
 mod trail_pane;
 mod observe;
 mod pane;
