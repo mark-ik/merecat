@@ -309,9 +309,12 @@ how a rung-5 receipt came to read as rung-4-completable.
 
 - (r3/r4) Open addresses from the omnibar; navigate live content. **Met** for the
   static lane.
-- (r3, still owed) Back, forward, reload, and redirects behave. `Action` has no Back,
-  Forward, or Reload variant. Rung 3 is marked complete and this has no owner; give it
-  one.
+- (r3) Back, forward, reload, and redirects behave. **Met 2026-07-18**: `NavBack` /
+  `NavForward` over `chrome::nav::History` (direct-dep'd; Back re-selects, never
+  refetches; a new open truncates the forward branch) + `Reload` (refetch + live
+  content respawn), on Alt+Left/Right and Ctrl+R and the palette. Receipts: the
+  spine unit test + `rung3_nav.scn` headed RESULT ok. Redirects were rung-1 fetch
+  behavior.
 - (r5) Focus and switch between the graph canvas and documents. **Unmet, and not a
   rung-4 item**: content sessions receive zero input, and the only focus concept in the
   codebase is the graph node's. Needs rung-5 slices A and B.

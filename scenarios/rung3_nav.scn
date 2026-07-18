@@ -1,0 +1,30 @@
+# The r3-owed nav receipt, self-driven: Back, Forward, Reload as palette
+# Actions over chrome's History cursor (Alt+Left/Right and Ctrl+R take the
+# same spine headed). Offline (mere:// addresses), so reruns are hermetic.
+settle 30
+key escape
+
+open mere://alpha
+settle 5
+open mere://beta
+settle 5
+assert focused beta
+
+# Back re-selects alpha without refetching; Forward redoes.
+act Back
+settle 5
+assert focused alpha
+assert event nav-back mere://alpha
+act Forward
+settle 5
+assert focused beta
+assert event nav-forward mere://beta
+
+# Reload announces itself (offline address: no fetch, no content — the
+# event is the spine receipt; the live-respawn path is unit-pinned).
+act Reload
+settle 5
+assert event reloaded mere://beta
+capture 01_nav
+
+log r3 nav debt (Back/Forward/Reload) self-drive complete

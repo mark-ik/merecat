@@ -42,6 +42,10 @@ frisket = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # stable path-derived ids. Not facade-re-exported by mere (a named facade
 # gap), so a direct git dep like frisket.
 uxtree = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Navigation vocabulary (the r3-owed Back/Forward/Reload): chrome's History
+# is the cursor over visited addresses. Not facade-re-exported; direct dep
+# like frisket and uxtree.
+chrome = { package = "mere-chrome", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # AccessKit node vocabulary for the projection (matches mere's 0.24 pin).
 accesskit = "0.24"
 # The actor-kernel runtime: the physics + fetch actors wake this shell's

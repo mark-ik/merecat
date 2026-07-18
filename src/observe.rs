@@ -71,6 +71,9 @@ pub struct Snapshot {
     /// the stitched application tree, flattened, so a scenario can assert a
     /// node the same way a screen reader would announce it.
     pub a11y: Vec<String>,
+    /// Whether the visit history can step back / forward (the nav row).
+    pub can_back: bool,
+    pub can_forward: bool,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -98,6 +101,12 @@ pub struct OmnibarView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppEvent {
     AddressOpened(String),
+    /// Back stepped the history cursor to this address.
+    NavigatedBack(String),
+    /// Forward stepped the history cursor to this address.
+    NavigatedForward(String),
+    /// The focused node reloaded (refetch + content respawn when live).
+    Reloaded(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -133,6 +142,9 @@ impl AppEvent {
     pub fn describe(&self) -> String {
         match self {
             AppEvent::AddressOpened(url) => format!("address-opened {url}"),
+            AppEvent::NavigatedBack(url) => format!("nav-back {url}"),
+            AppEvent::NavigatedForward(url) => format!("nav-forward {url}"),
+            AppEvent::Reloaded(url) => format!("reloaded {url}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
@@ -271,6 +283,8 @@ pub fn snapshot(app: &App) -> Snapshot {
         workbench_cells: workbench_cells(app),
         workbench_fractions: app.workbench.weights(),
         a11y: crate::a11y::a11y_lines(app),
+        can_back: app.history.can_back(),
+        can_forward: app.history.can_forward(),
     }
 }
 

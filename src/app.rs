@@ -70,6 +70,10 @@ pub struct App {
     /// leaves. The Orrery leaf is the graph canvas; summoning a pane splits it.
     /// Persisted to `frame.json` through the session port.
     pub frisket: FrisketLayout,
+    /// The visit-history cursor (the r3-owed nav row): every opened address
+    /// records here; Back/Forward move the cursor and re-select without
+    /// refetching. chrome's `History` — the mere vocabulary, direct-dep'd.
+    pub history: chrome::nav::History,
     /// The active pane — the anchor a summon splits from and a close removes.
     /// `None` means the canvas (the Orrery leaf).
     pub active_pane: Option<PaneId>,
@@ -148,6 +152,11 @@ impl App {
         // tile whose node vanished between sessions collapses away).
         let present = canvas.graph().nodes().map(|(_, n)| n.id).collect();
         let workbench = session::load_workbench(&data_root, &present);
+        // The history seeds from wherever the session opens (the focused
+        // node's url, or an empty sentinel Back can never step past).
+        let history = chrome::nav::History::new(
+            canvas.focused_url().map(str::to_string).unwrap_or_default(),
+        );
         (
             Self {
                 canvas,
@@ -156,6 +165,7 @@ impl App {
                 content: ContentStates::default(),
                 focus,
                 frisket,
+                history,
                 active_pane: None,
                 workbench,
                 maximized: None,
@@ -186,12 +196,71 @@ impl App {
             Action::OpenAddress(url) => {
                 self.events.push(AppEvent::AddressOpened(url.clone()));
                 let key = self.canvas.visit(&url);
+                self.history.visit(url.clone());
                 let mut effects = vec![Effect::Redraw];
                 if fetch::is_fetchable(&url)
                     && let Some(node) = self.canvas.graph().get_node(key).map(|n| n.id)
                 {
                     effects.push(Effect::FetchPage { node, url });
                 }
+                effects
+            }
+            // The nav pair: move the history cursor and RE-SELECT (never a
+            // refetch — the find lane's discipline). A remembered address
+            // whose node was deleted re-mints it via visit, without touching
+            // the cursor again.
+            Action::NavBack => {
+                let Some(url) = self.history.back().map(str::to_string) else {
+                    return vec![Effect::Redraw];
+                };
+                self.events.push(AppEvent::NavigatedBack(url.clone()));
+                if !url.is_empty() && !self.canvas.select_by_url(&url) {
+                    self.canvas.visit(&url);
+                }
+                vec![Effect::Redraw]
+            }
+            Action::NavForward => {
+                let Some(url) = self.history.forward().map(str::to_string) else {
+                    return vec![Effect::Redraw];
+                };
+                self.events.push(AppEvent::NavigatedForward(url.clone()));
+                if !self.canvas.select_by_url(&url) {
+                    self.canvas.visit(&url);
+                }
+                vec![Effect::Redraw]
+            }
+            Action::Reload => {
+                let Some(target) = self
+                    .canvas
+                    .focused_member()
+                    .zip(self.canvas.focused_url().map(str::to_string))
+                else {
+                    return vec![Effect::Redraw];
+                };
+                let (node, url) = target;
+                self.events.push(AppEvent::Reloaded(url.clone()));
+                let mut effects = Vec::new();
+                if fetch::is_fetchable(&url) {
+                    effects.push(Effect::FetchPage {
+                        node,
+                        url: url.clone(),
+                    });
+                }
+                // A live (or in-flight) session respawns fresh; a node
+                // without content stays without (reload is not a spawn).
+                if matches!(
+                    self.content.get(node),
+                    Some(crate::content::NodeContent::Live | crate::content::NodeContent::Requested)
+                ) {
+                    self.content.note_requested(node);
+                    self.events.push(AppEvent::ContentState {
+                        node,
+                        state: "requested".to_string(),
+                    });
+                    effects.push(Effect::CloseContent { node });
+                    effects.push(Effect::SpawnContent { node, url });
+                }
+                effects.push(Effect::Redraw);
                 effects
             }
             Action::ReseedLayout => {
@@ -546,6 +615,7 @@ impl App {
             content: ContentStates::default(),
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
+            history: chrome::nav::History::new(""),
             active_pane: None,
             workbench: mere::platen::Workbench::new(),
             maximized: None,
@@ -654,6 +724,45 @@ mod tests {
                 .any(|e| matches!(e, Effect::SpawnContent { .. })),
             "a failed node retries on the next flip"
         );
+    }
+
+    /// The nav row (r3 owed): Back re-selects without refetching, Forward
+    /// redoes, a new open truncates the forward branch, and Reload refetches
+    /// the focused node and respawns its live content.
+    #[test]
+    fn back_forward_and_reload_flow_through_the_spine() {
+        let mut app = App::test_stub();
+        app.update(Action::OpenAddress("https://example.com/a".to_string()));
+        app.update(Action::OpenAddress("https://example.com/b".to_string()));
+        // Back: the previous node re-selects, with NO fetch effect.
+        let effects = app.update(Action::NavBack);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })),
+            "Back never refetches: {effects:?}"
+        );
+        assert_eq!(app.canvas.focused_url(), Some("https://example.com/a"));
+        // Forward redoes.
+        app.update(Action::NavForward);
+        assert_eq!(app.canvas.focused_url(), Some("https://example.com/b"));
+        // Back then a new open: the forward branch truncates.
+        app.update(Action::NavBack);
+        app.update(Action::OpenAddress("https://example.com/c".to_string()));
+        assert!(!app.history.can_forward(), "a new open truncates forward");
+        assert!(app.history.can_back());
+        // Reload: a fetch effect for the focused node; with live content, a
+        // close + respawn pair.
+        let node = app.canvas.focused_member().unwrap();
+        app.apply_update(Update::ContentSpawned { node, facts: None });
+        let effects = app.update(Action::Reload);
+        assert!(effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::CloseContent { .. })));
+        assert!(effects.iter().any(|e| matches!(e, Effect::SpawnContent { .. })));
+        let described: Vec<String> = app.take_events().iter().map(
+            crate::observe::AppEvent::describe,
+        ).collect();
+        assert!(described.iter().any(|e| e.starts_with("nav-back ")));
+        assert!(described.iter().any(|e| e.starts_with("nav-forward ")));
+        assert!(described.iter().any(|e| e.starts_with("reloaded ")));
     }
 
     /// The workbench lane end to end at the App tier: opening the focused

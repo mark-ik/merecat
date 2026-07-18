@@ -93,6 +93,8 @@ pub struct Shell {
     cursor: (f32, f32),
     /// Live Ctrl state, for the omnibar summon chords (Ctrl+L / Ctrl+K).
     ctrl: bool,
+    /// Live Alt state, for the nav chords (Alt+Left / Alt+Right).
+    alt: bool,
     /// The self-drive scenario, when `MERECAT_SCENARIO` is set: pumped once
     /// after every rendered frame; steps lower to ordinary Actions.
     scenario: Option<crate::scenario::Scenario>,
@@ -178,6 +180,7 @@ impl Shell {
             fetch_rx,
             cursor: (0.0, 0.0),
             ctrl: false,
+            alt: false,
             scenario: crate::scenario::Scenario::from_env(),
             pending_capture: None,
             window: None,
@@ -1347,6 +1350,7 @@ impl ApplicationHandler for Shell {
             // are the app-intent tier above. (Architecture plan, the spine.)
             WindowEvent::ModifiersChanged(mods) => {
                 self.ctrl = mods.state().control_key();
+                self.alt = mods.state().alt_key();
                 self.app.canvas.set_ctrl(mods.state().control_key());
                 self.app.canvas.set_alt(mods.state().alt_key());
             }
@@ -1411,11 +1415,19 @@ impl ApplicationHandler for Shell {
                     } else {
                         match &event.logical_key {
                             WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
+                            // The browser nav chords (the r3-owed row).
+                            WinitKey::Named(WinitNamedKey::ArrowLeft) if self.alt => {
+                                Some(Action::NavBack)
+                            }
+                            WinitKey::Named(WinitNamedKey::ArrowRight) if self.alt => {
+                                Some(Action::NavForward)
+                            }
                             WinitKey::Character(s) if self.ctrl => match s.as_str() {
                                 // The summon chords: Ctrl+L address flavor,
                                 // Ctrl+K command flavor (pre-seeded `>`).
                                 "l" => Some(Action::OmnibarOpen { command: false }),
                                 "k" => Some(Action::OmnibarOpen { command: true }),
+                                "r" => Some(Action::Reload),
                                 _ => None,
                             },
                             WinitKey::Character(s) => match s.as_str() {

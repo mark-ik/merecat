@@ -28,6 +28,14 @@
 pub enum Action {
     /// Open an address: mint/select its node in the graph and fetch it.
     OpenAddress(String),
+    /// Step back in the visit history: select the previous address's node
+    /// without refetching (the r3-owed nav row). No-op at the oldest entry.
+    NavBack,
+    /// Step forward in the visit history (the redo of `NavBack`).
+    NavForward,
+    /// Reload the focused node: refetch its enrichment, and respawn its live
+    /// content session when it has one.
+    Reload,
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
     /// Toggle the isometric (2.5D foreshortened) view.
@@ -178,6 +186,9 @@ pub enum CaretMove {
 /// an Action absent here is reachable only by its dedicated input path.
 pub fn palette_actions() -> Vec<(&'static str, Action)> {
     vec![
+        ("Back", Action::NavBack),
+        ("Forward", Action::NavForward),
+        ("Reload", Action::Reload),
         ("Reseed layout", Action::ReseedLayout),
         ("Toggle isometric view", Action::ToggleIsometric),
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
