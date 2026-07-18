@@ -175,6 +175,16 @@ fn action_for(command: &str) -> Option<Action> {
         "toggle_live_content" => Some(Action::ToggleNodeContent),
         "close_pane" => Some(Action::CloseActivePane),
         "maximize_pane" => Some(Action::ToggleMaximizePane),
+        // The navigation lane (r3-owed row): the automation runner reaches the
+        // same Back/Forward/Reload the keyboard chords and palette do.
+        "back" => Some(Action::NavBack),
+        "forward" => Some(Action::NavForward),
+        "reload" => Some(Action::Reload),
+        // The workbench lane (rung 5 slice E).
+        "open_in_workbench" => Some(Action::OpenInWorkbench),
+        "close_workbench_tile" => Some(Action::CloseWorkbenchTile),
+        // The window lane (rung 7): a lens over the same state.
+        "new_window" => Some(Action::NewWindow),
         _ => None,
     }
 }
@@ -188,8 +198,18 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
         "steward" => Some(PaneKind::Steward),
         "comms" => Some(PaneKind::Comms),
         "apparatus" => Some(PaneKind::Apparatus),
+        "workbench" => Some(PaneKind::Workbench),
         _ => None,
     }
+}
+
+/// Run a control script with full control capabilities against `app`,
+/// returning the Actions it emitted (the shell lowers them through the same
+/// `App::update` spine a keypress takes — the automation runner of the "one
+/// description, two runners" pair). A script error surfaces as `Err`, so a
+/// scenario `script` step fails loudly rather than silently emitting nothing.
+pub fn run_control(app: &App, source: &str, max_steps: u64) -> Result<Vec<Action>, String> {
+    run(app, source, ScriptCapabilities::control(), max_steps)
 }
 
 /// Run one capability-scoped Lua control script and return the Actions it
@@ -295,6 +315,71 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("action.dispatch"), "unexpected error: {err}");
+    }
+
+    /// One description, two runners (the deletion-matrix row): a Piccolo
+    /// script and the equivalent keyboard-Action sequence, both lowered
+    /// through `App::update`, reach the SAME observed state. This is the
+    /// automation runner proving it lowers to the same spine as the
+    /// keyboard/scenario runner — doctrine 2 in the small.
+    #[test]
+    fn the_automation_runner_matches_the_keyboard_runner() {
+        use crate::observe::snapshot;
+
+        // Runner A: the keyboard/scenario path — ordinary Actions.
+        let mut by_keyboard = App::test_stub();
+        for action in [
+            Action::OpenAddress("mere://alpha".into()),
+            Action::SummonPane(PaneKind::Roster),
+            Action::ToggleIsometric,
+        ] {
+            by_keyboard.update(action);
+        }
+
+        // Runner B: the Piccolo automation path — a script emitting the same
+        // intents, applied through the identical spine.
+        let mut by_script = App::test_stub();
+        let actions = run_control(
+            &by_script,
+            "mere.open('mere://alpha'); mere.summon('roster'); \
+             mere.dispatch('toggle_isometric')",
+            500,
+        )
+        .expect("the control script runs");
+        for action in actions {
+            by_script.update(action);
+        }
+
+        // The two runners agree on the observable state (focused node, panes,
+        // view mode) — the whole point of "one description, two runners".
+        let a = snapshot(&by_keyboard);
+        let b = snapshot(&by_script);
+        assert_eq!(a.focused.map(|f| f.url), b.focused.map(|f| f.url));
+        assert_eq!(a.panes, b.panes);
+        assert_eq!(by_keyboard.canvas.is_isometric(), by_script.canvas.is_isometric());
+        assert!(by_script.canvas.is_isometric(), "both reached isometric");
+    }
+
+    /// The new lanes are reachable from automation: nav, workbench, window.
+    #[test]
+    fn automation_reaches_nav_workbench_and_window_actions() {
+        let app = App::test_stub();
+        let actions = run_control(
+            &app,
+            "mere.dispatch('back'); mere.dispatch('reload'); \
+             mere.dispatch('open_in_workbench'); mere.dispatch('new_window')",
+            500,
+        )
+        .unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                Action::NavBack,
+                Action::Reload,
+                Action::OpenInWorkbench,
+                Action::NewWindow,
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,23 @@
+# The "one description, two runners" receipt (rung 5 matrix row), self-driven.
+# The SAME scenario file drives two execution paths that both lower to the
+# same Action spine: the keyboard/scenario runner (open/act steps) and the
+# Piccolo automation runner (the `script` step). Needs the piccolo feature.
+# Offline.
+settle 30
+key escape
+
+# Runner 1 — the keyboard/scenario path:
+open mere://alpha
+settle 5
+assert focused alpha
+
+# Runner 2 — the Piccolo automation path, in the SAME description: a control
+# script emits typed Actions (open + summon), lowered through the identical
+# spine. No second execution model — doctrine 2 held.
+script mere.open('mere://beta'); mere.summon('roster'); mere.dispatch('toggle_isometric')
+settle 5
+assert focused beta
+assert pane roster
+capture 01_two_runners
+
+log two-runners (keyboard + Piccolo automation) self-drive complete

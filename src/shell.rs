@@ -1252,6 +1252,38 @@ impl Shell {
         }
     }
 
+    /// Run a scenario `script` step through the Piccolo control lane and lower
+    /// its Actions through the same `act` spine a keypress takes — the
+    /// automation runner of the "one description, two runners" pair. Without
+    /// the `piccolo` feature the step is an honest, attributable failure
+    /// rather than a silent skip.
+    #[cfg(feature = "piccolo")]
+    fn run_scenario_script(&mut self, source: &str) {
+        match crate::script::run_control(&self.app, source, 5000) {
+            Ok(actions) => {
+                for action in actions {
+                    self.act(action);
+                }
+            }
+            Err(err) => {
+                tracing::warn!(%err, "scenario script failed");
+                self.app.note(crate::observe::AppEvent::InteractionMissed {
+                    what: "script",
+                    target: err,
+                });
+            }
+        }
+    }
+
+    #[cfg(not(feature = "piccolo"))]
+    fn run_scenario_script(&mut self, _source: &str) {
+        tracing::warn!("scenario `script` step needs the `piccolo` feature; skipped");
+        self.app.note(crate::observe::AppEvent::InteractionMissed {
+            what: "script",
+            target: "piccolo feature off".to_string(),
+        });
+    }
+
     /// Advance the self-drive scenario one step after each rendered frame.
     /// Steps lower to Actions through the same spine as a keypress; a Done
     /// tick writes the sentinel and exits WITHOUT saving the session (a
@@ -1311,6 +1343,10 @@ impl Shell {
             }
             crate::scenario::Tick::DropFile { x, y, path } => {
                 self.drop_file(x, y, std::path::Path::new(&path));
+                self.request_redraw();
+            }
+            crate::scenario::Tick::Script(source) => {
+                self.run_scenario_script(&source);
                 self.request_redraw();
             }
             crate::scenario::Tick::Wait => self.request_redraw(),

@@ -24,6 +24,9 @@
 //! insert <text>             # Action::OmnibarInsert (the IME-commit path)
 //! key enter|escape|backspace|delete|up|down|left|right|home|end
 //! act <palette label>       # commit a palette_actions() entry by label
+//! script <inline lua>        # run a Piccolo control script; its Actions lower
+//!                            # through the same spine (the automation runner —
+//!                            # needs the `piccolo` feature)
 //! click <x> <y>             # pointer click at window px (content links, canvas)
 //! click-row <substr>       # click the list-pane row whose text contains substr
 //! scroll <x> <y> <dy>       # wheel at window px (page scroll / canvas pan)
@@ -83,6 +86,9 @@ enum Step {
     Insert(String),
     Key(EditKey),
     Act(String),
+    /// A Piccolo control script whose emitted Actions lower through the spine
+    /// (the "one description, two runners" automation lane). Piccolo-gated.
+    Script(String),
     /// A pointer press+release at window pixel coordinates (rung 5 slice B).
     /// Drives the same surface-routed path winit does; a click on content
     /// resolves links, a click on the canvas is a canvas gesture.
@@ -172,6 +178,9 @@ enum CmpOp {
 pub enum Tick {
     /// Lower these actions through the spine, then keep pumping frames.
     Act(Vec<Action>),
+    /// Run a Piccolo control script and lower its Actions (the shell owns the
+    /// script engine; the App-only test driver treats it as a no-op).
+    Script(String),
     /// A pointer click at window coordinates, routed through the shell's shared
     /// surface path (the shell owns the sessions the scenario cannot see).
     Click { x: f32, y: f32 },
@@ -277,6 +286,7 @@ impl Scenario {
                     EditKey::End => Action::OmnibarCaret(CaretMove::End),
                 }])
             }
+            Step::Script(source) => Tick::Script(source.clone()),
             Step::Act(label) => {
                 let wanted = label.to_lowercase();
                 match palette_actions()
@@ -640,6 +650,7 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                 }
             },
             "act" if !rest.is_empty() => Step::Act(rest.to_string()),
+            "script" if !rest.is_empty() => Step::Script(rest.to_string()),
             "settle" => Step::Settle(if rest.is_empty() {
                 20
             } else {
@@ -857,7 +868,11 @@ mod tests {
                 // Pointer ticks route through the shell's surface plan + live
                 // sessions, which this App-only driver has not got; the headed
                 // scenario exercises them. No-op here.
-                Tick::Click { .. }
+                // The script tick needs the shell's engine; the App-only
+                // driver can't run Piccolo, so it is a no-op here (the headed
+                // run and the script.rs unit tests exercise the lane).
+                Tick::Script { .. }
+                | Tick::Click { .. }
                 | Tick::Scroll { .. }
                 | Tick::ClickRow { .. }
                 | Tick::ClickTab { .. }
