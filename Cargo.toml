@@ -102,7 +102,9 @@ pelt-core = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 winit = "0.30.13"
 # PNG encode for the scenario lane's GPU self-capture (composed-frame
 # readback -> receipt).
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# The dropped-sprite data-URI (file drop -> node face).
+base64 = "0.22"
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

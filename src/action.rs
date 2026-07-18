@@ -36,6 +36,13 @@ pub enum Action {
     /// Reload the focused node: refetch its enrichment, and respawn its live
     /// content session when it has one.
     Reload,
+    /// Set a node's sprite face (a dropped image file, decoded by the shell
+    /// into a PNG data-URI — the decode is platform/file work, so it happens
+    /// port-side and only the typed result lowers).
+    SetNodeSprite {
+        member: uuid::Uuid,
+        data_uri: String,
+    },
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
     /// Toggle the isometric (2.5D foreshortened) view.

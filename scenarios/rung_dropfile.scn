@@ -1,0 +1,15 @@
+# The file-drop receipt (the unrunged deletion-matrix row), self-driven:
+# a dropped non-image file becomes a node — a file:// address through the
+# ordinary open path, focused like any other open. (The image-over-node
+# sprite half is unit-pinned: decode classification + the SetNodeSprite
+# spine arm.) Offline; the dropped file is this scenario itself.
+settle 30
+key escape
+
+drop-file 100 100 C:\Users\mark_\Code\repos\merecat\scenarios\rung_dropfile.scn
+settle 5
+assert focused rung_dropfile.scn
+assert event address-opened file:///C:/Users/mark_/Code/repos/merecat/scenarios/rung_dropfile.scn
+capture 01_file_node
+
+log file-drop receipt complete

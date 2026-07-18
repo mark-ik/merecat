@@ -107,6 +107,8 @@ pub enum AppEvent {
     NavigatedForward(String),
     /// The focused node reloaded (refetch + content respawn when live).
     Reloaded(String),
+    /// A dropped image textured this node's sprite face.
+    NodeSpriteSet(Uuid),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -145,6 +147,7 @@ impl AppEvent {
             AppEvent::NavigatedBack(url) => format!("nav-back {url}"),
             AppEvent::NavigatedForward(url) => format!("nav-forward {url}"),
             AppEvent::Reloaded(url) => format!("reloaded {url}"),
+            AppEvent::NodeSpriteSet(node) => format!("sprite-set {node}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

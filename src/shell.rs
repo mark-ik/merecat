@@ -877,6 +877,37 @@ impl Shell {
         self.deliver_release(bx, by, MouseButton::Left);
     }
 
+    /// Handle a dropped file at window `(x, y)` (the unrunged deletion-matrix
+    /// row): a decodable IMAGE over a canvas node textures that node's sprite
+    /// face; anything else becomes a node (a `file://` address through the
+    /// ordinary open path). Decode is port work (file IO), so it happens here
+    /// and only the typed result lowers through the spine. Shared by winit's
+    /// `DroppedFile` and the scenario's `drop-file` (one description, two
+    /// runners).
+    fn drop_file(&mut self, x: f32, y: f32, path: &std::path::Path) {
+        // The node under the drop, if the drop is over the canvas surface.
+        let target = {
+            let plan = self.surface_plan();
+            plan.iter()
+                .find(|s| matches!(s.kind, crate::surface::SurfaceKind::Canvas))
+                .filter(|s| s.rect.contains(x, y))
+                .and_then(|s| {
+                    let (lx, ly) = s.rect.to_local(x, y);
+                    self.app.canvas.node_at_screen(lx, ly)
+                })
+        };
+        if let Some(member) = target
+            && let Some(data_uri) = decode_sprite_data_uri(path)
+        {
+            self.act(Action::SetNodeSprite { member, data_uri });
+            return;
+        }
+        // Not an image over a node: the file becomes a node. Forward slashes
+        // so the address is stable across platforms.
+        let url = format!("file:///{}", path.display().to_string().replace('\\', "/"));
+        self.act(Action::OpenAddress(url));
+    }
+
     /// The layered present (born minimal at rung 3, grows into the surface
     /// plan at rung 5): rasterize each surface's scene to its own texture and
     /// compose them in order onto the frame — the canvas below, the chrome
@@ -1139,6 +1170,10 @@ impl Shell {
                 self.drag_workbench_tab(&from, &onto, edge.as_deref());
                 self.request_redraw();
             }
+            crate::scenario::Tick::DropFile { x, y, path } => {
+                self.drop_file(x, y, std::path::Path::new(&path));
+                self.request_redraw();
+            }
             crate::scenario::Tick::Wait => self.request_redraw(),
             crate::scenario::Tick::Capture(path) => {
                 self.pending_capture = Some(path);
@@ -1153,6 +1188,49 @@ impl Shell {
         }
     }
 
+}
+
+/// Decode a dropped image file into a face-sized PNG data-URI, or `None` for
+/// a file the image decoder does not read (which then becomes a node instead).
+/// Downscaled so the per-node URI stays small (the face draws at ~24-120px).
+/// The collider-hull trace meerkat pairs with this is a follow-on; the face
+/// alone meets the matrix row's "textures the node under it".
+fn decode_sprite_data_uri(path: &Path) -> Option<String> {
+    const SPRITE_MAX: u32 = 256;
+    let rgba = image::open(path).ok()?.thumbnail(SPRITE_MAX, SPRITE_MAX).to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba.as_raw(), w, h, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    use base64::Engine as _;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&png)
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The drop decode: a real PNG round-trips to a data-URI; a non-image
+    /// file declines (and so becomes a node instead of a sprite).
+    #[test]
+    fn dropped_files_classify_by_decodability() {
+        let dir = std::env::temp_dir().join(format!("merecat-drop-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png_path = dir.join("drop.png");
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
+            .save(&png_path)
+            .unwrap();
+        let uri = decode_sprite_data_uri(&png_path).expect("a png decodes");
+        assert!(uri.starts_with("data:image/png;base64,"));
+        let txt_path = dir.join("drop.txt");
+        std::fs::write(&txt_path, "not an image").unwrap();
+        assert!(decode_sprite_data_uri(&txt_path).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Compose the frame's already-rasterized layers into an owned `COPY_SRC`
@@ -1339,6 +1417,13 @@ impl ApplicationHandler for Shell {
             WindowEvent::CloseRequested => {
                 self.act(Action::SaveSession);
                 event_loop.exit();
+            }
+            // A dropped file lands at the last tracked cursor position (winit
+            // carries no position on the drop event itself; mid-drag hover
+            // updates CursorMoved on the platforms that report it).
+            WindowEvent::DroppedFile(path) => {
+                let (x, y) = self.cursor;
+                self.drop_file(x, y, &path);
             }
             WindowEvent::Resized(size) => {
                 self.width = size.width.max(1);

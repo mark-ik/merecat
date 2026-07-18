@@ -347,6 +347,11 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::SaveSession => vec![Effect::SaveSession],
+            Action::SetNodeSprite { member, data_uri } => {
+                self.canvas.set_node_sprite(member, data_uri);
+                self.events.push(AppEvent::NodeSpriteSet(member));
+                vec![Effect::SaveSession, Effect::Redraw]
+            }
             Action::ToggleNodeContent => {
                 // The flip targets the focused node; no focus, no-op (the
                 // caption chip tells the user what would flip).

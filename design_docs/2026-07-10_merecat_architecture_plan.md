@@ -354,8 +354,13 @@ how a rung-5 receipt came to read as rung-4-completable.
   no uxtree dep, no projector call.
 - (r4/r6) Recover from a failed fetch, a failed engine start, and an interrupted save.
 - (unrunged) Drop a file on the window: it becomes a node, or textures the node under it.
-  Merecat handles no winit `DroppedFile` or `HoveredFile`. The last row below makes this
-  a defect rather than a wishlist item, and it needs a rung.
+  **Met 2026-07-18**: `WindowEvent::DroppedFile` routes through `Shell::drop_file` — a
+  decodable image over a canvas node lowers `Action::SetNodeSprite` (decode is port
+  work; PNG data-URI face, downscaled; the collider-hull trace is a named follow-on),
+  anything else becomes a `file://` node through the ordinary open path. The scenario
+  grammar gained `drop-file` (one description, two runners). Receipts: 68 unit tests
+  (decode classification + the sprite spine arm) and `rung_dropfile.scn` headed
+  RESULT ok.
 - Meerkat holds no capability absent from this matrix.
 
 Then meerkat leaves mere's workspace and the mere facade drops its two

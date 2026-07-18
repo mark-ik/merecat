@@ -30,6 +30,8 @@
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
 //! assert pane <tag>         # a pane with that PaneContent tag is in the tree
 //! assert maximized | not-maximized
+//! drop-file <x> <y> <path>  # drop a file at window px (image on node = sprite;
+//!                           # else it becomes a file:// node)
 //! drag-tab <a> onto <b>     # drag workbench tab <a> onto tab <b>'s cell (stack)
 //! drag-tab <a> onto <b> @ <edge>  # ...releasing on the cell's left|right|top|bottom
 //!                           # edge band (split beside instead of stack)
@@ -101,6 +103,9 @@ enum Step {
     /// of the tab labelled like the second (the stack gesture, by name). The
     /// optional edge releases on that band of the cell body (split beside).
     DragTab(String, String, Option<String>),
+    /// Drop the file at window `(x, y)` — the same handler winit's
+    /// `DroppedFile` drives.
+    DropFile(f32, f32, String),
     /// The workbench has this many cells.
     AssertWbCells(CmpOp, usize),
     /// A workbench cell's tab string contains this substring.
@@ -183,6 +188,8 @@ pub enum Tick {
         onto: String,
         edge: Option<String>,
     },
+    /// Drop a file at window coordinates through the shell's drop handler.
+    DropFile { x: f32, y: f32, path: String },
     /// Still settling; pump another frame.
     Wait,
     /// Compose and read back the current frame to this path.
@@ -303,6 +310,11 @@ impl Scenario {
                 from: from.clone(),
                 onto: onto.clone(),
                 edge: edge.clone(),
+            },
+            Step::DropFile(x, y, path) => Tick::DropFile {
+                x: *x,
+                y: *y,
+                path: path.clone(),
             },
             Step::AssertWbCells(op, n) => {
                 let snap = crate::observe::snapshot(app);
@@ -617,6 +629,16 @@ fn parse(body: &str) -> Result<Vec<Step>, String> {
                 rest.parse().map_err(|_| format!("line {}: bad settle count '{rest}'", i + 1))?
             }),
             "click-row" if !rest.is_empty() => Step::ClickRow(rest.to_string()),
+            "drop-file" => {
+                let mut it = rest.splitn(3, char::is_whitespace);
+                let x = it.next().and_then(|t| t.parse().ok());
+                let y = it.next().and_then(|t| t.parse().ok());
+                let path = it.next().map(str::trim).filter(|p| !p.is_empty());
+                match (x, y, path) {
+                    (Some(x), Some(y), Some(path)) => Step::DropFile(x, y, path.to_string()),
+                    _ => return err("drop-file wants '<x> <y> <path>'"),
+                }
+            }
             "drag-tab" => {
                 let (from, onto) = rest
                     .split_once(" onto ")
@@ -808,7 +830,8 @@ mod tests {
                 | Tick::ClickTab { .. }
                 | Tick::ClickNode { .. }
                 | Tick::Drag { .. }
-                | Tick::DragTab { .. } => {}
+                | Tick::DragTab { .. }
+                | Tick::DropFile { .. } => {}
                 Tick::Capture(path) => sc.note_capture(&path, true),
                 Tick::Done => break,
             }
