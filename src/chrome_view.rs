@@ -38,9 +38,9 @@ use cambium::{
     AnyView, DomHandle, GenetCtx, GenetElement, GenetMultiRunner, PointerClick, ProjectionId, el,
     on_click,
 };
-use genet_layout::{IncrementalLayout, ScrollOffsets};
+use genet_layout::{IncrementalLayout, ScrollOffsets, SubtreeView};
 use genet_scripted_dom::{NodeId, ScriptedDom};
-use layout_dom_api::{LayoutDom, LayoutDomMut, LocalName, Namespace, QualName};
+use layout_dom_api::LayoutDom;
 
 use crate::app::App;
 use crate::ui::{CARD_TOP, CARD_W, CHROME_SHEET, OmnibarState, Suggestion};
@@ -266,50 +266,38 @@ impl ChromeSurfaces {
         });
     }
 
-    /// Show only `slot`'s window-root for a layout/paint/hit pass. The
-    /// FOREST topology holds (one document, N window-roots; cross-window
-    /// element identity intact); the per-pass visibility flip routes layout
-    /// through the PROVEN multi-root whole-document path instead of a
-    /// `SubtreeView` cascade — genet-stylo's style-sharing cache unwraps an
-    /// inheritance parent that a subtree root does not have
-    /// (`sharing/mod.rs:259`; the F0 spike's shape did not trip it, the
-    /// chrome's same-class sibling runs do). Fixing the subtree cascade is a
-    /// recorded genet follow-on; until then this flip is the honest bridge.
-    fn focus_window(&self, slot: usize) {
-        let mut dom = self.dom.borrow_mut();
-        let style = QualName::new(None, Namespace::from(""), LocalName::from("style"));
-        for (i, id) in self.projections.iter().enumerate() {
-            let Some(root) = self.runner.window_root(*id) else {
-                continue;
-            };
-            let value = if i == slot { "" } else { "display: none;" };
-            dom.set_attribute(root, style.clone(), value);
-        }
-    }
-
-    /// One window's chrome scene: ITS window-root laid out at its size (the
-    /// other roots hidden for the pass; see [`Self::focus_window`]).
+    /// One window's chrome scene: ITS window-root laid out at its own size
+    /// through a per-root [`SubtreeView`] cascade — the true forest-dom F2
+    /// path. (This replaced the `display: none` visibility flip the chrome
+    /// bridged with while genet-stylo's sharing cache panicked on subtree
+    /// roots; the fix published as 0.19.1 and the flip is gone.)
     pub fn scene(&self, slot: usize, w: u32, h: u32) -> netrender::Scene {
-        if self.projections.get(slot).is_none() {
+        let Some(&id) = self.projections.get(slot) else {
             return netrender::Scene::new(w, h);
-        }
-        self.focus_window(slot);
-        crate::ui::scene_from_dom(&self.dom.borrow(), CHROME_SHEET, w, h)
+        };
+        let dom = self.dom.borrow();
+        let Some(root) = self.runner.window_root(id) else {
+            return netrender::Scene::new(w, h);
+        };
+        crate::ui::scene_from_subtree(&dom, root, CHROME_SHEET, w, h)
     }
 
     /// Route a click at window-local `(x, y)` into `slot`'s chrome: hit-test
-    /// with only that window-root visible, dispatch through the runner,
+    /// that window-root's own subtree layout, dispatch through the runner,
     /// return what bubbled (a row commit).
     pub fn click(&mut self, slot: usize, x: f32, y: f32, w: u32, h: u32) -> Vec<ChromeIntent> {
         let Some(&id) = self.projections.get(slot) else {
             return Vec::new();
         };
-        self.focus_window(slot);
         let hit = {
             let dom = self.dom.borrow();
-            let layout = IncrementalLayout::new(&*dom, &[CHROME_SHEET], w as f32, h as f32);
+            let Some(root) = self.runner.window_root(id) else {
+                return Vec::new();
+            };
+            let view = SubtreeView::new(&*dom, root);
+            let layout = IncrementalLayout::new(&view, &[CHROME_SHEET], w as f32, h as f32);
             let scroll = ScrollOffsets::<NodeId>::default();
-            layout.hit_test(&*dom, x, y, &scroll)
+            layout.hit_test(&view, x, y, &scroll)
         };
         match hit {
             Some(node) => self.runner.dispatch_click(id, node, PointerClick::at((x, y))),
@@ -369,21 +357,26 @@ mod tests {
         let mut chrome = ChromeSurfaces::new();
         chrome.sync(&app, &[(0, 1024.0, 600.0)]);
         // Resolve the first selectable row's centre off the laid-out chrome
-        // (the primary's root visible, the per-window pass the shell runs).
-        chrome.focus_window(0);
+        // (the primary root's OWN subtree layout, the per-window pass the
+        // shell runs).
         let (x, y) = {
             let dom = chrome.dom.borrow();
-            let layout = IncrementalLayout::new(&*dom, &[CHROME_SHEET], 1024.0, 600.0);
+            let root = chrome
+                .runner
+                .window_root(chrome.projections[0])
+                .expect("the primary window-root exists");
+            let view = SubtreeView::new(&*dom, root);
+            let layout = IncrementalLayout::new(&view, &[CHROME_SHEET], 1024.0, 600.0);
             let row = dom
                 .all_with_class(dom.document(), "omni-row-sel")
                 .into_iter()
                 .next()
                 .expect("a selected row is drawn");
-            let (rx, ry, rw, rh) = layout.absolute_rect(&*dom, row).expect("row has a rect");
+            let (rx, ry, rw, rh) = layout.absolute_rect(&view, row).expect("row has a rect");
             // The card is transform-positioned; fragments omit transforms
             // (paint-tier), so add the accumulated translate the way
             // hit_test sees the pixels.
-            let (tx, ty) = layout.accumulated_translate(&*dom, row);
+            let (tx, ty) = layout.accumulated_translate(&view, row);
             (rx + tx + rw / 2.0, ry + ty + rh / 2.0)
         };
         let intents = chrome.click(0, x, y, 1024, 600);

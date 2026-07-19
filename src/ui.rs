@@ -319,6 +319,29 @@ pub fn scene_from_dom(dom: &ScriptedDom, sheet: &str, w: u32, h: u32) -> netrend
     composite_paint_layers(viewport, &layers).scene
 }
 
+/// [`scene_from_dom`] re-rooted at `root`: only that subtree lays out (at its
+/// own viewport) and paints — the forest-dom per-window path. The chrome's N
+/// window-roots each render through this with the others untouched.
+pub fn scene_from_subtree(
+    dom: &ScriptedDom,
+    root: DomNodeId,
+    sheet: &str,
+    w: u32,
+    h: u32,
+) -> netrender::Scene {
+    let view = genet_layout::SubtreeView::new(dom, root);
+    let layout = IncrementalLayout::new(&view, &[sheet], w as f32, h as f32);
+    let scroll = ScrollOffsets::<DomNodeId>::default();
+    let viewport = DeviceIntSize::new(w as i32, h as i32);
+    let plist = layout.emit_paint_list(&view, &scroll, viewport);
+    let layers = [CompositeLayer {
+        commands: plist.commands(),
+        fonts: plist.fonts(),
+        images: plist.images(),
+    }];
+    composite_paint_layers(viewport, &layers).scene
+}
+
 /// Adapts sprigging's rendered leaf buffers to genet-layout's paint-list source
 /// (the orphan-rule-legal home: this crate owns the newtype). The same shape
 /// meerkat's `genet_render` proved; merecat re-owns it rather than importing
