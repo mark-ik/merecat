@@ -281,6 +281,20 @@ daily-driver value, not by meerkat's module sizes.
 6. **Multi-session + browser-state sidecar**. The session-runtime manifests,
    sessions/<id>/ layout, browser_nodes.json. Gate: rung 4 (per-node browser
    state is worth persisting once nodes hold live content).
+   **Second half LANDED 2026-07-19** (merecat 41b6c43 + mere eb336b7):
+   sessions live at `sessions/<id>/` through ManifestStore; the flat layout
+   migrates in on first boot (files move, manifest writes); boot picks
+   recorded-current / most-recent / mints. `App::adopt_session` = the load
+   half of boot and the whole of a switch, riding mere's MG2 `set_graph`
+   in-place swap + the new `center_on_selected` restore framing.
+   NewSession (palette) + SwitchSession lower to a shell effect that saves
+   the departing session, tears down ports, adopts, and runs the adoption's
+   effects; the switcher is dynamic entries in the omnibar's `>` lane.
+   Receipts: rung6_sessions twin headed ok; every restore twin re-run green
+   through the sessions layout; migration unit pair. The tear-out FORK arm
+   (duplicate-view: same pane projected in two windows at once) remains
+   named-not-built — it now has its natural substrate (one runner, N
+   window-roots via the forest dom) but no consumer pull yet.
 7. **Multi-window**. The one-state-N-windows doctrine over the Action spine
    (a window is a projection, so the spine already has the right shape).
    Gate: rung 3. **First slice LANDED 2026-07-18**: `Action::NewWindow` opens a
