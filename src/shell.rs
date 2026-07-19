@@ -445,6 +445,14 @@ impl Shell {
         // from live truth, so a restart respawns what was showing.
         self.app.refresh_browser_states();
         session::save_browser_nodes(&sdir, &self.app.browser);
+        // The facet store: the live canvas layout lands as
+        // arrangement.position facets (positions are not graph truth, so
+        // graph.json alone loses the layout), other namespaces ride along.
+        session_runtime::write_arrangement_positions(
+            &mut self.app.facets,
+            self.app.canvas.cartography_geometry().iter(),
+        );
+        session::save_node_facets(&sdir, &self.app.facets);
         // The manifest's recency drives the switcher's ordering.
         if self.app.sessions.update(self.app.session_id, |m| m.touch()) {
             let _ = self.app.sessions.flush_dirty();

@@ -165,6 +165,27 @@ pub fn save_session_graph(data_root: &Path, graph: &Graph) {
     }
 }
 
+/// Restore the persisted per-node facet store (`facets.json`), if one exists.
+/// Carries the `arrangement.position` facets (the durable canvas layout — the
+/// graph itself is position-free) plus any other namespace. Missing or corrupt
+/// starts empty: the canvas keeps its origin park and settles fresh.
+pub fn load_node_facets(data_root: &Path) -> Option<session_runtime::NodeFacetStore> {
+    match session_runtime::load_node_facets(data_root) {
+        Ok(facets) => facets,
+        Err(err) => {
+            tracing::warn!(%err, "failed to load the facet store; starting empty");
+            None
+        }
+    }
+}
+
+/// Persist the per-node facet store at `facets.json`. Best-effort, like the graph.
+pub fn save_node_facets(data_root: &Path, facets: &session_runtime::NodeFacetStore) {
+    if let Err(err) = session_runtime::save_node_facets(data_root, facets) {
+        tracing::warn!(%err, "failed to persist the facet store");
+    }
+}
+
 /// Restore the persisted pane layout (rung 5 slice C), if one exists. The sidecar
 /// is `frame.json` beside `graph.json` (the on-disk tag stays `frame`, a parked
 /// format decision). `None` starts on the default single-pane layout.

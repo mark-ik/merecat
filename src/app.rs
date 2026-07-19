@@ -91,6 +91,12 @@ pub struct App {
     /// override, compat mode, content-on), persisted at `browser_nodes.json`.
     /// The graph stays correct without it (the sidecar's charter).
     pub browser: session_runtime::browser_node_state::BrowserNodeStates,
+    /// The per-node facet store (`facets.json`): typed per-node metadata by
+    /// namespace. `arrangement.position` carries the durable canvas layout
+    /// (the save-time seiche positions; the graph itself is position-free) —
+    /// the first of the `arrangement.*` family; foreign namespaces round-trip
+    /// untouched. The graph stays correct without it, like every sidecar.
+    pub facets: session_runtime::NodeFacetStore,
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
@@ -150,6 +156,7 @@ impl App {
             active_pane: None,
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
+            facets: session_runtime::NodeFacetStore::new(),
             maximized: None,
             window_count: 1,
             lenses: Vec::new(),
@@ -251,11 +258,21 @@ impl App {
         let mut effects = Vec::new();
         // The graph: restored, else fresh — swapped IN PLACE through the
         // canvas's own session-switch seam (mere's MG2 `set_graph`: physics
-        // actor and node pool stay alive, each node restores to its
-        // committed position and halts, so the switched-to session looks as
-        // it was left rather than re-scrambling).
+        // actor and node pool stay alive, every node parks at the origin and
+        // halts; the saved layout is applied from the facet store next).
         self.canvas
             .set_graph(session::load_session_graph(&sdir).unwrap_or_default());
+        // The facet store (`facets.json`): pruned to the live graph's nodes
+        // (a deleted node's facets go with it), then the `arrangement.position`
+        // facets re-place the canvas — the durable layout, since the graph
+        // itself is position-free. A session with no facets keeps the origin
+        // park and settles fresh on the first nudge.
+        self.facets = session::load_node_facets(&sdir).unwrap_or_default();
+        let present: std::collections::BTreeSet<uuid::Uuid> =
+            self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
+        session_runtime::retain_present_nodes(&mut self.facets, &present);
+        self.canvas
+            .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
         // Session-scoped view state resets.
         self.omnibar = OmnibarState::default();
         self.focus = FocusTarget::Canvas;
@@ -1089,6 +1106,7 @@ impl App {
             active_pane: None,
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
+            facets: session_runtime::NodeFacetStore::new(),
             maximized: None,
             window_count: 1,
             lenses: Vec::new(),
@@ -1133,6 +1151,47 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The layout round-trip through the facet store: a session saved as
+    /// graph.json + arrangement.position facets in facets.json re-adopts with
+    /// each node back at its saved world position (the graph itself is
+    /// position-free, so without the facets every node would park at the
+    /// origin).
+    #[test]
+    fn adopt_session_restores_the_saved_canvas_layout_from_facets() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-facet-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        let sdir = app.session_dir();
+        std::fs::create_dir_all(&sdir).unwrap();
+
+        // A one-node session on disk: the graph, plus its layout as facets.
+        let key = app.canvas.visit("https://layout.example");
+        let id = app.canvas.graph().get_node(key).unwrap().id;
+        session::save_session_graph(&sdir, app.canvas.graph());
+        let mut facets = session_runtime::NodeFacetStore::new();
+        session_runtime::write_arrangement_positions(&mut facets, [(id, (444.0, -55.0))]);
+        session::save_node_facets(&sdir, &facets);
+
+        // Adopt (the boot/switch seam): the node comes back AND lands where
+        // it was left.
+        app.adopt_session(app.session_id);
+        let (restored, _) = app
+            .canvas
+            .graph()
+            .get_node_by_url("https://layout.example")
+            .expect("the graph restored");
+        let pos = app
+            .canvas
+            .node_position(restored)
+            .expect("a restored position");
+        assert!(
+            (pos.x - 444.0).abs() < 1.0 && (pos.y + 55.0).abs() < 1.0,
+            "the facet layout is applied, got {pos:?}"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
 
     /// Committing a `>` registry row lowers the registry Action through the
     /// same spine as everything else, and the palette closes.
