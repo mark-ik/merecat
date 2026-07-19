@@ -12,13 +12,35 @@ into one lake of content.
 The name is the English calque of *meerkat*: Dutch *meer* + *kat*, lake-cat.
 Mere is the lake; merecat is the animal you meet at it.
 
+## Build and run
+
+```sh
+cargo run     # the merecat window
+cargo test    # unit tests
+```
+
+Merecat pulls `mere` and the genet engine family as git dependencies; a plain
+`cargo build` fetches them. Headed self-drive receipts live under `scenarios/`.
+
 ## Status
 
-Founded 2026-07-08. The application currently lives in mere's `meerkat` crate
-and moves here as the mere library seam is proven. Its graph-facing dependency
-now has an in-workspace `mere` façade; the browser host itself has not moved.
-Until then this crate is a placeholder that reserves the name and holds the founding plan; see
-`design_docs/2026-07-08_merecat_founding.md`.
+Working reference host. Merecat obviated mere's former `meerkat` crate on
+2026-07-18: the behavioral deletion matrix went green and meerkat left mere's
+tree, so the browser host now lives here as its own binary over the `mere`
+library.
+
+What runs today: the graph canvas (pan / zoom / isometric, deterministic
+layout strategies); a summonable omnibar (find / go / actions lanes);
+back, forward, reload; live web content on two engine lanes (the genet stylo
+lane and the clean-room `genet.livery` lane) with a per-node viewer override;
+retargeting panes (Roster, Trail, Gloss, Inspector, Apparatus) and a
+platen-tiled Workbench; multi-window lenses with identity-preserving pane and
+tile tear-out; and multi-session (`sessions/<id>/` with a switcher and
+restart restore). Every capability carries a self-driving scenario receipt
+(the shared genet-probe driver) plus an accessibility projection.
+
+The live plan is `design_docs/2026-07-10_merecat_architecture_plan.md`; the
+founding brief is `design_docs/2026-07-08_merecat_founding.md`.
 
 ## License
 
