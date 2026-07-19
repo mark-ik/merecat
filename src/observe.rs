@@ -83,6 +83,10 @@ pub struct Snapshot {
     /// lens) holds the pane — the honest readback of the divider op, wherever
     /// it lands. `None` with no active pane or an unsplit tree.
     pub active_ratio: Option<f32>,
+    /// The live session's display label (rung 6's second half).
+    pub session: String,
+    /// How many sessions the manifest set holds.
+    pub session_count: usize,
 }
 
 /// The focused node's identity and captions, as the UI would present them.
@@ -129,6 +133,8 @@ pub enum AppEvent {
     /// A workbench tile tore out into a lens window as a pinned Tile pane
     /// (the branch arm), by the node's url.
     TileTornOut(String),
+    /// The app adopted a session (a boot, a mint, or a switch), by label.
+    SessionSwitched(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -173,6 +179,7 @@ impl AppEvent {
             AppEvent::WindowClosed => "window-closed".to_string(),
             AppEvent::PaneTornOut(tag) => format!("pane-torn-out {tag}"),
             AppEvent::TileTornOut(url) => format!("tile-torn-out {url}"),
+            AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),
@@ -368,6 +375,8 @@ pub fn snapshot(app: &App) -> Snapshot {
                     .collect::<Vec<_>>()
             })
             .collect(),
+        session: app.session_label(app.session_id),
+        session_count: app.sessions.len(),
         active_ratio: app.active_pane.and_then(|active| {
             let layout = app.space(app.space_of(active)?)?;
             let mut path = crate::pane::path_of(layout, active)?;

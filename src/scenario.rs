@@ -51,6 +51,9 @@
 //! assert no-lens-pane <substr> # NO lens "ordinal:tag" pane contains substr
 //! assert no-surface <kind>  # NO surface of that kind in the PRIMARY plan
 //! assert active-ratio ==|>=|<= <f> # the ACTIVE pane's parent-split ratio (any space)
+//! assert sessions ==|>=|<= <n>  # the manifest set holds n sessions
+//! assert session <substr>   # the live session's label contains substr
+//! assert nodes ==|>=|<= <n> # the graph holds n nodes
 //! capture-lens <name>       # self-capture the first lens window's frame
 //! assert omnibar open|closed
 //! assert omnibar-text <str>  # the omnibar text is exactly <str>
@@ -136,6 +139,13 @@ pub enum Step {
     /// The ACTIVE pane's parent-split ratio compares as given, in whichever
     /// space holds the pane — the divider op's readback, primary or lens.
     AssertActiveRatio(CmpOp, f32),
+    /// The manifest set's session count compares as given.
+    AssertSessions(CmpOp, usize),
+    /// The live session's label contains this substring.
+    AssertSession(String),
+    /// The graph's node count compares as given (a switch shows a different
+    /// graph; this is the cheap witness).
+    AssertNodes(CmpOp, usize),
     /// Self-capture the first live lens window's composed frame.
     CaptureLens(String),
     /// The root split's ratio compares as given.
@@ -347,22 +357,27 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                         Step::AssertNoLensPane(arg.to_string())
                     }
                     "no-surface" if !arg.is_empty() => Step::AssertNoSurface(arg.to_string()),
-                    "windows" => {
-                        let (op, n) = arg
-                            .split_once(char::is_whitespace)
-                            .ok_or_else(|| format!("line {}: assert windows wants '<op> <n>'", i + 1))?;
+                    "windows" | "sessions" | "nodes" => {
+                        let (op, n) = arg.split_once(char::is_whitespace).ok_or_else(|| {
+                            format!("line {}: assert {what} wants '<op> <n>'", i + 1)
+                        })?;
                         let op = match op {
                             "==" => CmpOp::Eq,
                             ">=" => CmpOp::Ge,
                             "<=" => CmpOp::Le,
-                            _ => return err("assert windows op wants ==|>=|<="),
+                            _ => return err("assert count op wants ==|>=|<="),
                         };
                         let n = n
                             .trim()
                             .parse()
-                            .map_err(|_| format!("line {}: bad window count", i + 1))?;
-                        Step::AssertWindows(op, n)
+                            .map_err(|_| format!("line {}: bad {what} count", i + 1))?;
+                        match what {
+                            "sessions" => Step::AssertSessions(op, n),
+                            "nodes" => Step::AssertNodes(op, n),
+                            _ => Step::AssertWindows(op, n),
+                        }
                     }
+                    "session" if !arg.is_empty() => Step::AssertSession(arg.to_string()),
                     "wb-cell" if !arg.is_empty() => Step::AssertWbCell(arg.to_string()),
                     "wb-cells" => {
                         let (op, n) = arg

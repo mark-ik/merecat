@@ -53,10 +53,15 @@ pub struct App {
     /// The summonable omnibar (rung 3): find over graph truth, go through
     /// OpenAddress, `>` for the actions lane.
     pub omnibar: OmnibarState,
-    /// The per-user data root; the session graph persists at its flat
-    /// `graph.json` (single-session shape; sessions/<id>/ arrives with
-    /// multi-session).
+    /// The per-user data root. Each session's sidecars live under its own
+    /// `sessions/<id>/` (rung 6's second half); the root also carries the
+    /// manifest set and the current-session marker.
     pub data_root: PathBuf,
+    /// The manifest set: one durable record per session, ManifestStore's
+    /// on-disk layout under `sessions/`.
+    pub sessions: session_runtime::ManifestStore,
+    /// The live session — the one whose directory every save/load targets.
+    pub session_id: frisket::SessionId,
     /// Per-node content lifecycle (rung 4). Data only: the live session
     /// handles live in the shell's content port, keyed by the same ids.
     pub content: ContentStates,
@@ -97,8 +102,8 @@ pub struct App {
     /// not canvas-only): a frisket tree over the one App, indexed by the lens
     /// ordinal the shell's window records carry. `None` = that lens closed
     /// (tombstoned so ordinals stay stable). The primary window's space stays
-    /// `frisket` above. Not persisted yet — window records at restart are the
-    /// rung's remaining depth.
+    /// `frisket` above. Persisted at `windows.json` (rung 7 depth), so the
+    /// windows come back as windows.
     pub lenses: Vec<Option<FrisketLayout>>,
     /// Which Roster tab is showing. A MIRROR, not the truth: cambium's tab strip
     /// owns its selection (the widget's state, in the shell's runner), and the
@@ -116,67 +121,164 @@ pub struct App {
 }
 
 impl App {
-    /// Boot the app state: restore the persisted session graph if one exists,
-    /// else seed from the launch address, else show the sample graph. Returns
-    /// the state plus the boot effects (the seed address's fetch).
+    /// Boot the app state (rung 6's second half: multi-session): load the
+    /// manifest set, migrate the flat single-session layout if this profile
+    /// predates `sessions/`, pick the session to open (recorded current,
+    /// else most recent, else mint one), adopt it wholesale, then layer the
+    /// launch address or the first-run sample graph on top. Returns the
+    /// state plus the boot effects.
     pub fn boot(address: Option<&str>) -> (Self, Vec<Effect>) {
         let data_root = session::default_merecat_root();
         let _ = std::fs::create_dir_all(&data_root);
-        let restored = session::load_session_graph(&data_root);
-        let mut first_run = false;
-        let mut canvas = match (restored, address) {
-            (Some(graph), _) => Canvas::with_graph(graph),
-            (None, Some(url)) => {
-                tracing::info!(%url, "fresh graph seeded from the address");
-                Canvas::new()
-            }
-            (None, None) => {
-                tracing::info!("no session graph; starting on the sample graph");
-                first_run = true;
-                Canvas::with_sample_graph()
-            }
+        let mut sessions = session::load_manifests(&data_root);
+        let migrated = session::migrate_flat_layout(&data_root, &mut sessions);
+        let picked = migrated.or_else(|| session::pick_session(&data_root, &sessions));
+        let (session_id, minted) = match picked {
+            Some(id) => (id, false),
+            None => (Self::mint_session(&data_root, &mut sessions), true),
         };
-        let mut effects = Vec::new();
+        let mut app = Self {
+            canvas: Canvas::new(),
+            omnibar: OmnibarState::default(),
+            data_root,
+            sessions,
+            session_id,
+            content: ContentStates::default(),
+            focus: FocusTarget::Canvas,
+            frisket: FrisketLayout::default(),
+            history: chrome::nav::History::new(String::new()),
+            active_pane: None,
+            workbench: mere::platen::Workbench::new(),
+            browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
+            maximized: None,
+            window_count: 1,
+            lenses: Vec::new(),
+            roster_tab: 0,
+            next_pane_id: 1,
+            events: Vec::new(),
+        };
+        let mut effects = app.adopt_session(session_id);
         if let Some(url) = address {
-            let key = canvas.visit(url);
+            let key = app.canvas.visit(url);
             if fetch::is_fetchable(url)
-                && let Some(node) = canvas.graph().get_node(key).map(|n| n.id)
+                && let Some(node) = app.canvas.graph().get_node(key).map(|n| n.id)
             {
                 effects.push(Effect::FetchPage {
                     node,
                     url: url.to_string(),
                 });
             }
+        } else if minted && app.canvas.graph().nodes().count() == 0 {
+            // A bare FIRST launch: the sample graph, with the omnibar open by
+            // itself so the app is discoverable without documentation. A bare
+            // relaunch restores the canvas quietly (Ctrl+L / Ctrl+K summon).
+            tracing::info!("no session graph; starting on the sample graph");
+            app.canvas = Canvas::with_sample_graph();
+            app.omnibar.open = true;
+            app.focus = FocusTarget::Chrome;
+            let actions = app.session_actions();
+            recompute_suggestions(&mut app.omnibar, &app.canvas, &actions);
         }
-        // A bare FIRST launch opens the omnibar by itself, so the app is
-        // discoverable without documentation; a bare relaunch restores the
-        // canvas quietly (Ctrl+L / Ctrl+K summon).
-        let mut omnibar = OmnibarState::default();
-        let mut focus = FocusTarget::Canvas;
-        if first_run {
-            omnibar.open = true;
-            focus = FocusTarget::Chrome;
-            recompute_suggestions(&mut omnibar, &canvas);
+        (app, effects)
+    }
+
+    /// Mint a fresh session: a new manifest under `sessions/<id>/`, written
+    /// through the store. Returns the id.
+    fn mint_session(
+        data_root: &std::path::Path,
+        sessions: &mut session_runtime::ManifestStore,
+    ) -> frisket::SessionId {
+        let id = frisket::SessionId::new();
+        let mut manifest = session_runtime::GraphSessionManifest::new(id, GraphId::nil());
+        manifest.storage_path = Some(session::session_dir(data_root, id));
+        sessions.insert(manifest);
+        if let Err(err) = sessions.flush_dirty() {
+            tracing::warn!(%err, "failed to write the new session's manifest");
         }
-        // Restore the pane layout (rung 5 slice C), else start on the default
-        // single-pane (Orrery) tree. `next_pane_id` clears every restored id so a
-        // later summon cannot collide with a persisted pane.
-        let frisket = session::load_frisket_layout(&data_root).unwrap_or_default();
-        // Restore the lens-window spaces (rung 7 depth): each live slot gets
+        id
+    }
+
+    /// The live session's directory — where every save and load targets.
+    pub fn session_dir(&self) -> PathBuf {
+        session::session_dir(&self.data_root, self.session_id)
+    }
+
+    /// A session's display label: the manifest's name when set, else the
+    /// id's first 8 hex chars.
+    pub fn session_label(&self, id: frisket::SessionId) -> String {
+        self.sessions
+            .get(id)
+            .and_then(|m| m.display_name.clone())
+            .unwrap_or_else(|| id.as_uuid().to_string()[..8].to_string())
+    }
+
+    /// The dynamic switcher entries for the omnibar's `>` lane: a switch per
+    /// OTHER session, most recently updated first ("New session" is a static
+    /// palette entry).
+    pub fn session_actions(&self) -> Vec<(String, Action)> {
+        let mut others: Vec<_> = self
+            .sessions
+            .iter()
+            .filter(|(id, _)| *id != self.session_id)
+            .collect();
+        others.sort_by_key(|(_, m)| std::cmp::Reverse(m.updated_at));
+        others
+            .into_iter()
+            .map(|(id, _)| {
+                (
+                    format!("Switch to session {}", self.session_label(id)),
+                    Action::SwitchSession(id),
+                )
+            })
+            .collect()
+    }
+
+    /// Adopt `id`'s persisted state wholesale — the load half of a boot and
+    /// the whole of a switch. Rebuilds canvas / panes / workbench / browser /
+    /// content from `sessions/<id>/` (missing files start fresh), reseeds
+    /// history and the focus restore, and returns the adoption's effects
+    /// (content respawns + lens-window reopens). Session-scoped view state
+    /// (omnibar, active pane, maximize) resets.
+    pub fn adopt_session(&mut self, id: frisket::SessionId) -> Vec<Effect> {
+        self.session_id = id;
+        session::record_current_session(&self.data_root, id);
+        if self.sessions.update(id, |m| m.touch()) {
+            if let Err(err) = self.sessions.flush_dirty() {
+                tracing::warn!(%err, "failed to touch the adopted session's manifest");
+            }
+        }
+        let sdir = self.session_dir();
+        let mut effects = Vec::new();
+        // The graph: restored, else fresh — swapped IN PLACE through the
+        // canvas's own session-switch seam (mere's MG2 `set_graph`: physics
+        // actor and node pool stay alive, each node restores to its
+        // committed position and halts, so the switched-to session looks as
+        // it was left rather than re-scrambling).
+        self.canvas
+            .set_graph(session::load_session_graph(&sdir).unwrap_or_default());
+        // Session-scoped view state resets.
+        self.omnibar = OmnibarState::default();
+        self.focus = FocusTarget::Canvas;
+        self.active_pane = None;
+        self.maximized = None;
+        self.roster_tab = 0;
+        // The pane layout, and the lens-window spaces: each live slot gets
         // its window reopened through the ordinary OpenWindow effect — the
         // same port a fresh tear-out uses, so a restored window is spawned
         // truth, not painted memory. The id ceiling spans EVERY space.
-        let lenses = session::load_lens_spaces(&data_root);
-        for (ordinal, space) in lenses.iter().enumerate() {
+        self.frisket = session::load_frisket_layout(&sdir).unwrap_or_default();
+        self.lenses = session::load_lens_spaces(&sdir);
+        for (ordinal, space) in self.lenses.iter().enumerate() {
             if space.is_some() {
                 effects.push(Effect::OpenWindow { ordinal });
             }
         }
-        let next_pane_id = frisket
+        self.next_pane_id = self
+            .frisket
             .iter_leaves()
             .map(|(id, _, _)| id.0)
             .chain(
-                lenses
+                self.lenses
                     .iter()
                     .flatten()
                     .flat_map(|s| s.iter_leaves().map(|(id, _, _)| id.0).collect::<Vec<_>>()),
@@ -184,60 +286,45 @@ impl App {
             .max()
             .unwrap_or(0)
             + 1;
-        // Restore the workbench tiling, pruned to the live graph's members (a
-        // tile whose node vanished between sessions collapses away).
-        let present = canvas.graph().nodes().map(|(_, n)| n.id).collect();
-        let workbench = session::load_workbench(&data_root, &present);
+        // The workbench tiling, pruned to the live graph's members (a tile
+        // whose node vanished between sessions collapses away).
+        let present = self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
+        self.workbench = session::load_workbench(&sdir, &present);
         // The history seeds from wherever the session opens (the focused
         // node's url, or an empty sentinel Back can never step past).
-        let history = chrome::nav::History::new(
-            canvas.focused_url().map(str::to_string).unwrap_or_default(),
+        self.history = chrome::nav::History::new(
+            self.canvas.focused_url().map(str::to_string).unwrap_or_default(),
         );
-        // Restore WHERE the user was (rung 6): a restored session boots with
-        // nothing selected, which silently hid restored live content (the
-        // inset composes for the FOCUSED node). Graph truth already records
-        // visits, so re-select the most recently visited node still present.
-        if canvas.focused_member().is_none()
-            && let Some(last) = canvas.graph().recent_visited(1).into_iter().next()
+        // Restore WHERE the user was (rung 6): re-select the most recently
+        // visited node when nothing is selected (restored live content
+        // composes for the FOCUSED node), and CENTER the camera on it — the
+        // adopted session opens looking at its focus, not at whatever the
+        // default origin happens to crop.
+        if self.canvas.focused_member().is_none()
+            && let Some(last) = self.canvas.graph().recent_visited(1).into_iter().next()
         {
-            canvas.select_by_url(&last.url);
+            self.canvas.select_by_url(&last.url);
         }
-        // The browser-state sidecar, and the content-state restore (rung 6):
-        // every restored node whose content was ON respawns its session
-        // through the ordinary port, so `Live` after a restart is the same
-        // spawned truth as before it — never a painted memory.
-        let browser = session::load_browser_nodes(&data_root);
-        let mut content = ContentStates::default();
-        for (_, node) in canvas.graph().nodes() {
-            if browser.get(node.id).is_some_and(|b| b.content_on) {
-                content.note_requested(node.id);
+        self.canvas.center_on_selected();
+        // The browser-state sidecar + content-state restore: every node whose
+        // content was ON respawns through the ordinary port, so `Live` here
+        // is spawned truth, never a painted memory.
+        self.browser = session::load_browser_nodes(&sdir);
+        self.content = ContentStates::default();
+        for (_, node) in self.canvas.graph().nodes() {
+            if self.browser.get(node.id).is_some_and(|b| b.content_on) {
+                self.content.note_requested(node.id);
                 effects.push(Effect::SpawnContent {
                     node: node.id,
                     url: node.url().to_string(),
                 });
             }
         }
-        (
-            Self {
-                canvas,
-                omnibar,
-                data_root,
-                content,
-                focus,
-                frisket,
-                history,
-                active_pane: None,
-                workbench,
-                browser,
-                maximized: None,
-                window_count: 1,
-                lenses,
-                roster_tab: 0,
-                next_pane_id,
-                events: Vec::new(),
-            },
-            effects,
-        )
+        self.window_count = 1;
+        let label = self.session_label(id);
+        self.events.push(AppEvent::SessionSwitched(label));
+        effects.push(Effect::Redraw);
+        effects
     }
 
     /// Drain the semantic events emitted since the last call (the shell
@@ -465,6 +552,20 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::SaveSession => vec![Effect::SaveSession],
+            // Multi-session (rung 6's second half). Both lower to the shell's
+            // SwitchSession effect: the PORT saves the departing session and
+            // tears down its live handles before the app adopts the target —
+            // state here, ports there, ordering correct.
+            Action::NewSession => {
+                let id = Self::mint_session(&self.data_root, &mut self.sessions);
+                vec![Effect::SwitchSession { id }]
+            }
+            Action::SwitchSession(id) => {
+                if id == self.session_id || self.sessions.get(id).is_none() {
+                    return vec![Effect::Redraw];
+                }
+                vec![Effect::SwitchSession { id }]
+            }
             Action::NewWindow => {
                 let ordinal = self.seed_lens_space();
                 self.events.push(AppEvent::WindowOpened);
@@ -637,7 +738,10 @@ impl App {
                 };
                 self.omnibar.cursor = self.omnibar.text.len();
                 self.focus = FocusTarget::Chrome;
-                recompute_suggestions(&mut self.omnibar, &self.canvas);
+                {
+                    let actions = self.session_actions();
+                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                }
                 self.events.push(AppEvent::OmnibarOpened);
                 vec![Effect::Redraw]
             }
@@ -655,26 +759,38 @@ impl App {
             Action::OmnibarChar(c) => {
                 self.omnibar.insert_str(c.encode_utf8(&mut [0u8; 4]));
                 self.omnibar.selected = 0;
-                recompute_suggestions(&mut self.omnibar, &self.canvas);
+                {
+                    let actions = self.session_actions();
+                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                }
                 vec![Effect::Redraw]
             }
             Action::OmnibarInsert(s) => {
                 self.omnibar.insert_str(&s);
                 self.omnibar.selected = 0;
-                recompute_suggestions(&mut self.omnibar, &self.canvas);
+                {
+                    let actions = self.session_actions();
+                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                }
                 vec![Effect::Redraw]
             }
             Action::OmnibarBackspace => {
                 if self.omnibar.backspace() {
                     self.omnibar.selected = 0;
-                    recompute_suggestions(&mut self.omnibar, &self.canvas);
+                    {
+                    let actions = self.session_actions();
+                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                }
                 }
                 vec![Effect::Redraw]
             }
             Action::OmnibarDelete => {
                 if self.omnibar.delete_forward() {
                     self.omnibar.selected = 0;
-                    recompute_suggestions(&mut self.omnibar, &self.canvas);
+                    {
+                    let actions = self.session_actions();
+                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                }
                 }
                 vec![Effect::Redraw]
             }
@@ -964,6 +1080,8 @@ impl App {
             canvas: Canvas::new(),
             omnibar: OmnibarState::default(),
             data_root: std::env::temp_dir().join("merecat-app-test"),
+            sessions: session_runtime::ManifestStore::new(),
+            session_id: frisket::SessionId::new(),
             content: ContentStates::default(),
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
@@ -1147,6 +1265,27 @@ mod tests {
             lens.iter_leaves()
                 .any(|(_, c, _)| matches!(c, PaneContent::Gloss)),
             "the gloss joined the existing lens"
+        );
+    }
+
+
+    /// The rung7_lens_ops receipt's exact op sequence, app-level: tear out
+    /// the roster, summon the trail beside it (in the lens), reweight, close
+    /// the ACTIVE pane. The close must remove the TRAIL (the summon made it
+    /// active), never the roster.
+    #[test]
+    fn lens_ops_close_removes_the_summoned_pane() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Roster));
+        app.update(Action::TearOutActivePane);
+        app.update(Action::SummonPane(PaneKind::Trail));
+        app.update(Action::SetActivePaneDivider(0.7));
+        app.update(Action::CloseActivePane);
+        let lens = app.lenses[0].as_ref().unwrap();
+        let tags: Vec<&str> = lens.iter_leaves().map(|(_, c, _)| c.tag()).collect();
+        assert!(
+            tags.contains(&"roster") && !tags.contains(&"trail"),
+            "close removes the summoned trail, not the roster: {tags:?}"
         );
     }
 

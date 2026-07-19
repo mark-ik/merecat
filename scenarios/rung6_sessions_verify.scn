@@ -1,0 +1,26 @@
+# Rung 6 second half, run 2 of the restore twin (REUSES run 1's profile):
+# the multi-session layout survives a restart. Boot picks the RECORDED
+# current session (the first one, where run 1 ended), both manifests load,
+# and the first session's graph + focus are back. Offline.
+settle 40
+key escape
+
+assert sessions == 2
+assert nodes >= 2
+assert focused beta
+capture 01_restored
+
+# The switcher still lists the other session (its gamma graph persisted
+# under its own directory).
+omnibar actions
+type switch to session
+settle 5
+assert suggestions >= 1
+key enter
+settle 30
+assert event session-switched
+assert nodes == 1
+assert focused gamma
+capture 02_other_session_intact
+
+log rung 6 multi-session restore complete

@@ -1,0 +1,43 @@
+# Rung 6 second half, self-driven: MULTI-SESSION. Two sessions with their
+# own graphs under sessions/<id>/, minted through the palette and switched
+# through the omnibar's `>` lane (the switcher's true UI path). The graph
+# node-count is the cheap witness that a different graph is showing.
+# Offline (mere://); FRESH profile; the restore twin reuses it.
+settle 30
+key escape
+
+open mere://alpha
+open mere://beta
+settle 10
+assert nodes >= 2
+assert sessions == 1
+
+# Mint: the palette's New session. The old session saves on the way out;
+# the new one starts on an EMPTY graph.
+act New session
+settle 30
+assert sessions == 2
+assert event session-switched
+assert nodes == 0
+capture 01_fresh_session
+
+# The new session grows its own graph truth.
+open mere://gamma
+settle 10
+assert nodes == 1
+
+# Switch back THROUGH THE SWITCHER LANE: `>` filters the actions to the
+# other session's entry; Enter commits it. The first session's graph and
+# focus restore (beta was the last visit there).
+omnibar actions
+type switch to session
+settle 5
+assert suggestions >= 1
+key enter
+settle 30
+assert event session-switched
+assert nodes >= 2
+assert focused beta
+capture 02_back_in_first
+
+log rung 6 multi-session (mint + switcher lane) complete

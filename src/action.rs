@@ -142,6 +142,13 @@ pub enum Action {
     /// `PaneContent::Tile` pane in a lens window: the tear-out trichotomy's
     /// BRANCH arm, gesture-first (the leaf arm is `TearOutActivePane`).
     TearOutTile { member: uuid::Uuid },
+    /// Mint a fresh session (rung 6's second half): a new manifest under
+    /// `sessions/<id>/`, then switch to it. The old session saves on the way
+    /// out; the new one starts on an empty graph.
+    NewSession,
+    /// Switch to an existing session by id. The switcher lane (omnibar `>`)
+    /// offers one of these per other session, labelled.
+    SwitchSession(frisket::SessionId),
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -257,6 +264,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),
+        ("New session", Action::NewSession),
     ]
 }
 
@@ -286,6 +294,10 @@ pub enum Effect {
     /// Open a lens window (platform work: window + surface creation) showing
     /// the pane space the app seeded at `App::lenses[ordinal]`.
     OpenWindow { ordinal: usize },
+    /// Switch the live session (port work: the shell saves the departing
+    /// session, tears down its live ports — content sessions, lens windows —
+    /// then has the app adopt `id` and runs the adoption's own effects).
+    SwitchSession { id: frisket::SessionId },
     /// The projection is stale; present another frame.
     Redraw,
 }

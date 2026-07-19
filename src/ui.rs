@@ -40,9 +40,10 @@ pub enum Suggestion {
     },
     /// Open this address (mint-or-select + fetch).
     Go { url: String },
-    /// An app intent from the palette registry (the `>` lane).
+    /// An app intent from the `>` lane: the palette registry, plus dynamic
+    /// entries (the session switcher) — hence an owned label.
     Act {
-        label: &'static str,
+        label: String,
         action: crate::action::Action,
     },
     /// A muted hint row (empty states).
@@ -125,17 +126,23 @@ impl OmnibarState {
 /// Recompute the suggestion list for the current text against graph truth.
 /// Find first: node matches ranked by last-visited recency; then the go row
 /// for address-shaped input; hints otherwise.
-pub fn recompute_suggestions(state: &mut OmnibarState, canvas: &Canvas) {
+pub fn recompute_suggestions(
+    state: &mut OmnibarState,
+    canvas: &Canvas,
+    extra_actions: &[(String, crate::action::Action)],
+) {
     state.suggestions.clear();
     let text = state.text.trim();
 
     if let Some(rest) = text.strip_prefix('>') {
-        // The actions lane: filter the palette registry (the filterable
-        // action list, in its first home).
+        // The actions lane: the palette registry plus the caller's dynamic
+        // entries (the session switcher rides here).
         let needle = rest.trim().to_lowercase();
         state.suggestions.extend(
             crate::action::palette_actions()
                 .into_iter()
+                .map(|(label, action)| (label.to_string(), action))
+                .chain(extra_actions.iter().cloned())
                 .filter(|(label, _)| needle.is_empty() || label.to_lowercase().contains(&needle))
                 .map(|(label, action)| Suggestion::Act { label, action }),
         );
@@ -575,10 +582,10 @@ mod tests {
             open: true,
             ..Default::default()
         };
-        recompute_suggestions(&mut state, &canvas);
+        recompute_suggestions(&mut state, &canvas, &[]);
         assert!(matches!(state.suggestions[0], Suggestion::Hint(_)));
         state.text = ">set".into();
-        recompute_suggestions(&mut state, &canvas);
+        recompute_suggestions(&mut state, &canvas, &[]);
         assert!(matches!(state.suggestions[0], Suggestion::Hint(_)));
     }
 
@@ -590,7 +597,7 @@ mod tests {
             text: ">re".into(),
             ..Default::default()
         };
-        recompute_suggestions(&mut state, &canvas);
+        recompute_suggestions(&mut state, &canvas, &[]);
         assert!(
             state
                 .suggestions
@@ -608,7 +615,7 @@ mod tests {
         );
         // Bare `>` lists the whole registry.
         state.text = ">".into();
-        recompute_suggestions(&mut state, &canvas);
+        recompute_suggestions(&mut state, &canvas, &[]);
         assert_eq!(
             state.suggestions.len(),
             crate::action::palette_actions().len()
@@ -624,7 +631,7 @@ mod tests {
             text: "example".into(),
             ..Default::default()
         };
-        recompute_suggestions(&mut state, &canvas);
+        recompute_suggestions(&mut state, &canvas, &[]);
         assert!(
             matches!(&state.suggestions[0], Suggestion::Node { url, .. } if url.contains("example.com")),
             "an existing node outranks everything: {:?}",

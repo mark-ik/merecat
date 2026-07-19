@@ -325,21 +325,24 @@ impl Shell {
                 continue;
             }
             match effect {
-                Effect::SaveSession => {
-                    session::save_session_graph(&self.app.data_root, self.app.canvas.graph());
-                    // The pane layout persists to frame.json alongside the graph
-                    // (rung 5 slice C), so summon/close/divider survive a restart.
-                    session::save_frisket_layout(&self.app.data_root, &self.app.frisket);
-                    // The workbench tiling persists as platen's canonical pair
-                    // (rung 5 slice E), so tiles/stacks/fractions survive too.
-                    session::save_workbench(&self.app.data_root, &self.app.workbench);
-                    // The lens-window spaces (rung 7 depth): torn-out panes
-                    // survive a restart as windows again.
-                    session::save_lens_spaces(&self.app.data_root, &self.app.lenses);
-                    // The browser-state sidecar (rung 6): content-on refreshed
-                    // from live truth, so a restart respawns what was showing.
-                    self.app.refresh_browser_states();
-                    session::save_browser_nodes(&self.app.data_root, &self.app.browser);
+                Effect::SaveSession => self.save_session(),
+                // The session switch (rung 6's second half). Ordering is the
+                // point of this being an EFFECT: the departing session saves
+                // under ITS directory while it is still the live state, the
+                // ports tear down (live document sessions die with their
+                // windows; lens windows close), and only then does the app
+                // adopt the target — whose own effects (content respawns,
+                // window reopens) run through the same loop.
+                Effect::SwitchSession { id } => {
+                    self.save_session();
+                    self.content_sessions.clear();
+                    self.lens_windows.clear();
+                    self.pending_lens_capture = None;
+                    self.lens_divider_drag = None;
+                    self.pending_windows.clear();
+                    let fx = self.app.adopt_session(id);
+                    self.run_effects(fx);
+                    self.request_redraw();
                 }
                 // The content port (rung 4, live since genet-documents
                 // landed): route the address to an engine id, spawn through
@@ -420,6 +423,31 @@ impl Shell {
                 // Fetch-shaped effects were consumed above.
                 Effect::FetchPage { .. } | Effect::FetchFavicon { .. } => {}
             }
+        }
+    }
+
+    /// Persist the live session's whole sidecar set under ITS directory
+    /// (`sessions/<id>/`) — the SaveSession effect's body, shared by the
+    /// session switch (which must save the DEPARTING session first).
+    fn save_session(&mut self) {
+        let sdir = self.app.session_dir();
+        session::save_session_graph(&sdir, self.app.canvas.graph());
+        // The pane layout persists to frame.json alongside the graph
+        // (rung 5 slice C), so summon/close/divider survive a restart.
+        session::save_frisket_layout(&sdir, &self.app.frisket);
+        // The workbench tiling persists as platen's canonical pair
+        // (rung 5 slice E), so tiles/stacks/fractions survive too.
+        session::save_workbench(&sdir, &self.app.workbench);
+        // The lens-window spaces (rung 7 depth): torn-out panes
+        // survive a restart as windows again.
+        session::save_lens_spaces(&sdir, &self.app.lenses);
+        // The browser-state sidecar (rung 6): content-on refreshed
+        // from live truth, so a restart respawns what was showing.
+        self.app.refresh_browser_states();
+        session::save_browser_nodes(&sdir, &self.app.browser);
+        // The manifest's recency drives the switcher's ordering.
+        if self.app.sessions.update(self.app.session_id, |m| m.touch()) {
+            let _ = self.app.sessions.flush_dirty();
         }
     }
 
@@ -2493,6 +2521,30 @@ impl Shell {
                 let snap = crate::observe::snapshot(&self.app);
                 if !cmp_usize(op, snap.windows, *n) {
                     return Err(format!("assert windows {op:?} {n}: have {}", snap.windows));
+                }
+            }
+            Step::AssertSessions(op, n) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !cmp_usize(op, snap.session_count, *n) {
+                    return Err(format!(
+                        "assert sessions {op:?} {n}: have {}",
+                        snap.session_count
+                    ));
+                }
+            }
+            Step::AssertSession(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !snap.session.contains(substr) {
+                    return Err(format!(
+                        "assert session '{substr}': the live session is '{}'",
+                        snap.session
+                    ));
+                }
+            }
+            Step::AssertNodes(op, n) => {
+                let snap = crate::observe::snapshot(&self.app);
+                if !cmp_usize(op, snap.node_count, *n) {
+                    return Err(format!("assert nodes {op:?} {n}: have {}", snap.node_count));
                 }
             }
             Step::AssertA11y(substr) => {
