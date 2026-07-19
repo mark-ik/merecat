@@ -441,6 +441,8 @@ impl Shell {
         // The lens-window spaces (rung 7 depth): torn-out panes
         // survive a restart as windows again.
         session::save_lens_spaces(&sdir, &self.app.lenses);
+        // The tombstone log: removed nodes stay recoverable across a restart.
+        session::save_tombstones(&sdir, &self.app.removed_urls);
         // The browser-state sidecar (rung 6): content-on refreshed
         // from live truth, so a restart respawns what was showing.
         self.app.refresh_browser_states();
@@ -759,17 +761,10 @@ impl Shell {
                                         crate::trail_pane::TrailPaneAction::Navigate(url) => {
                                             self.act(Action::OpenAddress(url))
                                         }
-                                        crate::trail_pane::TrailPaneAction::Recover(id) => {
-                                            // Awaits the deletion log (rung 6):
-                                            // loud (warn) AND attributable (an
-                                            // event a scenario can assert).
-                                            self.app.note(
-                                                crate::observe::AppEvent::AffordanceUnavailable {
-                                                    what: "recover",
-                                                    target: id.clone(),
-                                                },
-                                            );
-                                            tracing::warn!(%id, "Recover row: no deletion log yet");
+                                        crate::trail_pane::TrailPaneAction::Recover(url) => {
+                                            // The Recover row carries the removed
+                                            // url; re-open it through the spine.
+                                            self.act(Action::RecoverNode(url))
                                         }
                                     }
                                 }
@@ -2867,6 +2862,11 @@ impl ApplicationHandler for Shell {
                     } else {
                         match &event.logical_key {
                             WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
+                            // Delete forgets the focused node (recoverable from
+                            // the Trail's Removed section).
+                            WinitKey::Named(WinitNamedKey::Delete) => {
+                                Some(Action::DeleteFocusedNode)
+                            }
                             // The browser nav chords (the r3-owed row).
                             WinitKey::Named(WinitNamedKey::ArrowLeft) if self.alt => {
                                 Some(Action::NavBack)

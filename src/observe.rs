@@ -139,6 +139,10 @@ pub enum AppEvent {
     SessionClosed,
     /// A session's display name was set, by its new label.
     SessionRenamed(String),
+    /// A node was removed from the graph (tombstoned), by its url.
+    NodeRemoved(String),
+    /// A removed node was recovered (re-opened), by its url.
+    NodeRecovered(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -186,6 +190,8 @@ impl AppEvent {
             AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
             AppEvent::SessionClosed => "session-closed".to_string(),
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
+            AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
+            AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

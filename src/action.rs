@@ -161,6 +161,13 @@ pub enum Action {
         id: frisket::SessionId,
         name: String,
     },
+    /// Remove the focused node from the graph ("forget this page"), recording
+    /// its url in the session's tombstone log so the Trail's Removed section
+    /// can re-open it. Closes its live content and any workbench tile.
+    DeleteFocusedNode,
+    /// Re-open a removed node's url (from a Trail Recover row) and drop its
+    /// tombstone — the reopen-closed verb.
+    RecoverNode(String),
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -274,6 +281,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Tear out pane", Action::TearOutActivePane),
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),
+        ("Delete node", Action::DeleteFocusedNode),
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),
         ("New session", Action::NewSession),

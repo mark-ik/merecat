@@ -118,6 +118,11 @@ pub struct App {
     /// live handle. Not persisted yet; restoring a pane's tab wants this on the
     /// frisket leaf rather than on App, once a second pane grows tabs.
     pub roster_tab: usize,
+    /// The session's tombstone log: urls of removed nodes, newest first. Feeds
+    /// the Trail's Removed section (reopen-closed-node); persisted per session
+    /// at `tombstones.json`. App-side today; eidetic is the durable backend
+    /// when merecat grows one.
+    pub removed_urls: Vec<String>,
     /// Next pane id to mint. Kept above every id in the layout so a summon after
     /// a restore never collides with a persisted pane.
     next_pane_id: u64,
@@ -161,6 +166,7 @@ impl App {
             window_count: 1,
             lenses: Vec::new(),
             roster_tab: 0,
+            removed_urls: Vec::new(),
             next_pane_id: 1,
             events: Vec::new(),
         };
@@ -362,6 +368,7 @@ impl App {
         // content was ON respawns through the ordinary port, so `Live` here
         // is spawned truth, never a painted memory.
         self.browser = session::load_browser_nodes(&sdir);
+        self.removed_urls = session::load_tombstones(&sdir);
         self.content = ContentStates::default();
         for (_, node) in self.canvas.graph().nodes() {
             if self.browser.get(node.id).is_some_and(|b| b.content_on) {
@@ -509,6 +516,14 @@ impl App {
         match action {
             Action::OpenAddress(url) => {
                 self.events.push(AppEvent::AddressOpened(url.clone()));
+                // Re-opening a tombstoned url un-tombstones it: the node exists
+                // again, so the Trail's Removed section must stop offering it.
+                // This makes the log self-healing whatever path re-opens it (a
+                // Recover row, the Recent row, the omnibar, a followed link).
+                if let Some(pos) = self.removed_urls.iter().position(|u| u == &url) {
+                    self.removed_urls.remove(pos);
+                    self.events.push(AppEvent::NodeRecovered(url.clone()));
+                }
                 let key = self.canvas.visit(&url);
                 self.history.visit(url.clone());
                 let mut effects = vec![Effect::Redraw];
@@ -666,6 +681,34 @@ impl App {
                         .push(AppEvent::SessionRenamed(self.session_label(id)));
                 }
                 vec![Effect::Redraw]
+            }
+            Action::DeleteFocusedNode => {
+                // Read the url BEFORE removal (the tombstone needs it), then
+                // drop the node from the graph and reap what hung off it: the
+                // live content session and any workbench tile.
+                let url = self.canvas.focused_url().map(str::to_string);
+                let Some(member) = self.canvas.remove_focused() else {
+                    return vec![Effect::Redraw];
+                };
+                self.workbench.close_tile(member);
+                if let Some(url) = url {
+                    self.removed_urls.retain(|u| u != &url);
+                    self.removed_urls.insert(0, url.clone());
+                    self.events.push(AppEvent::NodeRemoved(url));
+                }
+                vec![
+                    Effect::CloseContent { node: member },
+                    Effect::SaveSession,
+                    Effect::Redraw,
+                ]
+            }
+            Action::RecoverNode(url) => {
+                // Re-open through the ordinary path, which un-tombstones the
+                // url and emits node-recovered; persist the cleared log.
+                let mut fx = self.update(Action::OpenAddress(url));
+                fx.push(Effect::SaveSession);
+                fx.push(Effect::Redraw);
+                fx
             }
             Action::NewWindow => {
                 let ordinal = self.seed_lens_space();
@@ -1207,6 +1250,7 @@ impl App {
             window_count: 1,
             lenses: Vec::new(),
             roster_tab: 0,
+            removed_urls: Vec::new(),
             next_pane_id: 1,
             events: Vec::new(),
         }
@@ -1462,6 +1506,36 @@ mod tests {
             name: "   ".to_string(),
         });
         assert_eq!(app.session_label(id), id.as_uuid().to_string()[..8]);
+    }
+
+    /// Delete tombstones the focused node (dropping it from the graph and
+    /// closing its content) and Recover re-opens it, clearing the tombstone —
+    /// the reopen-closed-node round trip.
+    #[test]
+    fn delete_tombstones_and_recover_reopens() {
+        let mut app = App::test_stub();
+        let url = "https://example.com/gone".to_string();
+        app.update(Action::OpenAddress(url.clone()));
+        assert!(app.canvas.graph().get_node_by_url(&url).is_some());
+
+        let fx = app.update(Action::DeleteFocusedNode);
+        assert!(
+            app.canvas.graph().get_node_by_url(&url).is_none(),
+            "the node left the graph"
+        );
+        assert_eq!(app.removed_urls, vec![url.clone()], "it is tombstoned");
+        assert!(
+            fx.iter()
+                .any(|e| matches!(e, Effect::CloseContent { .. })),
+            "its content session is closed: {fx:?}"
+        );
+
+        app.update(Action::RecoverNode(url.clone()));
+        assert!(app.removed_urls.is_empty(), "the tombstone is dropped");
+        assert!(
+            app.canvas.graph().get_node_by_url(&url).is_some(),
+            "the node is back"
+        );
     }
 
 
