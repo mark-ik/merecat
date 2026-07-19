@@ -445,13 +445,20 @@ impl Shell {
         // from live truth, so a restart respawns what was showing.
         self.app.refresh_browser_states();
         session::save_browser_nodes(&sdir, &self.app.browser);
-        // The facet store: the live canvas layout lands as
-        // arrangement.position facets (positions are not graph truth, so
-        // graph.json alone loses the layout), other namespaces ride along.
-        session_runtime::write_arrangement_positions(
-            &mut self.app.facets,
-            self.app.canvas.cartography_geometry().iter(),
-        );
+        // The facet store: the live canvas arrangement lands as the
+        // arrangement.* facet family (positions are not graph truth, so
+        // graph.json alone loses the layout; sizes / sprites / hulls /
+        // materials / faces ride the same store), other namespaces ride
+        // along untouched. The graph-scoped flags the geometry carries
+        // (size_by_degree & co.) are view settings and await that home.
+        let geometry = self.app.canvas.cartography_geometry();
+        let facets = &mut self.app.facets;
+        session_runtime::write_arrangement_positions(facets, geometry.iter());
+        session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
+        session_runtime::write_arrangement_sprites(facets, geometry.sprite_iter());
+        session_runtime::write_arrangement_sprite_hulls(facets, geometry.sprite_hull_iter());
+        session_runtime::write_arrangement_materials(facets, geometry.material_iter());
+        session_runtime::write_arrangement_faces(facets, geometry.face_iter());
         session::save_node_facets(&sdir, &self.app.facets);
         // The manifest's recency drives the switcher's ordering.
         if self.app.sessions.update(self.app.session_id, |m| m.touch()) {

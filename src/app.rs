@@ -263,16 +263,36 @@ impl App {
         self.canvas
             .set_graph(session::load_session_graph(&sdir).unwrap_or_default());
         // The facet store (`facets.json`): pruned to the live graph's nodes
-        // (a deleted node's facets go with it), then the `arrangement.position`
-        // facets re-place the canvas — the durable layout, since the graph
-        // itself is position-free. A session with no facets keeps the origin
-        // park and settles fresh on the first nudge.
+        // (a deleted node's facets go with it), then the arrangement.* family
+        // re-dresses the canvas — the durable layout, since the graph itself
+        // is position-free. A session with no facets keeps the origin park and
+        // settles fresh on the first nudge. Order per the canvas seams:
+        // positions seed first (halting physics), sprites before their hulls,
+        // faces after sprites (so a switched-off sprite face stays switched).
         self.facets = session::load_node_facets(&sdir).unwrap_or_default();
         let present: std::collections::BTreeSet<uuid::Uuid> =
             self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
         session_runtime::retain_present_nodes(&mut self.facets, &present);
         self.canvas
             .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
+        // The sizing flags (size_by_degree & co.) are unpersisted view
+        // settings; adopt resets them like the rest of the view state.
+        self.canvas.apply_cartography_sizing(
+            session_runtime::read_arrangement_sizes(&self.facets),
+            false,
+            false,
+        );
+        let sprites = session_runtime::read_arrangement_sprites(&self.facets);
+        self.canvas
+            .apply_cartography_sprites(sprites.iter().map(|(id, uri)| (*id, uri.as_str())));
+        self.canvas.apply_cartography_sprite_hulls(
+            session_runtime::read_arrangement_sprite_hulls(&self.facets),
+        );
+        self.canvas
+            .apply_cartography_materials(session_runtime::read_arrangement_materials(&self.facets));
+        let faces = session_runtime::read_arrangement_faces(&self.facets);
+        self.canvas
+            .apply_cartography_faces(faces.iter().map(|(id, code)| (*id, code.as_str())));
         // Session-scoped view state resets.
         self.omnibar = OmnibarState::default();
         self.focus = FocusTarget::Canvas;
@@ -1166,12 +1186,14 @@ mod tests {
         let sdir = app.session_dir();
         std::fs::create_dir_all(&sdir).unwrap();
 
-        // A one-node session on disk: the graph, plus its layout as facets.
+        // A one-node session on disk: the graph, plus its arrangement as
+        // facets (a position and a deliberate size override).
         let key = app.canvas.visit("https://layout.example");
         let id = app.canvas.graph().get_node(key).unwrap().id;
         session::save_session_graph(&sdir, app.canvas.graph());
         let mut facets = session_runtime::NodeFacetStore::new();
         session_runtime::write_arrangement_positions(&mut facets, [(id, (444.0, -55.0))]);
+        session_runtime::write_arrangement_sizes(&mut facets, [(id, 96.0)]);
         session::save_node_facets(&sdir, &facets);
 
         // Adopt (the boot/switch seam): the node comes back AND lands where
@@ -1189,6 +1211,11 @@ mod tests {
         assert!(
             (pos.x - 444.0).abs() < 1.0 && (pos.y + 55.0).abs() < 1.0,
             "the facet layout is applied, got {pos:?}"
+        );
+        let size = app.canvas.node_size(restored);
+        assert!(
+            (size - 96.0).abs() < 0.001,
+            "the size override rode the facets too, got {size}"
         );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }
