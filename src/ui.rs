@@ -50,10 +50,23 @@ pub enum Suggestion {
     Hint(&'static str),
 }
 
+/// What the omnibar is capturing: an address/action (the default three lanes)
+/// or a free-text rename for a session. Rename mode captures the whole line as
+/// the new name and commits it as [`crate::action::Action::RenameSession`],
+/// bypassing the find/go/actions matching entirely.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum OmnibarMode {
+    #[default]
+    Address,
+    RenameSession(frisket::SessionId),
+}
+
 /// The omnibar's state, owned by [`crate::app::App`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OmnibarState {
     pub open: bool,
+    /// What this line captures (default: the address/action lanes).
+    pub mode: OmnibarMode,
     pub text: String,
     /// The caret's byte offset into `text` (always on a char boundary).
     pub cursor: usize,
@@ -132,6 +145,14 @@ pub fn recompute_suggestions(
     extra_actions: &[(String, crate::action::Action)],
 ) {
     state.suggestions.clear();
+
+    // Rename mode captures the whole line as the new name; no lane matching.
+    if matches!(state.mode, OmnibarMode::RenameSession(_)) {
+        state.suggestions.push(Suggestion::Hint("Enter to rename this session"));
+        state.selected = 0;
+        return;
+    }
+
     let text = state.text.trim();
 
     if let Some(rest) = text.strip_prefix('>') {

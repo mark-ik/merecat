@@ -28,6 +28,8 @@
 //!                            # through the same spine (the automation runner —
 //!                            # needs the `piccolo` feature)
 //! click-at <x> <y>          # pointer click at window px (content links, canvas)
+//! right-click-at <x> <y>    # right-click: opens the command palette, selecting
+//!                           # the node under the pointer (the context menu)
 //! click-row <substr>       # click the list-pane row whose text contains substr
 //! scroll <x> <y> <dy>       # wheel at window px (page scroll / canvas pan)
 //! divider <ratio>           # set the active pane's split ratio (0.0-1.0)
@@ -90,6 +92,9 @@ pub enum Step {
     /// Drives the same surface-routed path winit does; a click on content
     /// resolves links, a click on the canvas is a canvas gesture.
     Click(f32, f32),
+    /// A right-click at window pixel coordinates: opens the command palette,
+    /// selecting the graph node under the pointer first (the context menu).
+    RightClick(f32, f32),
     /// A wheel event at window pixel coordinates: content scrolls, canvas pans.
     Scroll(f32, f32, f32, f32),
     /// Click the list-pane (Trail/Roster) row whose text contains this substring.
@@ -309,6 +314,12 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                     format!("line {}: click-at wants '<x> <y>': '{line}'", i + 1)
                 })?;
                 Step::Click(x, y)
+            }
+            "right-click-at" => {
+                let (x, y) = parse_xy(rest).ok_or_else(|| {
+                    format!("line {}: right-click-at wants '<x> <y>': '{line}'", i + 1)
+                })?;
+                Step::RightClick(x, y)
             }
             "scroll" => {
                 let mut it = rest.split_whitespace();

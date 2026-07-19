@@ -219,6 +219,21 @@ impl App {
             .unwrap_or_else(|| id.as_uuid().to_string()[..8].to_string())
     }
 
+    /// Derive a human name for the live session from its graph: the display
+    /// label of the most recently visited node (the page you were last on).
+    /// `None` for an empty graph, so the uuid label stands until there is
+    /// content to name the session after. The host stamps this into the
+    /// manifest once, when `display_name` is still unset, so the switcher
+    /// reads "Example Domain" instead of eight hex chars without churning as
+    /// you keep browsing.
+    pub(crate) fn derive_session_name(&self) -> Option<String> {
+        let graph = self.canvas.graph();
+        let recent = graph.recent_visited(1).into_iter().next()?;
+        let (key, _) = graph.get_node_by_url(&recent.url)?;
+        let label = graph.node_display_label(key);
+        (!label.trim().is_empty()).then_some(label)
+    }
+
     /// The dynamic switcher entries for the omnibar's `>` lane: a switch per
     /// OTHER session, most recently updated first ("New session" is a static
     /// palette entry).
@@ -603,6 +618,55 @@ impl App {
                 }
                 vec![Effect::SwitchSession { id }]
             }
+            Action::CloseSession => {
+                // Trash the current session, then land on the newest remaining
+                // one; if it was the last, mint a fresh empty session. Either
+                // way the switch effect saves nothing for the trashed session
+                // (it is already gone) and adopts the target.
+                let closing = self.session_id;
+                let next = self
+                    .sessions
+                    .iter()
+                    .filter(|(id, _)| *id != closing)
+                    .max_by_key(|(_, m)| m.updated_at)
+                    .map(|(id, _)| id);
+                if let Err(err) = self.sessions.move_to_trash(closing) {
+                    tracing::warn!(%err, "failed to trash the closed session");
+                    return vec![Effect::Redraw];
+                }
+                self.events.push(AppEvent::SessionClosed);
+                let id = next.unwrap_or_else(|| {
+                    Self::mint_session(&self.data_root, &mut self.sessions)
+                });
+                vec![Effect::SwitchSession { id }]
+            }
+            Action::BeginRenameSession => {
+                // Seed empty (the omnibar has no selection, so a seeded label
+                // could not be replaced by typing); the current label shows in
+                // the switcher, and an empty commit clears back to it.
+                self.omnibar = OmnibarState {
+                    open: true,
+                    mode: crate::ui::OmnibarMode::RenameSession(self.session_id),
+                    ..OmnibarState::default()
+                };
+                self.focus = FocusTarget::Chrome;
+                let actions = self.session_actions();
+                recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                self.events.push(AppEvent::OmnibarOpened);
+                vec![Effect::Redraw]
+            }
+            Action::RenameSession { id, name } => {
+                let name = name.trim().to_string();
+                let applied = self.sessions.update(id, |m| {
+                    m.display_name = (!name.is_empty()).then(|| name.clone());
+                });
+                if applied {
+                    let _ = self.sessions.flush_dirty();
+                    self.events
+                        .push(AppEvent::SessionRenamed(self.session_label(id)));
+                }
+                vec![Effect::Redraw]
+            }
             Action::NewWindow => {
                 let ordinal = self.seed_lens_space();
                 self.events.push(AppEvent::WindowOpened);
@@ -855,6 +919,18 @@ impl App {
                 return self.update(Action::OmnibarCommit);
             }
             Action::OmnibarCommit => {
+                // Rename mode captures the whole line as the new name and
+                // commits it, bypassing the find/go/actions lanes.
+                if let crate::ui::OmnibarMode::RenameSession(id) = self.omnibar.mode {
+                    let name = self.omnibar.text.clone();
+                    self.omnibar = OmnibarState::default();
+                    if self.focus == FocusTarget::Chrome {
+                        self.focus = FocusTarget::Canvas;
+                    }
+                    let mut fx = self.update(Action::RenameSession { id, name });
+                    fx.push(Effect::Redraw);
+                    return fx;
+                }
                 // Commit always ends with the omnibar closed, so chrome hands
                 // focus back to the canvas. (A committed OpenAddress may later
                 // spawn content; routing focus onto it is slice B.)
@@ -1352,6 +1428,40 @@ mod tests {
                 .any(|(_, c, _)| matches!(c, PaneContent::Gloss)),
             "the gloss joined the existing lens"
         );
+    }
+
+    /// The rename flow through the omnibar: BeginRenameSession opens the bar in
+    /// rename mode seeded with the current label; commit lowers RenameSession
+    /// and the label updates. An empty name clears back to the derived/uuid
+    /// fallback.
+    #[test]
+    fn rename_session_through_the_omnibar_mode() {
+        use crate::ui::OmnibarMode;
+
+        let mut app = App::test_stub();
+        let id = app.session_id;
+        app.sessions
+            .insert(session_runtime::GraphSessionManifest::new(id, GraphId::nil()));
+        // The default label is the uuid prefix.
+        assert_eq!(app.session_label(id), id.as_uuid().to_string()[..8]);
+
+        app.update(Action::BeginRenameSession);
+        assert!(app.omnibar.open);
+        assert!(matches!(app.omnibar.mode, OmnibarMode::RenameSession(rid) if rid == id));
+
+        // Type a new name over the seeded label and commit.
+        app.omnibar.text = "Research".to_string();
+        app.update(Action::OmnibarCommit);
+        assert_eq!(app.session_label(id), "Research");
+        assert!(!app.omnibar.open, "commit closes the bar");
+        assert!(matches!(app.omnibar.mode, OmnibarMode::Address), "mode resets");
+
+        // An empty rename clears back to the uuid fallback.
+        app.update(Action::RenameSession {
+            id,
+            name: "   ".to_string(),
+        });
+        assert_eq!(app.session_label(id), id.as_uuid().to_string()[..8]);
     }
 
 

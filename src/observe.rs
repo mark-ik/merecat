@@ -135,6 +135,10 @@ pub enum AppEvent {
     TileTornOut(String),
     /// The app adopted a session (a boot, a mint, or a switch), by label.
     SessionSwitched(String),
+    /// The current session was closed (trashed).
+    SessionClosed,
+    /// A session's display name was set, by its new label.
+    SessionRenamed(String),
     OmnibarOpened,
     OmnibarClosed,
     /// A commit resolved to a suggestion (its display string).
@@ -180,6 +184,8 @@ impl AppEvent {
             AppEvent::PaneTornOut(tag) => format!("pane-torn-out {tag}"),
             AppEvent::TileTornOut(url) => format!("tile-torn-out {url}"),
             AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
+            AppEvent::SessionClosed => "session-closed".to_string(),
+            AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

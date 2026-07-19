@@ -149,6 +149,18 @@ pub enum Action {
     /// Switch to an existing session by id. The switcher lane (omnibar `>`)
     /// offers one of these per other session, labelled.
     SwitchSession(frisket::SessionId),
+    /// Close the current session: trash its directory + manifest, then switch
+    /// to the most-recent remaining session (minting one if it was the last).
+    CloseSession,
+    /// Open the omnibar in rename mode for the current session, seeded with its
+    /// current label — the free-text prompt behind [`Action::RenameSession`].
+    BeginRenameSession,
+    /// Set a session's display name (the rename mode's commit). An empty name
+    /// clears it back to the derived/uuid label.
+    RenameSession {
+        id: frisket::SessionId,
+        name: String,
+    },
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -265,6 +277,8 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),
         ("New session", Action::NewSession),
+        ("Rename session", Action::BeginRenameSession),
+        ("Close session", Action::CloseSession),
     ]
 }
 

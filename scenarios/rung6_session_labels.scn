@@ -1,0 +1,50 @@
+# Rung 6 quick wins, self-driven: session labels, rename, close, and the
+# right-click command palette. A page opens so the session earns a derived
+# label (no more uuid prefix); rename overwrites it through the omnibar's
+# rename mode; New + Close exercise the session lifecycle; a right-click opens
+# the palette. Network-dependent (example.com); FRESH profile.
+settle 30
+key escape
+
+open https://example.com/
+settle 40
+# The label derives from the page once there is content to name it after.
+assert session example
+assert sessions == 1
+capture 01_derived_label
+
+# Rename through the omnibar's rename mode: the palette entry opens the bar
+# seeded with the current label; type over it and commit.
+act Rename session
+settle 5
+assert omnibar open
+type Research
+key enter
+settle 5
+assert omnibar closed
+assert session Research
+assert event session-renamed
+capture 02_renamed
+
+# Mint a second (empty) session, then close it: closing trashes it and lands
+# back on the newest remaining session (Research, with its page intact).
+act New session
+settle 30
+assert sessions == 2
+assert nodes == 0
+act Close session
+settle 30
+assert event session-closed
+assert sessions == 1
+assert session Research
+assert nodes >= 1
+
+# Right-click the canvas: the command palette opens (the context menu the
+# registry named), in its actions lane.
+right-click-at 200 300
+settle 5
+assert omnibar open
+assert suggestions >= 1
+capture 03_right_click_palette
+
+log rung 6 quick wins (labels + rename + close + right-click) complete

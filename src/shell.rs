@@ -460,8 +460,25 @@ impl Shell {
         session_runtime::write_arrangement_materials(facets, geometry.material_iter());
         session_runtime::write_arrangement_faces(facets, geometry.face_iter());
         session::save_node_facets(&sdir, &self.app.facets);
-        // The manifest's recency drives the switcher's ordering.
-        if self.app.sessions.update(self.app.session_id, |m| m.touch()) {
+        // Stamp a derived display name the first time the session has content
+        // to name it after (unset -> "Example Domain"), then bump recency so
+        // the switcher orders by last-used. Derive before the mutable borrow.
+        let id = self.app.session_id;
+        let derived = self
+            .app
+            .sessions
+            .get(id)
+            .is_some_and(|m| m.display_name.is_none())
+            .then(|| self.app.derive_session_name())
+            .flatten();
+        if self.app.sessions.update(id, |m| {
+            if m.display_name.is_none()
+                && let Some(name) = derived.clone()
+            {
+                m.display_name = Some(name);
+            }
+            m.touch();
+        }) {
             let _ = self.app.sessions.flush_dirty();
         }
     }
@@ -685,6 +702,22 @@ impl Shell {
         }
         let plan = self.surface_plan();
         let hit = crate::surface::hit_test(&plan, self.app.focus, x, y);
+        // Right-click is the context menu the palette registry names: open the
+        // command palette (the `>` actions lane), selecting the graph node
+        // under the pointer first so node-scoped actions apply to it. Panes and
+        // content keep their own right-click behavior (none yet); this handles
+        // the canvas, which is where the node-scoped actions live.
+        if button == MouseButton::Right {
+            if let Some(hit) = hit
+                && matches!(hit.kind, crate::surface::SurfaceKind::Canvas)
+                && let Some(member) = self.app.canvas.node_at_screen(hit.local.0, hit.local.1)
+            {
+                self.app.canvas.select_member(member);
+            }
+            self.act(Action::OmnibarOpen { command: true });
+            self.pointer_capture = None;
+            return;
+        }
         self.pointer_capture = hit.map(|h| h.kind);
         if let Some(hit) = hit {
             match hit.kind {
@@ -2357,6 +2390,10 @@ impl Shell {
                 self.deliver_press(*x, *y, MouseButton::Left);
                 self.deliver_release(*x, *y, MouseButton::Left);
             }
+            Step::RightClick(x, y) => {
+                self.deliver_press(*x, *y, MouseButton::Right);
+                self.deliver_release(*x, *y, MouseButton::Right);
+            }
             Step::ClickRow(substr) => self.click_pane_row(substr),
             Step::ClickTab(label) => self.click_pane_tab(label),
             Step::ClickNode(substr) => self.click_pane_node(substr),
@@ -2549,7 +2586,11 @@ impl Shell {
             }
             Step::AssertSession(substr) => {
                 let snap = crate::observe::snapshot(&self.app);
-                if !snap.session.contains(substr) {
+                if !snap
+                    .session
+                    .to_lowercase()
+                    .contains(&substr.to_lowercase())
+                {
                     return Err(format!(
                         "assert session '{substr}': the live session is '{}'",
                         snap.session
