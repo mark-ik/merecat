@@ -1,0 +1,12 @@
+# Facet-layout receipt, part 2: run on part 1's profile. A fresh process
+# restores the graph from graph.json (position-free since S2) and re-dresses
+# the layout from the arrangement.position facets — physics halted, so the
+# capture must show part 1's settled arrangement, not a fresh spiral piled
+# at the origin.
+settle 40
+key escape
+assert nodes >= 15
+assert visible
+capture 01_layout_restored
+
+log facet layout receipt part 2 complete

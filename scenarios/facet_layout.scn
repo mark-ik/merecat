@@ -1,0 +1,22 @@
+# Facet-layout receipt, part 1: arrange a graph, save, capture. The graph
+# itself carries no positions since S2 — the settled layout must survive a
+# restart ONLY through the arrangement.* facets (facets.json beside
+# graph.json), scene settings through the scene.* container facets. Offline
+# (mere:// nodes ride the sample ring); run on a FRESH profile; part 2
+# (facet_layout_verify) reuses it.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://beta
+settle 10
+open mere://gamma
+# Let the force layout spread the spiral into a real arrangement.
+settle 120
+act Save session
+settle 5
+assert nodes >= 15
+capture 01_layout_saved
+
+log facet layout receipt part 1 complete
