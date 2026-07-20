@@ -394,10 +394,16 @@ impl App {
             self.canvas.select_by_url(&last.url);
         }
         self.canvas.center_on_selected();
-        // The browser-state sidecar + content-state restore: every node whose
-        // content was ON respawns through the ordinary port, so `Live` here
-        // is spawned truth, never a painted memory.
-        self.browser = session::load_browser_nodes(&sdir);
+        // Browser state + content-state restore: read from the web.* facets
+        // (the converged home); a pre-convergence profile's browser_nodes.json
+        // seeds nodes the facets don't know (one-time legacy absorb — the next
+        // save writes facets only, and the stale file is left inert). Every
+        // node whose content was ON respawns through the ordinary port, so
+        // `Live` here is spawned truth, never a painted memory.
+        self.browser = session_runtime::read_web_states(&self.facets);
+        for (id, legacy) in session::load_legacy_browser_nodes(&sdir).nodes {
+            self.browser.nodes.entry(id).or_insert(legacy);
+        }
         self.removed_urls = session::load_tombstones(&sdir);
         self.content = ContentStates::default();
         for (_, node) in self.canvas.graph().nodes() {
@@ -1360,11 +1366,22 @@ mod tests {
                 ..session_runtime::SceneFacets::default()
             },
         );
+        // Browser state rides the same store now (web.* facets): live content
+        // was ON for this node, so the adopt must respawn it.
+        let mut browser = session_runtime::browser_node_state::BrowserNodeStates::new();
+        browser.entry(id).content_on = true;
+        session_runtime::write_web_states(&mut facets, &browser);
         session::save_node_facets(&sdir, &facets);
 
         // Adopt (the boot/switch seam): the node comes back AND lands where
         // it was left.
-        app.adopt_session(app.session_id);
+        let effects = app.adopt_session(app.session_id);
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnContent { node, .. } if *node == id)),
+            "content-on read from the web.content facet respawns on adopt"
+        );
         let (restored, _) = app
             .canvas
             .graph()
@@ -1705,11 +1722,14 @@ mod tests {
             app.browser.get(app.canvas.focused_member().unwrap()).is_none(),
             "a node without content stays out of the sidecar"
         );
-        // Round trip through the store.
+        // Round trip through the converged store: web.* facets in facets.json.
         let dir = std::env::temp_dir().join(format!("merecat-bn-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        crate::session::save_browser_nodes(&dir, &app.browser);
-        let restored = crate::session::load_browser_nodes(&dir);
+        let mut facets = session_runtime::NodeFacetStore::new();
+        session_runtime::write_web_states(&mut facets, &app.browser);
+        crate::session::save_node_facets(&dir, &facets);
+        let reloaded = crate::session::load_node_facets(&dir).unwrap_or_default();
+        let restored = session_runtime::read_web_states(&reloaded);
         assert!(restored.get(a).is_some_and(|b| b.content_on));
         // Content off -> the refresh clears the flag.
         app.content.note_closed(a);

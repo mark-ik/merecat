@@ -443,10 +443,10 @@ impl Shell {
         session::save_lens_spaces(&sdir, &self.app.lenses);
         // The tombstone log: removed nodes stay recoverable across a restart.
         session::save_tombstones(&sdir, &self.app.removed_urls);
-        // The browser-state sidecar (rung 6): content-on refreshed
-        // from live truth, so a restart respawns what was showing.
+        // Browser state (rung 6): content-on refreshed from live truth, so a
+        // restart respawns what was showing. Persists as web.* facets in the
+        // facet store below (the convergence; browser_nodes.json is legacy).
         self.app.refresh_browser_states();
-        session::save_browser_nodes(&sdir, &self.app.browser);
         // The facet store: the live canvas arrangement lands as the
         // arrangement.* facet family (positions are not graph truth, so
         // graph.json alone loses the layout; sizes / sprites / hulls /
@@ -456,6 +456,7 @@ impl Shell {
         let geometry = self.app.canvas.cartography_geometry();
         let container = self.app.container_id();
         let facets = &mut self.app.facets;
+        session_runtime::write_web_states(facets, &self.app.browser);
         session_runtime::write_arrangement_positions(facets, geometry.iter());
         session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
         session_runtime::write_arrangement_sprites(facets, geometry.sprite_iter());
