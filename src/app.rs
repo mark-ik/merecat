@@ -92,11 +92,17 @@ pub struct App {
     /// The graph stays correct without it (the sidecar's charter).
     pub browser: session_runtime::browser_node_state::BrowserNodeStates,
     /// The per-node facet store (`facets.json`): typed per-node metadata by
-    /// namespace. `arrangement.position` carries the durable canvas layout
-    /// (the save-time seiche positions; the graph itself is position-free) —
-    /// the first of the `arrangement.*` family; foreign namespaces round-trip
-    /// untouched. The graph stays correct without it, like every sidecar.
+    /// namespace. `arrangement.*` carries the durable canvas layout (positions,
+    /// sizes, sprites, materials, faces — the graph itself is position-free);
+    /// `scene.*` on the container id carries the scene's own view settings.
+    /// Foreign namespaces round-trip untouched. The graph stays correct
+    /// without it, like every sidecar.
     pub facets: session_runtime::NodeFacetStore,
+    /// Linear damping for the layout physics (the "inertia" setting). Held here
+    /// — the canvas is the sink, the host the durable owner — and persisted as
+    /// the `scene.physics_damping` container facet (it left the app-wide
+    /// settings store, being scene-scoped, not app-scoped).
+    pub physics_damping: f32,
     /// A maximized pane takes the whole pane area (a host view state; frisket
     /// has no maximize op). Not persisted; resets on restart.
     pub maximized: Option<PaneId>,
@@ -157,6 +163,7 @@ impl App {
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
             facets: session_runtime::NodeFacetStore::new(),
+            physics_damping: session_runtime::DEFAULT_PHYSICS_DAMPING,
             maximized: None,
             window_count: 1,
             lenses: Vec::new(),
@@ -208,6 +215,16 @@ impl App {
     /// The live session's directory — where every save and load targets.
     pub fn session_dir(&self) -> PathBuf {
         session::session_dir(&self.data_root, self.session_id)
+    }
+
+    /// The current session's container id — the root graph's uuid, the key the
+    /// `scene.*` facets hang on (the graph is the container node in the one-node
+    /// model). `None` if the manifest is somehow absent (scene facets are then
+    /// skipped, not fatal).
+    pub fn container_id(&self) -> Option<uuid::Uuid> {
+        self.sessions
+            .get(self.session_id)
+            .map(|m| *m.root_graph_id.as_uuid())
     }
 
     /// A session's display label: the manifest's name when set, else the
@@ -285,17 +302,30 @@ impl App {
         // positions seed first (halting physics), sprites before their hulls,
         // faces after sprites (so a switched-off sprite face stays switched).
         self.facets = session::load_node_facets(&sdir).unwrap_or_default();
-        let present: std::collections::BTreeSet<uuid::Uuid> =
+        let mut present: std::collections::BTreeSet<uuid::Uuid> =
             self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
+        // Keep the container's `scene.*` facets through the reconcile: the
+        // container id is not a leaf graph node, so without this the prune
+        // would sweep the scene settings away.
+        if let Some(container) = self.container_id() {
+            present.insert(container);
+        }
         session_runtime::retain_present_nodes(&mut self.facets, &present);
         self.canvas
             .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
-        // The sizing flags (size_by_degree & co.) are unpersisted view
-        // settings; adopt resets them like the rest of the view state.
+        // The scene's own view settings ride the `scene.*` container facets:
+        // the sizing mode + metric and the physics damping re-open as saved.
+        let scene = self
+            .container_id()
+            .map(|c| session_runtime::read_scene_facets(&self.facets, c))
+            .unwrap_or_default();
+        self.physics_damping = scene.physics_damping;
+        self.canvas.set_physics_damping(scene.physics_damping);
+        self.canvas.apply_cartography_importance_metric(&scene.importance_metric);
         self.canvas.apply_cartography_sizing(
             session_runtime::read_arrangement_sizes(&self.facets),
-            false,
-            false,
+            scene.size_by_degree,
+            scene.size_by_importance,
         );
         let sprites = session_runtime::read_arrangement_sprites(&self.facets);
         self.canvas
@@ -1203,6 +1233,7 @@ impl App {
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
             facets: session_runtime::NodeFacetStore::new(),
+            physics_damping: session_runtime::DEFAULT_PHYSICS_DAMPING,
             maximized: None,
             window_count: 1,
             lenses: Vec::new(),
@@ -1249,27 +1280,42 @@ mod tests {
     use super::*;
 
     /// The layout round-trip through the facet store: a session saved as
-    /// graph.json + arrangement.position facets in facets.json re-adopts with
-    /// each node back at its saved world position (the graph itself is
-    /// position-free, so without the facets every node would park at the
-    /// origin).
+    /// graph.json + `arrangement.*` facets (per-node) + `scene.*` facets (on
+    /// the container id) re-adopts with each node back at its saved position
+    /// and size, and the scene's own settings (physics damping) restored — the
+    /// graph itself is position-free, so without the facets every node would
+    /// park at the origin and the scene would reset to defaults.
     #[test]
     fn adopt_session_restores_the_saved_canvas_layout_from_facets() {
         let mut app = App::test_stub();
         app.data_root =
             std::env::temp_dir().join(format!("merecat-facet-adopt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&app.data_root);
+        // A manifest so the session has a container id for its `scene.*` facets.
+        let container = uuid::Uuid::from_u128(0xc0ffee);
+        app.sessions.insert(session_runtime::GraphSessionManifest::new(
+            app.session_id,
+            frisket::GraphId::from_uuid(container),
+        ));
         let sdir = app.session_dir();
         std::fs::create_dir_all(&sdir).unwrap();
 
-        // A one-node session on disk: the graph, plus its arrangement as
-        // facets (a position and a deliberate size override).
+        // A one-node session on disk: the graph, its per-node arrangement (a
+        // position and a size override), and the scene's own damping setting.
         let key = app.canvas.visit("https://layout.example");
         let id = app.canvas.graph().get_node(key).unwrap().id;
         session::save_session_graph(&sdir, app.canvas.graph());
         let mut facets = session_runtime::NodeFacetStore::new();
         session_runtime::write_arrangement_positions(&mut facets, [(id, (444.0, -55.0))]);
         session_runtime::write_arrangement_sizes(&mut facets, [(id, 96.0)]);
+        session_runtime::write_scene_facets(
+            &mut facets,
+            container,
+            &session_runtime::SceneFacets {
+                physics_damping: 5.5,
+                ..session_runtime::SceneFacets::default()
+            },
+        );
         session::save_node_facets(&sdir, &facets);
 
         // Adopt (the boot/switch seam): the node comes back AND lands where
@@ -1292,6 +1338,11 @@ mod tests {
         assert!(
             (size - 96.0).abs() < 0.001,
             "the size override rode the facets too, got {size}"
+        );
+        assert!(
+            (app.physics_damping - 5.5).abs() < 0.001,
+            "the scene.physics_damping facet restored, got {}",
+            app.physics_damping
         );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }

@@ -452,6 +452,7 @@ impl Shell {
         // along untouched. The graph-scoped flags the geometry carries
         // (size_by_degree & co.) are view settings and await that home.
         let geometry = self.app.canvas.cartography_geometry();
+        let container = self.app.container_id();
         let facets = &mut self.app.facets;
         session_runtime::write_arrangement_positions(facets, geometry.iter());
         session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
@@ -459,6 +460,18 @@ impl Shell {
         session_runtime::write_arrangement_sprite_hulls(facets, geometry.sprite_hull_iter());
         session_runtime::write_arrangement_materials(facets, geometry.material_iter());
         session_runtime::write_arrangement_faces(facets, geometry.face_iter());
+        // The scene's own settings as `scene.*` facets on the container id:
+        // the sizing mode + metric (read off the geometry) and the physics
+        // damping (host-held). Scene-scoped, so keyed by the container, not a leaf.
+        if let Some(container) = container {
+            let scene = session_runtime::SceneFacets {
+                size_by_degree: geometry.size_by_degree(),
+                size_by_importance: geometry.size_by_importance(),
+                importance_metric: geometry.importance_metric().to_string(),
+                physics_damping: self.app.physics_damping,
+            };
+            session_runtime::write_scene_facets(facets, container, &scene);
+        }
         session::save_node_facets(&sdir, &self.app.facets);
         // Stamp a derived display name the first time the session has content
         // to name it after (unset -> "Example Domain"), then bump recency so
