@@ -42,6 +42,7 @@ fn pane_content(kind: PaneKind) -> PaneContent {
         PaneKind::Steward => PaneContent::Steward,
         PaneKind::Comms => PaneContent::Comms,
         PaneKind::Apparatus => PaneContent::Apparatus,
+        PaneKind::Overmap => PaneContent::Overmap,
         PaneKind::Workbench => PaneContent::Workbench,
     }
 }
@@ -148,6 +149,9 @@ impl App {
         let data_root = session::default_merecat_root();
         let _ = std::fs::create_dir_all(&data_root);
         let mut sessions = session::load_manifests(&data_root);
+        // Pre-overmap manifests minted nil root_graph_ids; the container id
+        // must be real (scene.* facet key + overmap identity), so heal at boot.
+        session::heal_nil_graph_ids(&mut sessions);
         let migrated = session::migrate_flat_layout(&data_root, &mut sessions);
         let picked = migrated.or_else(|| session::pick_session(&data_root, &sessions));
         let (session_id, minted) = match picked {
@@ -209,7 +213,11 @@ impl App {
         sessions: &mut session_runtime::ManifestStore,
     ) -> frisket::SessionId {
         let id = frisket::SessionId::new();
-        let mut manifest = session_runtime::GraphSessionManifest::new(id, GraphId::nil());
+        // A REAL GraphId from birth: the root graph is the session's container
+        // node (the one-node model), so its id keys the scene.* facets and is
+        // the session's identity in the overmap. (Pre-overmap sessions minted
+        // nil; `session::heal_nil_graph_ids` repairs those at boot.)
+        let mut manifest = session_runtime::GraphSessionManifest::new(id, GraphId::new());
         manifest.storage_path = Some(session::session_dir(data_root, id));
         sessions.insert(manifest);
         if let Err(err) = sessions.flush_dirty() {
@@ -396,6 +404,15 @@ impl App {
         // positions seed first (halting physics), sprites before their hulls,
         // faces after sprites (so a switched-off sprite face stays switched).
         self.facets = session::load_node_facets(&sdir).unwrap_or_default();
+        // A profile saved before the nil-GraphId heal keyed its scene.* facets
+        // by the nil uuid; move them onto the healed container id once.
+        if let Some(container) = self.container_id() {
+            let nil = uuid::Uuid::nil();
+            if container != nil && self.facets.facets_of(&nil).is_some() {
+                session_runtime::copy_scene_facets(&self.facets.clone(), &mut self.facets, nil, container);
+                self.facets.remove_node(&nil);
+            }
+        }
         let mut present: std::collections::BTreeSet<uuid::Uuid> =
             self.canvas.graph().nodes().map(|(_, n)| n.id).collect();
         // Keep the container's `scene.*` facets through the reconcile: the

@@ -112,6 +112,10 @@ pub enum PaneContent {
     /// (its default scope is all memory, not the active graph).
     Alembic,
     Apparatus,
+    /// The session set as a graph — container nodes with fork lineage; the
+    /// switcher's graph view (overmap O1). Window-chrome: it is ABOUT the
+    /// session set, not any one graph.
+    Overmap,
     System,
     /// **Pinned tile** — a single specific node's tile rendered without a
     /// workbench strip. Per the pane-UX brief §3 frametree side-by-side
@@ -138,6 +142,7 @@ impl PaneContent {
             PaneContent::Comms => "comms",
             PaneContent::Alembic => "alembic",
             PaneContent::Apparatus => "apparatus",
+            PaneContent::Overmap => "overmap",
             PaneContent::System => "system",
             PaneContent::Tile(_) => "tile",
             PaneContent::Custom(s) => s.as_str(),
@@ -167,6 +172,7 @@ impl PaneContent {
             | PaneContent::Comms
             | PaneContent::Alembic
             | PaneContent::Apparatus
+            | PaneContent::Overmap
             | PaneContent::System
             | PaneContent::Custom(_) => false,
         }

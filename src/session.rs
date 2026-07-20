@@ -276,6 +276,31 @@ pub fn save_workbench(data_root: &Path, workbench: &mere::platen::Workbench) {
     }
 }
 
+/// Repair pre-overmap manifests whose `root_graph_id` is nil: mint each a real
+/// `GraphId` and flush. The root graph is the session's container node (the
+/// one-node model) — its id keys the `scene.*` facets and is the session's
+/// identity in the overmap, so nil ids would collide every pre-overmap session
+/// onto one overmap node. Returns how many were healed; the caller migrates
+/// each healed session's nil-keyed scene facets on adopt
+/// (`App::adopt_session`). Idempotent: a healed store has nothing nil.
+pub fn heal_nil_graph_ids(sessions: &mut ManifestStore) -> usize {
+    let nil: Vec<SessionId> = sessions
+        .iter()
+        .filter(|(_, m)| m.root_graph_id == frisket::GraphId::nil())
+        .map(|(id, _)| id)
+        .collect();
+    for id in &nil {
+        sessions.update(*id, |m| m.root_graph_id = frisket::GraphId::new());
+    }
+    if !nil.is_empty() {
+        if let Err(err) = sessions.flush_dirty() {
+            tracing::warn!(%err, "failed to persist healed session graph ids");
+        }
+        tracing::info!(count = nil.len(), "healed nil root_graph_ids (overmap identity)");
+    }
+    nil.len()
+}
+
 // `save_browser_nodes` / `load_browser_nodes` left with the web.* facet
 // convergence (2026-07-20): browser state persists as web.* facets in
 // facets.json (write_web_states in the save path, read_web_states on adopt).

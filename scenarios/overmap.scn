@@ -1,0 +1,23 @@
+# Overmap receipt (O1): after a fork there are two sessions with a lineage
+# link; the Overmap pane renders the session set as a GRAPH — two container
+# nodes joined by the fork's lineage edge, the current session highlighted.
+# The switcher as a graph view (the click->switch path is locked headlessly
+# by clicking_a_session_node_records_switch). FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://beta
+settle 60
+act Fork from node
+settle 40
+assert sessions >= 2
+assert event session-forked
+
+act Open Overmap pane
+settle 15
+assert pane overmap
+capture 01_overmap_lineage
+
+log overmap receipt complete

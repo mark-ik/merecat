@@ -37,6 +37,8 @@ mod inspector_pane;
 mod inspector_view;
 mod trail_pane;
 mod observe;
+mod overmap;
+mod overmap_pane;
 mod pane;
 mod roster_view;
 mod scenario;

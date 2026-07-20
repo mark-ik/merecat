@@ -198,6 +198,7 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
         "steward" => Some(PaneKind::Steward),
         "comms" => Some(PaneKind::Comms),
         "apparatus" => Some(PaneKind::Apparatus),
+        "overmap" => Some(PaneKind::Overmap),
         "workbench" => Some(PaneKind::Workbench),
         _ => None,
     }

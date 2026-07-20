@@ -225,6 +225,8 @@ pub enum PaneKind {
     Steward,
     Comms,
     Apparatus,
+    /// The session set as a graph: container nodes + fork lineage (overmap O1).
+    Overmap,
     /// The node-tiling workbench: platen's model inside one frisket leaf.
     Workbench,
 }
@@ -240,6 +242,7 @@ impl PaneKind {
             PaneKind::Steward => "Steward",
             PaneKind::Comms => "Comms",
             PaneKind::Apparatus => "Apparatus",
+            PaneKind::Overmap => "Overmap",
             PaneKind::Workbench => "Workbench",
         }
     }
@@ -286,6 +289,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
         ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
         ("Open Apparatus pane", Action::SummonPane(PaneKind::Apparatus)),
+        ("Open Overmap pane", Action::SummonPane(PaneKind::Overmap)),
         ("New window", Action::NewWindow),
         ("Tear out pane", Action::TearOutActivePane),
         ("Fork from node", Action::ForkFocusedNode),

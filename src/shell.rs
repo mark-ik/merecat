@@ -189,6 +189,9 @@ pub struct Shell {
     /// The Apparatus pane (the settings row): the focused node's viewer
     /// override on a cambium radio_group. Retained like the others.
     apparatus_pane: Option<crate::apparatus_pane::ApparatusPane>,
+    /// The Overmap pane (O1): the switcher as a graph view, retained like the
+    /// Gloss minimap it mirrors.
+    overmap_pane: Option<crate::overmap_pane::OvermapPane>,
     /// The chrome, as a cambium view over a FOREST of window-roots (one
     /// shared document, one projection per window): retained + diffed, row
     /// clicks live, lens windows carry the caption chip. Replaces the
@@ -294,6 +297,7 @@ impl Shell {
             inspector_pane: None,
             workbench_pane: None,
             apparatus_pane: None,
+            overmap_pane: None,
             chrome: crate::chrome_view::ChromeSurfaces::new(),
             wb_tab_drag: None,
             wb_divider_drag: None,
@@ -647,7 +651,7 @@ impl Shell {
                 what: "click-node",
                 target: substr.to_string(),
             });
-            tracing::warn!(%substr, "click-node: no Gloss node matched");
+            tracing::warn!(%substr, "click-node: no pane node matched");
         }
     }
 
@@ -841,6 +845,32 @@ impl Shell {
                                                     viewer,
                                                 });
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                            Some(PaneContent::Overmap) => {
+                                // A session-node click adopts that session:
+                                // navigating to a container IS the switch
+                                // (overmap v0), through the ordinary spine.
+                                let dims = plan
+                                    .iter()
+                                    .find(|s| s.id == hit.id)
+                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let intents = match (dims, self.overmap_pane.as_mut()) {
+                                    (Some((rw, rh)), Some(pane)) => {
+                                        pane.click(hit.local.0, hit.local.1, rw, rh)
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for intent in intents {
+                                    match intent {
+                                        crate::overmap_pane::OvermapIntent::Switch(id) => {
+                                            self.act(Action::SwitchSession(id));
+                                        }
+                                        crate::overmap_pane::OvermapIntent::Expand => {
+                                            self.app.focus =
+                                                crate::surface::FocusTarget::Canvas;
                                         }
                                     }
                                 }
@@ -1287,6 +1317,16 @@ impl Shell {
                 let pane = self
                     .apparatus_pane
                     .get_or_insert_with(crate::apparatus_pane::ApparatusPane::new);
+                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
+            Some(PaneContent::Overmap) => {
+                // The switcher as a graph view (overmap O1): sessions as
+                // container nodes, fork lineage as edges, on the shared
+                // custom-paint swatch.
+                let pane = self
+                    .overmap_pane
+                    .get_or_insert_with(crate::overmap_pane::OvermapPane::new);
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
@@ -2229,6 +2269,11 @@ impl genet_probe::Automatable for Shell {
                 Some(PaneContent::Apparatus) => {
                     if let Some(pane) = &self.apparatus_pane {
                         guards.push(("apparatus", rect, pane.dom_ref()));
+                    }
+                }
+                Some(PaneContent::Overmap) => {
+                    if let Some(pane) = &self.overmap_pane {
+                        guards.push(("overmap", rect, pane.dom_ref()));
                     }
                 }
                 _ => {}
