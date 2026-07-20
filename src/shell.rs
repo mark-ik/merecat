@@ -362,6 +362,34 @@ impl Shell {
                 // windows; lens windows close), and only then does the app
                 // adopt the target — whose own effects (content respawns,
                 // window reopens) run through the same loop.
+                // The close path (overmap O3): release the bin store (its
+                // open files block the dir rename on Windows), trash the
+                // closing session's directory whole, then adopt the target
+                // WITHOUT the departing save — a post-trash save would
+                // resurrect the closed session as a zombie directory.
+                Effect::TrashSession { closing, next } => {
+                    let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+                    self.bin_handle
+                        .command(crate::recycle::BinCommand::Release(ack_tx));
+                    if ack_rx
+                        .recv_timeout(std::time::Duration::from_millis(1500))
+                        .is_err()
+                    {
+                        tracing::warn!("bin release ack timed out; attempting the trash move anyway");
+                    }
+                    self.app.apply_trash(closing);
+                    self.content_sessions.clear();
+                    self.lens_windows.clear();
+                    self.pending_lens_capture = None;
+                    self.lens_divider_drag = None;
+                    self.pending_windows.clear();
+                    let fx = self.app.adopt_session(next);
+                    self.bin_handle.command(crate::recycle::BinCommand::Reopen(
+                        crate::recycle::bin_dir(&self.app.session_dir()),
+                    ));
+                    self.run_effects(fx);
+                    self.request_redraw();
+                }
                 Effect::SwitchSession { id } => {
                     self.save_session();
                     self.content_sessions.clear();
@@ -781,6 +809,15 @@ impl Shell {
                                     match action {
                                         crate::trail_pane::TrailPaneAction::Navigate(url) => {
                                             self.act(Action::OpenAddress(url))
+                                        }
+                                        crate::trail_pane::TrailPaneAction::RecoverSession(id) => {
+                                            // A Removed-sessions row: restore the
+                                            // trashed session and switch (O3).
+                                            if let Ok(id) = id.parse::<uuid::Uuid>() {
+                                                self.act(Action::RecoverSession(
+                                                    frisket::SessionId::from_uuid(id),
+                                                ));
+                                            }
                                         }
                                         crate::trail_pane::TrailPaneAction::Recover(id) => {
                                             // The Removed row carries the staged
@@ -1246,6 +1283,13 @@ impl Shell {
                                             target: id.clone(),
                                         },
                                     ),
+                                }
+                            }
+                            crate::trail_pane::TrailPaneAction::RecoverSession(id) => {
+                                if let Ok(id) = id.parse::<uuid::Uuid>() {
+                                    out.push(Action::RecoverSession(
+                                        frisket::SessionId::from_uuid(id),
+                                    ));
                                 }
                             }
                         }

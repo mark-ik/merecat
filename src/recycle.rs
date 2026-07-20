@@ -36,6 +36,12 @@ pub enum BinCommand {
     /// Re-point the store at another session's bin (a session switch), then
     /// answer with ITS list.
     Reopen(PathBuf),
+    /// Drop the open store and ack — the close path's handshake: Windows
+    /// cannot rename a directory whose files are open, so the shell releases
+    /// the bin BEFORE moving the session dir to the trash. No list is emitted
+    /// (the store is closed); the follow-up Reopen answers with the adopted
+    /// session's list.
+    Release(std::sync::mpsc::SyncSender<()>),
 }
 
 /// One session's bin directory (under its `sessions/<id>/` dir).
@@ -127,6 +133,10 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
                         continue;
                     }
                     emit_list(store, &out);
+                }
+                BinCommand::Release(ack) => {
+                    store = None;
+                    let _ = ack.send(());
                 }
                 BinCommand::Reopen(dir) => match open(&dir) {
                     Ok(mut fresh) => {

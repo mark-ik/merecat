@@ -1,0 +1,32 @@
+# Overmap O3 receipt: closing a session stages it in the manifest trash (the
+# whole directory, derived removed-sessions record — no parallel bin); the
+# Trail's Removed-sessions row recovers it with identity intact and switches
+# to it. FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://beta
+settle 40
+act Fork from node
+settle 40
+assert sessions >= 2
+
+act Close session
+settle 40
+assert event session-closed
+
+act Open Trail pane
+settle 15
+assert row Removed sessions
+assert row Recover session
+capture 01_removed_session_row
+
+click-row Recover session
+settle 40
+assert event session-recovered
+assert sessions >= 2
+capture 02_session_recovered
+
+log overmap o3 receipt complete

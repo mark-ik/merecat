@@ -180,6 +180,11 @@ pub enum Action {
     /// (a Trail Removed-row click): the node re-mints under the same uuid
     /// (identity restored), with its recorded title and tags.
     RecoverDeletedNode(uuid::Uuid),
+    /// Restore a trashed SESSION from the manifest trash and switch to it
+    /// (overmap O3; a Trail Removed-sessions-row click). The whole session
+    /// directory moved to `.trash/` intact at close, so restore is
+    /// same-identity by construction.
+    RecoverSession(frisket::SessionId),
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -341,6 +346,12 @@ pub enum Effect {
     /// actor persists it in the session's eidetic store and answers with the
     /// refreshed list).
     RecordDeleted { record: RemovedRecord },
+    /// Close a session (overmap O3): the shell releases the bin store (its
+    /// open files block the rename on Windows), moves the closing session's
+    /// whole directory to the manifest trash via `App::apply_trash`, and
+    /// adopts `next` WITHOUT the departing save (a trashed session must not
+    /// be resurrected as a zombie directory by a post-trash save).
+    TrashSession { closing: frisket::SessionId, next: frisket::SessionId },
     /// The projection is stale; present another frame.
     Redraw,
 }

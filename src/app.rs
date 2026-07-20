@@ -132,6 +132,11 @@ pub struct App {
     /// the shell's actor. Feeds the Trail's Removed section (records whose
     /// node is absent from the graph); recovery restores the ORIGINAL id.
     pub removed: Vec<crate::action::RemovedRecord>,
+    /// The manifest trash, cached (overmap O3): each closed session's whole
+    /// directory sits under `.trash/`, so the trash IS the removed-sessions
+    /// record — derived, no parallel bin. Refreshed on adopt / close /
+    /// recover (list_trash reads the disk; the Trail renders per frame).
+    pub trash: Vec<session_runtime::GraphSessionManifest>,
     /// Next pane id to mint. Kept above every id in the layout so a summon after
     /// a restore never collides with a persisted pane.
     next_pane_id: u64,
@@ -180,6 +185,7 @@ impl App {
             lenses: Vec::new(),
             roster_tab: 0,
             removed: Vec::new(),
+            trash: Vec::new(),
             next_pane_id: 1,
             events: Vec::new(),
         };
@@ -231,6 +237,28 @@ impl App {
     /// The live session's directory — where every save and load targets.
     pub fn session_dir(&self) -> PathBuf {
         session::session_dir(&self.data_root, self.session_id)
+    }
+
+    /// Move `closing`'s whole directory to the manifest trash and refresh the
+    /// removed-sessions cache (overmap O3). The shell calls this AFTER
+    /// releasing the bin store (open files block the rename on Windows) and
+    /// BEFORE adopting the next session. Returns whether the trash move ran.
+    pub fn apply_trash(&mut self, closing: frisket::SessionId) -> bool {
+        match self.sessions.move_to_trash(closing) {
+            Ok(true) => {
+                self.trash = self.sessions.list_trash();
+                self.events.push(AppEvent::SessionClosed);
+                true
+            }
+            Ok(false) => {
+                tracing::warn!(session = %closing.as_uuid(), "close: nothing to trash");
+                false
+            }
+            Err(err) => {
+                tracing::warn!(%err, "failed to trash the closed session");
+                false
+            }
+        }
     }
 
     /// The current session's container id — the root graph's uuid, the key the
@@ -405,6 +433,9 @@ impl App {
         // settles fresh on the first nudge. Order per the canvas seams:
         // positions seed first (halting physics), sprites before their hulls,
         // faces after sprites (so a switched-off sprite face stays switched).
+        // The removed-sessions cache (overmap O3): derived from the manifest
+        // trash, refreshed here and on close/recover.
+        self.trash = self.sessions.list_trash();
         self.facets = session::load_node_facets(&sdir).unwrap_or_default();
         // A profile saved before the nil-GraphId heal keyed its scene.* facets
         // by the nil uuid; move them onto the healed container id once.
@@ -770,6 +801,27 @@ impl App {
                 }
                 vec![Effect::SwitchSession { id }]
             }
+            Action::RecoverSession(id) => {
+                // Overmap O3 recovery: the trashed directory moves back whole
+                // (graph + facets + bin), the manifest re-lists, and the
+                // ordinary switch adopts it — same identity by construction.
+                match self.sessions.restore_from_trash(id) {
+                    Ok(true) => {
+                        self.trash = self.sessions.list_trash();
+                        self.events
+                            .push(AppEvent::SessionRecovered(self.session_label(id)));
+                        vec![Effect::SwitchSession { id }]
+                    }
+                    Ok(false) => {
+                        tracing::warn!(session = %id.as_uuid(), "no trash entry to recover");
+                        vec![Effect::Redraw]
+                    }
+                    Err(err) => {
+                        tracing::warn!(%err, "failed to recover the trashed session");
+                        vec![Effect::Redraw]
+                    }
+                }
+            }
             Action::CloseSession => {
                 // Trash the current session, then land on the newest remaining
                 // one; if it was the last, mint a fresh empty session. Either
@@ -781,16 +833,13 @@ impl App {
                     .iter()
                     .filter(|(id, _)| *id != closing)
                     .max_by_key(|(_, m)| m.updated_at)
-                    .map(|(id, _)| id);
-                if let Err(err) = self.sessions.move_to_trash(closing) {
-                    tracing::warn!(%err, "failed to trash the closed session");
-                    return vec![Effect::Redraw];
-                }
-                self.events.push(AppEvent::SessionClosed);
-                let id = next.unwrap_or_else(|| {
-                    Self::mint_session(&self.data_root, &mut self.sessions)
-                });
-                vec![Effect::SwitchSession { id }]
+                    .map(|(id, _)| id)
+                    .unwrap_or_else(|| {
+                        Self::mint_session(&self.data_root, &mut self.sessions)
+                    });
+                // The disk half (bin release + trash move + adopt-without-save)
+                // is ordering the SHELL owns — see Effect::TrashSession.
+                vec![Effect::TrashSession { closing, next }]
             }
             Action::BeginRenameSession => {
                 // Seed empty (the omnibar has no selection, so a seeded label
@@ -1441,6 +1490,7 @@ impl App {
             lenses: Vec::new(),
             roster_tab: 0,
             removed: Vec::new(),
+            trash: Vec::new(),
             next_pane_id: 1,
             events: Vec::new(),
         }
@@ -1664,6 +1714,74 @@ mod tests {
         assert!(
             (scene.physics_damping - 4.75).abs() < 0.001,
             "scene.* carried donor-container -> fork-container"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// Overmap O3: closing a session moves its whole directory to the manifest
+    /// trash (the derived removed-sessions record — no parallel bin), and
+    /// recovery moves it back with identity intact and switches to it.
+    #[test]
+    fn close_session_trashes_and_recover_restores_identity() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-o3-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        // Two real sessions on disk (manifests bound to the root so trash ops
+        // have a home), the second is current.
+        app.sessions = session_runtime::ManifestStore::with_root(session::sessions_root(
+            &app.data_root,
+        ));
+        let keeper = frisket::SessionId::new();
+        let mut keeper_m = session_runtime::GraphSessionManifest::new(
+            keeper,
+            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xa)),
+        );
+        keeper_m.display_name = Some("keeper".to_string());
+        app.sessions.insert(keeper_m);
+        let closing_id = frisket::SessionId::new();
+        let mut closing_m = session_runtime::GraphSessionManifest::new(
+            closing_id,
+            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
+        );
+        closing_m.display_name = Some("expedition".to_string());
+        app.sessions.insert(closing_m);
+        app.sessions.flush_dirty().unwrap();
+        app.session_id = closing_id;
+
+        // Close: the action defers the disk half to the shell-ordered effect
+        // (bin release first); apply_trash is that effect's app half.
+        let effects = app.update(Action::CloseSession);
+        assert!(matches!(
+            effects[..],
+            [crate::action::Effect::TrashSession { closing, next }]
+                if closing == closing_id && next == keeper
+        ));
+        assert!(app.apply_trash(closing_id));
+        assert_eq!(app.trash.len(), 1);
+        assert_eq!(app.trash[0].session_id, closing_id);
+        assert_eq!(app.trash[0].display_name.as_deref(), Some("expedition"));
+        assert!(app.sessions.get(closing_id).is_none(), "gone from the live set");
+
+        // Recover: the manifest re-lists with the SAME id + graph id, the
+        // trash cache empties, and the switch adopts it.
+        let effects = app.update(Action::RecoverSession(closing_id));
+        assert!(matches!(
+            effects[..],
+            [crate::action::Effect::SwitchSession { id }] if id == closing_id
+        ));
+        assert!(app.trash.is_empty(), "the trash entry is consumed");
+        let recovered = app.sessions.get(closing_id).expect("re-listed");
+        assert_eq!(
+            recovered.root_graph_id,
+            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
+            "identity intact"
+        );
+        assert!(
+            app.take_events()
+                .iter()
+                .any(|e| matches!(e, AppEvent::SessionRecovered(l) if l == "expedition")),
+            "the recovery event carries the label"
         );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }

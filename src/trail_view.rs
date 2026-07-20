@@ -27,6 +27,9 @@ pub enum RowAction {
     /// A removed node's recovery row, carrying the removed url; a click
     /// re-opens it (`Action::RecoverNode`).
     Recover(String),
+    /// Restore this trashed SESSION (the uuid string; the shell lowers
+    /// `Action::RecoverSession` — the overmap O3 recovery arm).
+    RecoverSession(String),
 }
 
 /// One Trail row: its display text and the affordance behind it.
@@ -84,7 +87,7 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
     let mut recent_it = recent.into_iter();
     let mut history_it = history.into_iter();
     let mut in_history = false;
-    items
+    let mut rows: Vec<TrailRow> = items
         .into_iter()
         .map(|item| match item {
             TrailItem::SectionTitle(title) => {
@@ -119,6 +122,28 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
                 action: RowAction::Recover(node_id),
             },
         })
-        .collect()
+        .collect();
+
+    // The Removed SESSIONS section (overmap O3): the manifest trash, derived —
+    // `.trash/` holds each closed session's whole directory, so the trash IS
+    // the removed-sessions record (no parallel bin, per the overmap plan). The
+    // affordance is the label, like the node rows above.
+    if !app.trash.is_empty() {
+        rows.push(TrailRow {
+            text: "Removed sessions".to_string(),
+            action: RowAction::Title,
+        });
+        for m in app.trash.iter().take(8) {
+            let label = m
+                .display_name
+                .clone()
+                .unwrap_or_else(|| m.session_id.as_uuid().to_string()[..8].to_string());
+            rows.push(TrailRow {
+                text: format!("Recover session {label}"),
+                action: RowAction::RecoverSession(m.session_id.as_uuid().to_string()),
+            });
+        }
+    }
+    rows
 }
 

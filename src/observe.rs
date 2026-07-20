@@ -139,6 +139,8 @@ pub enum AppEvent {
     SessionClosed,
     /// A fork minted a new session from the focused component (the fork arm).
     SessionForked,
+    /// A trashed session was restored (overmap O3), by its label.
+    SessionRecovered(String),
     /// A session's display name was set, by its new label.
     SessionRenamed(String),
     /// A node was removed from the graph into the recycle bin, by its url.
@@ -195,6 +197,7 @@ impl AppEvent {
             AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
             AppEvent::SessionClosed => "session-closed".to_string(),
             AppEvent::SessionForked => "session-forked".to_string(),
+            AppEvent::SessionRecovered(label) => format!("session-recovered {label}"),
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),

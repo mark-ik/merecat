@@ -31,6 +31,8 @@ pub enum TrailPaneAction {
     Navigate(String),
     /// Recover this removed node (awaits the deletion log, rung 6).
     Recover(String),
+    /// Restore this trashed session (overmap O3; the uuid string).
+    RecoverSession(String),
 }
 
 impl cambium::Action for TrailPaneAction {}
@@ -77,7 +79,9 @@ fn trail_pane_view(state: &TrailState) -> TrailView {
                     .map(|r| match r.action {
                         RowAction::Muted | RowAction::Title => ListRow::muted(r.text.clone()),
                         RowAction::Navigate(_) => ListRow::plain(r.text.clone()),
-                        RowAction::Recover(_) => ListRow::action(r.text.clone()),
+                        RowAction::Recover(_) | RowAction::RecoverSession(_) => {
+                            ListRow::action(r.text.clone())
+                        }
                     })
                     .collect(),
             )
@@ -90,6 +94,9 @@ fn trail_pane_view(state: &TrailState) -> TrailView {
             match &row.action {
                 RowAction::Navigate(url) => Some(TrailPaneAction::Navigate(url.clone())),
                 RowAction::Recover(id) => Some(TrailPaneAction::Recover(id.clone())),
+                RowAction::RecoverSession(id) => {
+                    Some(TrailPaneAction::RecoverSession(id.clone()))
+                }
                 _ => None,
             }
         },
