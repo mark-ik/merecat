@@ -233,6 +233,94 @@ impl App {
             .map(|m| *m.root_graph_id.as_uuid())
     }
 
+    /// Write the LIVE state into the facet store: the canvas arrangement as
+    /// the `arrangement.*` family (positions are not graph truth, so the graph
+    /// alone loses the layout; sizes / sprites / hulls / materials / faces
+    /// ride the same store), the browser map as `web.*`, and the scene's own
+    /// settings as `scene.*` on the container id. Other namespaces are
+    /// untouched. Shared by the shell's save path and the fork's facet-carry
+    /// (both need the store to reflect the moment, not the last save).
+    pub fn refresh_facets(&mut self) {
+        let geometry = self.canvas.cartography_geometry();
+        let container = self.container_id();
+        let facets = &mut self.facets;
+        session_runtime::write_web_states(facets, &self.browser);
+        session_runtime::write_arrangement_positions(facets, geometry.iter());
+        session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
+        session_runtime::write_arrangement_sprites(facets, geometry.sprite_iter());
+        session_runtime::write_arrangement_sprite_hulls(facets, geometry.sprite_hull_iter());
+        session_runtime::write_arrangement_materials(facets, geometry.material_iter());
+        session_runtime::write_arrangement_faces(facets, geometry.face_iter());
+        if let Some(container) = container {
+            let scene = session_runtime::SceneFacets {
+                size_by_degree: geometry.size_by_degree(),
+                size_by_importance: geometry.size_by_importance(),
+                importance_metric: geometry.importance_metric().to_string(),
+                physics_damping: self.physics_damping,
+            };
+            session_runtime::write_scene_facets(facets, container, &scene);
+        }
+    }
+
+    /// Fork (tear-out G4-R R2): snapshot the connected component containing
+    /// `seed` into a freshly minted session — new `SessionId` + real `GraphId`,
+    /// a weak `parent_session` back-reference on the fork's manifest, the
+    /// component's nodes + internal edges copied with `CopiedFrom` provenance,
+    /// and the donor's per-node character carried by **facets** through the
+    /// copy's id remap (`arrangement.*` layout, `web.*` browser state, foreign
+    /// namespaces) plus the container's `scene.*`. Persists the fork's
+    /// `graph.json` + `facets.json`, then returns the switch effect — v0 opens
+    /// by session-switch (the shell saves the departing donor first, as every
+    /// switch does); overmap navigation replaces that when it lands. Donor
+    /// untouched; the two are independent thereafter. Returns no effects if
+    /// `seed` names no node.
+    pub fn fork_session_from(&mut self, seed: uuid::Uuid) -> Vec<Effect> {
+        if self.canvas.graph().get_node_by_id(seed).is_none() {
+            return Vec::new();
+        }
+        // The carry must read the moment, not the last save.
+        self.refresh_browser_states();
+        self.refresh_facets();
+
+        // The kernel half: component copy with the id remap for the carry.
+        let donor_graph_label = self.container_id().map(|c| c.to_string());
+        let mut fork_graph = mere::kernel::graph::Graph::new();
+        let copy = fork_graph.copy_component_from(self.canvas.graph(), seed, donor_graph_label);
+        if copy.new_keys.is_empty() {
+            return Vec::new();
+        }
+
+        // The facet-carry: whole per-node records through the remap, scene
+        // settings donor-container -> fork-container.
+        let fork_graph_id = GraphId::new();
+        let mut fork_facets = session_runtime::NodeFacetStore::new();
+        session_runtime::copy_node_facets(&self.facets, &mut fork_facets, &copy.id_remap);
+        if let Some(donor_container) = self.container_id() {
+            session_runtime::copy_scene_facets(
+                &self.facets,
+                &mut fork_facets,
+                donor_container,
+                *fork_graph_id.as_uuid(),
+            );
+        }
+
+        // Mint the fork's session: manifest with the parent back-reference,
+        // then its on-disk state, so the switch below adopts a real session.
+        let fork_id = frisket::SessionId::new();
+        let mut manifest = session_runtime::GraphSessionManifest::new(fork_id, fork_graph_id);
+        manifest.storage_path = Some(session::session_dir(&self.data_root, fork_id));
+        manifest.parent_session = Some(self.session_id);
+        self.sessions.insert(manifest);
+        if let Err(err) = self.sessions.flush_dirty() {
+            tracing::warn!(%err, "failed to write the fork session's manifest");
+        }
+        let fork_dir = session::session_dir(&self.data_root, fork_id);
+        session::save_session_graph(&fork_dir, &fork_graph);
+        session::save_node_facets(&fork_dir, &fork_facets);
+        self.events.push(AppEvent::SessionForked);
+        vec![Effect::SwitchSession { id: fork_id }]
+    }
+
     /// A session's display label: the manifest's name when set, else the
     /// id's first 8 hex chars.
     pub fn session_label(&self, id: frisket::SessionId) -> String {
@@ -840,6 +928,14 @@ impl App {
                 effects.push(Effect::Redraw);
                 effects
             }
+            // The trichotomy's FORK arm: snapshot the component into a fresh
+            // session and switch to it (G4-R R2; the shell saves the donor on
+            // the way out, as every switch does).
+            Action::ForkNode { member } => self.fork_session_from(member),
+            Action::ForkFocusedNode => match self.canvas.focused_member() {
+                Some(member) => self.fork_session_from(member),
+                None => Vec::new(),
+            },
             Action::SetViewerOverride { member, viewer } => {
                 self.browser.entry(member).viewer_override = viewer.clone();
                 self.events.push(AppEvent::ViewerChanged {
@@ -1404,6 +1500,99 @@ mod tests {
             (app.physics_damping - 5.5).abs() < 0.001,
             "the scene.physics_damping facet restored, got {}",
             app.physics_damping
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// The fork arm (G4-R R2): forking from a node mints a new session whose
+    /// manifest carries the parent back-reference, snapshots the connected
+    /// component (not the rest of the graph), carries the donor's per-node
+    /// character as facets through the copy's id remap plus the container's
+    /// scene settings, and opens by session-switch.
+    #[test]
+    fn fork_session_snapshots_the_component_with_its_facets() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-fork-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        let donor_container = uuid::Uuid::from_u128(0xd0);
+        app.sessions.insert(session_runtime::GraphSessionManifest::new(
+            app.session_id,
+            frisket::GraphId::from_uuid(donor_container),
+        ));
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+
+        // A two-node connected component plus a disconnected bystander.
+        let a = app.canvas.visit("https://fork.example/a");
+        let a_id = app.canvas.graph().get_node(a).unwrap().id;
+        app.update(Action::OpenAddress("https://fork.example/b".to_string()));
+        let _bystander = {
+            let mut g = app.canvas.graph().clone();
+            let k = mere::kernel::graph::apply::add_node(
+                &mut g,
+                Some(uuid::Uuid::from_u128(0x10e)),
+                "https://lone.example".to_string(),
+                Default::default(),
+            );
+            let id = g.get_node(k).unwrap().id;
+            app.canvas.set_graph(g);
+            id
+        };
+        // Donor character: live content on `a` (so web.content refreshes true
+        // from live truth) and a scene damping.
+        app.physics_damping = 4.75;
+        app.apply_update(Update::ContentSpawned { node: a_id, facts: None });
+
+        let donor_session = app.session_id;
+        let effects = app.update(Action::ForkNode { member: a_id });
+        let Some(crate::action::Effect::SwitchSession { id: fork_id }) = effects
+            .iter()
+            .find(|e| matches!(e, crate::action::Effect::SwitchSession { .. }))
+            .cloned()
+        else {
+            panic!("fork returns the switch effect: {effects:?}");
+        };
+        assert_ne!(fork_id, donor_session);
+        let fork_manifest = app.sessions.get(fork_id).expect("fork manifest inserted");
+        assert_eq!(
+            fork_manifest.parent_session,
+            Some(donor_session),
+            "the weak parent back-reference"
+        );
+        assert_ne!(
+            fork_manifest.root_graph_id,
+            frisket::GraphId::from_uuid(donor_container),
+            "the fork minted its own real GraphId"
+        );
+
+        // The persisted fork: the 2-node component (not the bystander), and
+        // the carried facets keyed by the REMAPPED ids.
+        let fork_dir = session::session_dir(&app.data_root, fork_id);
+        let fork_graph = session::load_session_graph(&fork_dir).expect("fork graph persisted");
+        assert_eq!(fork_graph.nodes().count(), 2, "the component, nothing else");
+        let fork_facets = session::load_node_facets(&fork_dir).expect("fork facets persisted");
+        let fork_a = fork_graph
+            .nodes()
+            .find(|(_, n)| n.url() == "https://fork.example/a")
+            .map(|(_, n)| n.id)
+            .expect("the seed's copy");
+        assert_ne!(fork_a, a_id, "a fork copy is a new entity");
+        assert!(
+            !session_runtime::read_arrangement_positions(&fork_facets).is_empty(),
+            "the donor layout rode the carry"
+        );
+        let web = session_runtime::read_web_states(&fork_facets);
+        assert!(
+            web.get(fork_a).is_some_and(|s| s.content_on),
+            "web.content carried onto the remapped id"
+        );
+        let scene = session_runtime::read_scene_facets(
+            &fork_facets,
+            *fork_manifest.root_graph_id.as_uuid(),
+        );
+        assert!(
+            (scene.physics_damping - 4.75).abs() < 0.001,
+            "scene.* carried donor-container -> fork-container"
         );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }

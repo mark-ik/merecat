@@ -130,6 +130,8 @@ pub struct Shell {
     ctrl: bool,
     /// Live Alt state, for the nav chords (Alt+Left / Alt+Right).
     alt: bool,
+    /// Live Shift state, for the tear-out modifier arms (Ctrl+Shift = fork).
+    shift: bool,
     /// The genet-probe scenario driver (activated by `MERECAT_SCENARIO`): the
     /// generic one-step-per-frame loop every genet app shares, driving this
     /// Shell through its
@@ -271,6 +273,7 @@ impl Shell {
             cursor: (0.0, 0.0),
             ctrl: false,
             alt: false,
+            shift: false,
             shared_scenario: shared_scenario_from_env(),
             shared_out_dir: shared_out_dir_from_env(),
             pending_capture: None,
@@ -444,37 +447,11 @@ impl Shell {
         // The tombstone log: removed nodes stay recoverable across a restart.
         session::save_tombstones(&sdir, &self.app.removed_urls);
         // Browser state (rung 6): content-on refreshed from live truth, so a
-        // restart respawns what was showing. Persists as web.* facets in the
-        // facet store below (the convergence; browser_nodes.json is legacy).
+        // restart respawns what was showing; then the whole live state lands
+        // in the facet store (arrangement.* + scene.* + web.*) via the shared
+        // refresh (the fork's facet-carry reads the same refreshed store).
         self.app.refresh_browser_states();
-        // The facet store: the live canvas arrangement lands as the
-        // arrangement.* facet family (positions are not graph truth, so
-        // graph.json alone loses the layout; sizes / sprites / hulls /
-        // materials / faces ride the same store), other namespaces ride
-        // along untouched. The graph-scoped flags the geometry carries
-        // (size_by_degree & co.) are view settings and await that home.
-        let geometry = self.app.canvas.cartography_geometry();
-        let container = self.app.container_id();
-        let facets = &mut self.app.facets;
-        session_runtime::write_web_states(facets, &self.app.browser);
-        session_runtime::write_arrangement_positions(facets, geometry.iter());
-        session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
-        session_runtime::write_arrangement_sprites(facets, geometry.sprite_iter());
-        session_runtime::write_arrangement_sprite_hulls(facets, geometry.sprite_hull_iter());
-        session_runtime::write_arrangement_materials(facets, geometry.material_iter());
-        session_runtime::write_arrangement_faces(facets, geometry.face_iter());
-        // The scene's own settings as `scene.*` facets on the container id:
-        // the sizing mode + metric (read off the geometry) and the physics
-        // damping (host-held). Scene-scoped, so keyed by the container, not a leaf.
-        if let Some(container) = container {
-            let scene = session_runtime::SceneFacets {
-                size_by_degree: geometry.size_by_degree(),
-                size_by_importance: geometry.size_by_importance(),
-                importance_metric: geometry.importance_metric().to_string(),
-                physics_damping: self.app.physics_damping,
-            };
-            session_runtime::write_scene_facets(facets, container, &scene);
-        }
+        self.app.refresh_facets();
         session::save_node_facets(&sdir, &self.app.facets);
         // Stamp a derived display name the first time the session has content
         // to name it after (unset -> "Example Domain"), then bump recency so
@@ -1006,10 +983,16 @@ impl Shell {
             return;
         };
         if !surface.rect.contains(x, y) {
-            // Released OUTSIDE the workbench: the branch arm — the dragged
-            // tile tears out of the tiling into a lens window as a pinned
-            // Tile pane, through the same spine as every other op.
-            self.act(Action::TearOutTile { member: dragged });
+            // Released OUTSIDE the workbench: Ctrl+Shift held is the FORK arm
+            // (brief's gesture table — a new session snapshots the component);
+            // otherwise the branch arm — the dragged tile tears out of the
+            // tiling into a lens window as a pinned Tile pane. Both lower
+            // through the same spine as every other op.
+            if self.ctrl && self.shift {
+                self.act(Action::ForkNode { member: dragged });
+            } else {
+                self.act(Action::TearOutTile { member: dragged });
+            }
             self.request_redraw();
             return;
         }
@@ -2812,6 +2795,7 @@ impl ApplicationHandler for Shell {
             WindowEvent::ModifiersChanged(mods) => {
                 self.ctrl = mods.state().control_key();
                 self.alt = mods.state().alt_key();
+                self.shift = mods.state().shift_key();
                 self.app.canvas.set_ctrl(mods.state().control_key());
                 self.app.canvas.set_alt(mods.state().alt_key());
             }

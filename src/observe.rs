@@ -137,6 +137,8 @@ pub enum AppEvent {
     SessionSwitched(String),
     /// The current session was closed (trashed).
     SessionClosed,
+    /// A fork minted a new session from the focused component (the fork arm).
+    SessionForked,
     /// A session's display name was set, by its new label.
     SessionRenamed(String),
     /// A node was removed from the graph (tombstoned), by its url.
@@ -189,6 +191,7 @@ impl AppEvent {
             AppEvent::TileTornOut(url) => format!("tile-torn-out {url}"),
             AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
             AppEvent::SessionClosed => "session-closed".to_string(),
+            AppEvent::SessionForked => "session-forked".to_string(),
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),

@@ -142,6 +142,15 @@ pub enum Action {
     /// `PaneContent::Tile` pane in a lens window: the tear-out trichotomy's
     /// BRANCH arm, gesture-first (the leaf arm is `TearOutActivePane`).
     TearOutTile { member: uuid::Uuid },
+    /// Fork the connected component containing this node into a freshly
+    /// minted session (the tear-out trichotomy's FORK arm, tear-out brief
+    /// §4.3): new SessionId + GraphId, `parent_session` back-reference,
+    /// `CopiedFrom` provenance per node, per-node character carried by facets.
+    /// Gesture-first (Ctrl+Shift at the tab drag-out); the palette arm is
+    /// `ForkFocusedNode`.
+    ForkNode { member: uuid::Uuid },
+    /// Fork from the focused node — the palette / keyboard arm of `ForkNode`.
+    ForkFocusedNode,
     /// Mint a fresh session (rung 6's second half): a new manifest under
     /// `sessions/<id>/`, then switch to it. The old session saves on the way
     /// out; the new one starts on an empty graph.
@@ -279,6 +288,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Apparatus pane", Action::SummonPane(PaneKind::Apparatus)),
         ("New window", Action::NewWindow),
         ("Tear out pane", Action::TearOutActivePane),
+        ("Fork from node", Action::ForkFocusedNode),
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Delete node", Action::DeleteFocusedNode),

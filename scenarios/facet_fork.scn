@@ -1,0 +1,25 @@
+# Fork receipt (G4-R): fork the focused node's component into a fresh
+# session and land there (v0 opens by session-switch). The donor saves on
+# the way out (every switch does); the fork's graph is the connected
+# component with CopiedFrom provenance, and its layout/browser/scene
+# character rides the facet-carry — verified on disk after the run (donor
+# facets.json intact and independent of the fork's). FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+# Navigating on from alpha links alpha -> beta: a real 2-node component.
+open mere://beta
+# Let the layout settle so the carried positions are a real arrangement.
+settle 90
+act Fork from node
+# The switch saved the donor and adopted the fork.
+settle 40
+assert sessions >= 2
+assert event session-forked
+assert nodes >= 2
+assert visible
+capture 01_fork_adopted
+
+log fork receipt complete
