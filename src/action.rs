@@ -170,13 +170,16 @@ pub enum Action {
         id: frisket::SessionId,
         name: String,
     },
-    /// Remove the focused node from the graph ("forget this page"), recording
-    /// its url in the session's tombstone log so the Trail's Removed section
-    /// can re-open it. Closes its live content and any workbench tile.
+    /// Remove the focused node from the graph ("forget this page"): its record
+    /// stages into the recycle bin (the eidetic deleted-node bin, through the
+    /// bin port) and the node leaves the graph. Recoverable from the Trail's
+    /// Removed section until athanor permanently forgets it. Closes its live
+    /// content and any workbench tile.
     DeleteFocusedNode,
-    /// Re-open a removed node's url (from a Trail Recover row) and drop its
-    /// tombstone — the reopen-closed verb.
-    RecoverNode(String),
+    /// Recover a staged node from the recycle bin BY ITS ORIGINAL member id
+    /// (a Trail Removed-row click): the node re-mints under the same uuid
+    /// (identity restored), with its recorded title and tags.
+    RecoverDeletedNode(uuid::Uuid),
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -334,6 +337,10 @@ pub enum Effect {
     /// session, tears down its live ports — content sessions, lens windows —
     /// then has the app adopt `id` and runs the adoption's own effects).
     SwitchSession { id: frisket::SessionId },
+    /// Stage a removed node's record into the recycle bin (the bin port's
+    /// actor persists it in the session's eidetic store and answers with the
+    /// refreshed list).
+    RecordDeleted { record: RemovedRecord },
     /// The projection is stale; present another frame.
     Redraw,
 }
@@ -367,6 +374,13 @@ pub enum Update {
     },
     /// The content port could not spawn (or lost) `node`'s session.
     ContentFailed { node: uuid::Uuid, error: String },
+    /// The recycle bin's current contents (the bin port answers every record
+    /// / reopen with the refreshed list, and emits one on spawn). Replaces the
+    /// app's cache wholesale.
+    BinListed { records: Vec<RemovedRecord> },
+    /// The bin store failed (open / record / list) — loud and attributable,
+    /// never an empty list masquerading as "nothing deleted".
+    BinFailed { error: String },
 }
 
 /// A successfully fetched page document, in app-owned terms.
@@ -375,4 +389,17 @@ pub struct FetchedPage {
     pub content_type: Option<String>,
     /// The decoded body text.
     pub body: String,
+}
+
+/// A staged (deleted) node's record in the recycle bin, in app-owned terms
+/// (the port adapter converts eidetic's `DeletedNode` at the boundary).
+/// Carries the ORIGINAL member id, so recovery restores identity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemovedRecord {
+    pub node_id: uuid::Uuid,
+    pub url: String,
+    pub title: Option<String>,
+    pub tags: Vec<String>,
+    /// Deletion time, unix milliseconds (the bin's newest-first ordering).
+    pub deleted_at_ms: u64,
 }

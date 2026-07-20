@@ -123,6 +123,11 @@ pub struct Shell {
     fetch_handle: armillary::ActorHandle<FetchCommand>,
     /// Completed fetches, drained in `user_event` on each wake.
     fetch_rx: Receiver<FetchUpdate>,
+    /// The recycle-bin actor (the eidetic deleted-node bin at the session's
+    /// bin dir); commands stage records / re-point on a session switch.
+    bin_handle: armillary::ActorHandle<crate::recycle::BinCommand>,
+    /// The bin's answers (BinListed / BinFailed), drained beside the fetches.
+    bin_rx: Receiver<Update>,
     /// Last cursor position in physical px. winit's `MouseInput` carries no
     /// position, so the shell tracks it from `CursorMoved`.
     cursor: (f32, f32),
@@ -255,6 +260,15 @@ impl Shell {
         });
         let (fetch_handle, fetch_rx) = fetch::spawn_fetcher(fetch_wake);
 
+        // The recycle-bin actor over THIS session's bin store, waking the
+        // loop the same way; it answers its spawn with the initial list.
+        let bin_proxy = proxy.clone();
+        let bin_wake: armillary::Wake = Arc::new(move || {
+            let _ = bin_proxy.send_event(());
+        });
+        let (bin_handle, bin_rx) =
+            crate::recycle::spawn_bin(bin_wake, crate::recycle::bin_dir(&app.session_dir()));
+
         // The content port's engines: the static lane (genet.web) with the
         // shell-owned fetcher (netfetch: https + data:). Scripted/smolweb
         // rungs join by registration, not new dispatch code.
@@ -273,6 +287,8 @@ impl Shell {
             proxy,
             fetch_handle,
             fetch_rx,
+            bin_handle,
+            bin_rx,
             cursor: (0.0, 0.0),
             ctrl: false,
             alt: false,
@@ -333,6 +349,12 @@ impl Shell {
             }
             match effect {
                 Effect::SaveSession => self.save_session(),
+                // The bin port: stage the record; the actor answers with the
+                // refreshed list (folded on the next wake).
+                Effect::RecordDeleted { record } => {
+                    self.bin_handle
+                        .command(crate::recycle::BinCommand::Record(record));
+                }
                 // The session switch (rung 6's second half). Ordering is the
                 // point of this being an EFFECT: the departing session saves
                 // under ITS directory while it is still the live state, the
@@ -348,6 +370,12 @@ impl Shell {
                     self.lens_divider_drag = None;
                     self.pending_windows.clear();
                     let fx = self.app.adopt_session(id);
+                    // Re-point the bin actor at the adopted session's store;
+                    // it answers with THAT bin's list (the app cleared its
+                    // mirror in adopt_session).
+                    self.bin_handle.command(crate::recycle::BinCommand::Reopen(
+                        crate::recycle::bin_dir(&self.app.session_dir()),
+                    ));
                     self.run_effects(fx);
                     self.request_redraw();
                 }
@@ -448,8 +476,6 @@ impl Shell {
         // The lens-window spaces (rung 7 depth): torn-out panes
         // survive a restart as windows again.
         session::save_lens_spaces(&sdir, &self.app.lenses);
-        // The tombstone log: removed nodes stay recoverable across a restart.
-        session::save_tombstones(&sdir, &self.app.removed_urls);
         // Browser state (rung 6): content-on refreshed from live truth, so a
         // restart respawns what was showing; then the whole live state lands
         // in the facet store (arrangement.* + scene.* + web.*) via the shared
@@ -756,10 +782,21 @@ impl Shell {
                                         crate::trail_pane::TrailPaneAction::Navigate(url) => {
                                             self.act(Action::OpenAddress(url))
                                         }
-                                        crate::trail_pane::TrailPaneAction::Recover(url) => {
-                                            // The Recover row carries the removed
-                                            // url; re-open it through the spine.
-                                            self.act(Action::RecoverNode(url))
+                                        crate::trail_pane::TrailPaneAction::Recover(id) => {
+                                            // The Removed row carries the staged
+                                            // node's ORIGINAL uuid; recovery
+                                            // restores that identity.
+                                            match id.parse::<uuid::Uuid>() {
+                                                Ok(id) => self.act(
+                                                    Action::RecoverDeletedNode(id),
+                                                ),
+                                                Err(_) => self.app.note(
+                                                    crate::observe::AppEvent::InteractionMissed {
+                                                        what: "recover",
+                                                        target: id,
+                                                    },
+                                                ),
+                                            }
                                         }
                                     }
                                 }
@@ -1201,13 +1238,15 @@ impl Shell {
                                 out.push(Action::OpenAddress(url))
                             }
                             crate::trail_pane::TrailPaneAction::Recover(id) => {
-                                self.app.note(
-                                    crate::observe::AppEvent::AffordanceUnavailable {
-                                        what: "recover",
-                                        target: id.clone(),
-                                    },
-                                );
-                                tracing::warn!(%id, "Recover row: no deletion log yet");
+                                match id.parse::<uuid::Uuid>() {
+                                    Ok(id) => out.push(Action::RecoverDeletedNode(id)),
+                                    Err(_) => self.app.note(
+                                        crate::observe::AppEvent::InteractionMissed {
+                                            what: "recover",
+                                            target: id.clone(),
+                                        },
+                                    ),
+                                }
                             }
                         }
                     }
@@ -2502,6 +2541,20 @@ impl Shell {
                     return Err(format!("assert {state}: it is not"));
                 }
             }
+            Step::AssertNoRow(substr) => {
+                let snap = crate::observe::snapshot(&self.app);
+                let hit = snap
+                    .trail_rows
+                    .iter()
+                    .chain(snap.roster_rows.iter())
+                    .chain(snap.inspector_rows.iter())
+                    .find(|r| r.contains(substr));
+                if let Some(row) = hit {
+                    return Err(format!(
+                        "assert no-row '{substr}': a row still has it: '{row}'"
+                    ));
+                }
+            }
             Step::AssertRow(substr) => {
                 let snap = crate::observe::snapshot(&self.app);
                 let hit = snap
@@ -2793,6 +2846,11 @@ impl ApplicationHandler for Shell {
                 let effects = self.app.apply_update(update);
                 self.run_effects(effects);
             }
+        }
+        while let Ok(update) = self.bin_rx.try_recv() {
+            // The bin actor already speaks the app-owned vocabulary.
+            let effects = self.app.apply_update(update);
+            self.run_effects(effects);
         }
         self.drain_pending_windows(event_loop);
         self.request_redraw();

@@ -206,32 +206,6 @@ pub fn save_frisket_layout(data_root: &Path, layout: &FrisketLayout) {
     }
 }
 
-/// The tombstone sidecar (`tombstones`): removed-node urls, newest first, one
-/// per line, so the Trail's Removed section survives a restart. Newline-
-/// delimited text (urls carry no newline), so it needs no serde. Best-effort,
-/// like the rest. (App-side today; eidetic is the durable backend when merecat
-/// grows one.)
-const TOMBSTONES_FILE: &str = "tombstones";
-
-pub fn save_tombstones(data_root: &Path, urls: &[String]) {
-    let path = data_root.join(TOMBSTONES_FILE);
-    if let Err(err) = std::fs::write(&path, urls.join("\n")) {
-        tracing::warn!(%err, path = ?path, "failed to persist tombstones");
-    }
-}
-
-pub fn load_tombstones(data_root: &Path) -> Vec<String> {
-    let path = data_root.join(TOMBSTONES_FILE);
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    text.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
 /// Persist the lens-window spaces at `windows.json` (rung 7 depth: windows
 /// are pane hosts, so torn-out panes survive a restart AS windows). Closed
 /// slots persist as `null`, keeping ordinals stable. Best-effort, like the

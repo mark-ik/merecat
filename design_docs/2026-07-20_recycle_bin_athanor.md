@@ -74,5 +74,29 @@ live consumer; this is where merecat becomes its first.
 
 ## Status
 
-Design locked 2026-07-20. Interim hard-delete #4 (merecat b152ed8) unwound
-back to the clean quick-wins state (a5ae48a). Slice 1 is next.
+Design locked 2026-07-20; slices 1+2 LANDED the same day.
+
+- mere 370a148: `canvas::recover_node` takes the record's uuid and re-mints
+  under it (`mint_node_as` over `GraphDelta::AddNode`'s existing id param);
+  idempotent (an existing id selects, never twins).
+- merecat: `recycle.rs` is the bin port — an armillary actor
+  (`spawn_named("recycle-bin")`) over `eidetic_fjall::FjallStore` at
+  `sessions/<id>/bin`, store ops under pollster (serial disk IO, no
+  runtime). It answers every command AND its own spawn with the refreshed
+  list (`Update::BinListed` replaces `App::removed` wholesale); failures are
+  `Update::BinFailed` -> the `bin-failed` event, never a silent empty list.
+  A session switch re-points it (`BinCommand::Reopen`) before the adopted
+  session's effects run. Delete builds the record off the living node and
+  stages it (`Effect::RecordDeleted`); the Trail's Removed section derives
+  bin-minus-present (newest per id) and its rows read as the affordance
+  ("Recover example.com/" — a Removed row must not read identically to the
+  url's Recent row, or text-addressed clicks and screen readers cannot tell
+  navigate from recover); a click lowers `Action::RecoverDeletedNode(uuid)`.
+- Receipts: `rung6_delete_recover.scn` headed RESULT ok (delete -> staged ->
+  identity recover -> Removed derives away, record still staged); 85 unit
+  tests incl. the app-level bin round trip and the canvas identity test.
+- The tombstone dead-end's remnants (an origin merge re-landed them) were
+  replaced by this in the same change.
+
+Slice 3 (athanor's pass: permanent forget + engram bake, "empty the bin" +
+steady-heat schedule, knobs in Apparatus / passes in Steward) is next.

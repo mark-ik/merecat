@@ -43,6 +43,7 @@
 //! drag-tab <a> out          # ...releasing OUTSIDE the workbench (on the canvas):
 //!                           # the tile tears out into a lens window (branch arm)
 //! assert row <substr>       # a Trail/Roster/Inspector row's text contains substr
+//! assert no-row <substr>    # NO list-pane row contains substr
 //! assert wb-cells ==|>=|<= <n>  # the workbench has n cells
 //! assert wb-cell <substr>   # a workbench cell's tab string contains substr
 //! assert wb-fraction ==|>=|<= <f>  # the workbench root split's FIRST fraction
@@ -170,6 +171,8 @@ pub enum Step {
     AssertMaximized(bool),
     /// A list/detail pane row's text contains this substring.
     AssertRow(String),
+    /// NO list-pane row contains this substring.
+    AssertNoRow(String),
     AssertTab(String),
     /// Set the active pane's divider ratio (drag the seam).
     Divider(f32),
@@ -357,6 +360,7 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "maximized" => Step::AssertMaximized(true),
                     "not-maximized" => Step::AssertMaximized(false),
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
+                    "no-row" if !arg.is_empty() => Step::AssertNoRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
                     "a11y" if !arg.is_empty() => Step::AssertA11y(arg.to_string()),
                     "lens-pane" if !arg.is_empty() => Step::AssertLensPane(arg.to_string()),

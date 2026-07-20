@@ -1,9 +1,13 @@
-# Rung 6 quick win #4, self-driven: delete a node and recover it (reopen-
-# closed). Two pages open; the focused one is deleted ("forget this page"),
-# dropping from the graph into the Trail's Removed section; a click on the
-# Removed row re-opens it. The tombstone log is App-persisted (eidetic is the
-# durable backend later). Network-dependent (example.com + iana.org); FRESH
-# profile.
+# The recycle bin, self-driven (design_docs/2026-07-20_recycle_bin_athanor.md
+# slices 1+2): delete a node and recover it WITH ITS IDENTITY. Delete stages
+# the focused node's record into the eidetic deleted-node bin (the bin port's
+# actor, at sessions/<id>/bin) and drops the node; the Trail's Removed section
+# is the bin's mirror minus present nodes; a click on the Removed row re-mints
+# the node under its ORIGINAL uuid (identity restored — title/tags ride the
+# record; the uuid claim is unit-tested, the behavior receipt is here). The
+# record stays staged (append-only until athanor's pass), and Removed derives
+# it away because the node is present again. Network-dependent (example.com +
+# iana.org); FRESH profile.
 settle 30
 key escape
 
@@ -17,21 +21,24 @@ act Open Trail pane
 settle 5
 assert pane trail
 
-# Delete the focused node (example.com): it leaves the graph and lands in the
-# Trail's Removed section as a recover row.
+# Delete the focused node (example.com): the record stages through the bin
+# actor (its answer refreshes the mirror within a settle) and the node leaves
+# the graph.
 act Delete node
-settle 10
+settle 15
 assert event node-removed
 assert row Removed
 assert row example.com
 capture 01_removed
 
-# Re-open it from the Trail: the node returns and the tombstone self-heals
-# (any re-open of a tombstoned url un-tombstones it and emits node-recovered).
-click-row example.com
+# Recover from the Removed row (its affordance label, distinct from the
+# Recent row's plain url): the node re-mints under its original id, selected
+# and centered; Removed derives away (the record is still staged).
+click-row Recover example
 settle 40
 assert event node-recovered
 assert focused example
+assert no-row Removed
 capture 02_recovered
 
-log rung 6 quick win #4 (delete + recover) complete
+log recycle bin (delete + identity recover through eidetic) complete

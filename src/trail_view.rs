@@ -6,9 +6,10 @@
 //! the P8 pattern); this host half gathers the inputs from the canvas graph and
 //! maps the items onto rows the pane renders and a click acts on. meerkat maps
 //! its Row items inert; merecat makes them navigable, attaching the full url each
-//! row came from (the neutral `Row` item carries only display text). Recover rows
-//! carry the removed url (the tombstone log, `App::removed_urls`); a click
-//! re-opens it (`Action::RecoverNode`).
+//! row came from (the neutral `Row` item carries only display text). The Removed
+//! section is the recycle bin's mirror (`App::removed`, the eidetic deleted-node
+//! bin behind the bin port) minus nodes present in the graph; a Recover click
+//! restores the node's ORIGINAL identity (`Action::RecoverDeletedNode`).
 
 use mere::trail::{TrailInput, TrailItem, TrailRemoved, build_trail_items};
 
@@ -52,14 +53,22 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
         .map(|key| graph.node_history_projection(key).entries)
         .unwrap_or_default();
 
-    // The tombstone log (newest first): the Removed section a click re-opens.
-    // node_id carries the url itself, so Recover keys straight to a re-open.
+    // The Removed section: the recycle bin's records (App's mirror of the
+    // eidetic deleted-node bin, newest first) whose node is ABSENT from the
+    // graph — a recovered node is present again, so its records derive away
+    // with nothing to reconcile. The bin is append-only (athanor purges
+    // later), so a node deleted twice has two records: keep the newest per
+    // id. node_id rides as the uuid string; recovery restores that identity.
+    let mut seen = std::collections::HashSet::new();
     let removed: Vec<TrailRemoved> = app
-        .removed_urls
+        .removed
         .iter()
-        .map(|url| TrailRemoved {
-            url: url.clone(),
-            node_id: url.clone(),
+        .filter(|r| graph.get_node_key_by_id(r.node_id).is_none())
+        .filter(|r| seen.insert(r.node_id))
+        .take(8)
+        .map(|r| TrailRemoved {
+            url: r.url.clone(),
+            node_id: r.node_id.to_string(),
         })
         .collect();
 
@@ -100,8 +109,13 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
                     action: url.map(RowAction::Navigate).unwrap_or(RowAction::Muted),
                 }
             }
+            // The affordance IS the label ("Recover example.com/", the
+            // meerkat trail's presentation): a Removed row must not read
+            // identically to the same url's Recent row, or a text-addressed
+            // click (a receipt, an automation lane, a screen reader user)
+            // cannot tell navigate from recover.
             TrailItem::Recover { text, node_id } => TrailRow {
-                text,
+                text: format!("Recover {text}"),
                 action: RowAction::Recover(node_id),
             },
         })

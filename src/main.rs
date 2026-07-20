@@ -40,6 +40,7 @@ mod observe;
 mod overmap;
 mod overmap_pane;
 mod pane;
+mod recycle;
 mod roster_view;
 mod scenario;
 #[cfg(feature = "piccolo")]

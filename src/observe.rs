@@ -141,8 +141,11 @@ pub enum AppEvent {
     SessionForked,
     /// A session's display name was set, by its new label.
     SessionRenamed(String),
-    /// A node was removed from the graph (tombstoned), by its url.
+    /// A node was removed from the graph into the recycle bin, by its url.
     NodeRemoved(String),
+    /// The recycle-bin store failed (open / record / list) — the Removed
+    /// section may be stale or empty for the WRONG reason; loud + attributable.
+    BinFailed(String),
     /// A removed node was recovered (re-opened), by its url.
     NodeRecovered(String),
     OmnibarOpened,
@@ -195,6 +198,7 @@ impl AppEvent {
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),
+            AppEvent::BinFailed(error) => format!("bin-failed {error}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

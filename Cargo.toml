@@ -56,6 +56,13 @@ accesskit = "0.24"
 # The actor-kernel runtime: the physics + fetch actors wake this shell's
 # event loop through an `armillary::Wake`.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+# The recycle bin (design_docs/2026-07-20_recycle_bin_athanor.md): the eidetic
+# deleted-node bin behind an armillary actor. eidetic-fjall persists it at
+# sessions/<id>/bin; pollster drives the store's async ops on the actor thread
+# (serial disk IO wants no runtime).
+eidetic = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+eidetic-fjall = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+pollster = "0.4"
 # The per-user data root (`<data_dir>/merecat`), MERECAT_ROOT-overridable for
 # scratch profiles (the meerkat MERE_ROOT convention).
 dirs = "6"
