@@ -7,10 +7,10 @@
 //! maps the items onto rows the pane renders and a click acts on. meerkat maps
 //! its Row items inert; merecat makes them navigable, attaching the full url each
 //! row came from (the neutral `Row` item carries only display text). Recover rows
-//! carry a node id and await the deletion log (rung 6); until then the graph has
-//! no removed nodes, so no Recover rows appear.
+//! carry the removed url (the tombstone log, `App::removed_urls`); a click
+//! re-opens it (`Action::RecoverNode`).
 
-use mere::trail::{TrailInput, TrailItem, build_trail_items};
+use mere::trail::{TrailInput, TrailItem, TrailRemoved, build_trail_items};
 
 use crate::app::App;
 
@@ -23,7 +23,8 @@ pub enum RowAction {
     Muted,
     /// A visited url; a click navigates to it (through `Action::OpenAddress`).
     Navigate(String),
-    /// A removed node's recovery row, keyed by node id. Awaits the deletion log.
+    /// A removed node's recovery row, carrying the removed url; a click
+    /// re-opens it (`Action::RecoverNode`).
     Recover(String),
 }
 
@@ -51,10 +52,21 @@ pub fn trail_rows(app: &App) -> Vec<TrailRow> {
         .map(|key| graph.node_history_projection(key).entries)
         .unwrap_or_default();
 
+    // The tombstone log (newest first): the Removed section a click re-opens.
+    // node_id carries the url itself, so Recover keys straight to a re-open.
+    let removed: Vec<TrailRemoved> = app
+        .removed_urls
+        .iter()
+        .map(|url| TrailRemoved {
+            url: url.clone(),
+            node_id: url.clone(),
+        })
+        .collect();
+
     let items = build_trail_items(&TrailInput {
         recent_urls: recent.clone(),
         history_urls: history.clone(),
-        removed: Vec::new(),
+        removed,
     });
 
     // Attach the full url to each Row for navigation. build_trail_items emits the
