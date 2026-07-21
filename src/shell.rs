@@ -181,7 +181,7 @@ pub struct Shell {
     roster_grid: Option<crate::cambium_pane::RosterGrid>,
     /// The Gloss pane (minimap): the first pane whose cambium view carries a
     /// custom-paint leaf, so it owns a leaf registry beside its runner.
-    gloss_pane: Option<crate::gloss_pane::GlossPane>,
+    gloss_pane: Option<crate::swatch_pane::SwatchPane>,
     /// The Trail pane: the sectioned list's first consumer (the hand-DOM Trail
     /// retired). Retained like the others.
     trail_pane: Option<crate::trail_pane::TrailPane>,
@@ -196,7 +196,7 @@ pub struct Shell {
     apparatus_pane: Option<crate::apparatus_pane::ApparatusPane>,
     /// The Overmap pane (O1): the switcher as a graph view, retained like the
     /// Gloss minimap it mirrors.
-    overmap_pane: Option<crate::overmap_pane::OvermapPane>,
+    overmap_pane: Option<crate::swatch_pane::SwatchPane>,
     /// Which pane the pointer is hovering (pane pointer-move routing): lets a
     /// move off a pane deliver its Leave so hover emphasis clears.
     hovered_pane: Option<frisket::PaneId>,
@@ -888,10 +888,13 @@ impl Shell {
                                 };
                                 for intent in intents {
                                     match intent {
-                                        crate::gloss_pane::GlossIntent::Navigate(url) => {
-                                            self.act(Action::OpenAddress(url))
-                                        }
-                                        crate::gloss_pane::GlossIntent::Expand => {
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Open(url),
+                                        ) => self.act(Action::OpenAddress(url)),
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Switch(id),
+                                        ) => self.act(Action::SwitchSession(id)),
+                                        crate::swatch_pane::SwatchIntent::Expand => {
                                             self.app.focus =
                                                 crate::surface::FocusTarget::Canvas;
                                         }
@@ -943,10 +946,13 @@ impl Shell {
                                 };
                                 for intent in intents {
                                     match intent {
-                                        crate::overmap_pane::OvermapIntent::Switch(id) => {
-                                            self.act(Action::SwitchSession(id));
-                                        }
-                                        crate::overmap_pane::OvermapIntent::Expand => {
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Open(url),
+                                        ) => self.act(Action::OpenAddress(url)),
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Switch(id),
+                                        ) => self.act(Action::SwitchSession(id)),
+                                        crate::swatch_pane::SwatchIntent::Expand => {
                                             self.app.focus =
                                                 crate::surface::FocusTarget::Canvas;
                                         }
@@ -1369,10 +1375,13 @@ impl Shell {
                 if let Some(pane) = self.gloss_pane.as_mut() {
                     for intent in pane.click(lx, ly, rw, rh) {
                         match intent {
-                            crate::gloss_pane::GlossIntent::Navigate(url) => {
-                                out.push(Action::OpenAddress(url))
-                            }
-                            crate::gloss_pane::GlossIntent::Expand => {
+                            crate::swatch_pane::SwatchIntent::Activate(
+                                crate::swatch_pane::SwatchActivate::Open(url),
+                            ) => out.push(Action::OpenAddress(url)),
+                            crate::swatch_pane::SwatchIntent::Activate(
+                                crate::swatch_pane::SwatchActivate::Switch(id),
+                            ) => out.push(Action::SwitchSession(id)),
+                            crate::swatch_pane::SwatchIntent::Expand => {
                                 self.app.focus = crate::surface::FocusTarget::Canvas;
                             }
                         }
@@ -1427,7 +1436,9 @@ impl Shell {
                 // the pane's registry (the leaf pipeline).
                 let pane = self
                     .gloss_pane
-                    .get_or_insert_with(crate::gloss_pane::GlossPane::new);
+                    .get_or_insert_with(|| {
+                        crate::swatch_pane::SwatchPane::new(crate::swatch_pane::GLOSS_MINIMAP)
+                    });
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
@@ -1465,7 +1476,9 @@ impl Shell {
                 // custom-paint swatch.
                 let pane = self
                     .overmap_pane
-                    .get_or_insert_with(crate::overmap_pane::OvermapPane::new);
+                    .get_or_insert_with(|| {
+                        crate::swatch_pane::SwatchPane::new(crate::swatch_pane::OVERMAP_LINEAGE)
+                    });
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }

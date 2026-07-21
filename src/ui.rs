@@ -457,7 +457,7 @@ pub const CAMBIUM_SHEET: &str = "\
                background-color: rgb(25, 30, 44); white-space: nowrap; overflow: hidden; } \
     .graph-canvas-swatch { background-color: rgb(18, 22, 33); \
                            border: 1px solid rgb(52, 62, 86); border-radius: 7px; } \
-    .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; } \
+    .graph-canvas-swatch-node { background-color: transparent; border: 0; padding: 0; }     .graph-canvas-swatch-label { color: rgb(196, 204, 220); font-size: 10px; } \
     .graph-canvas-swatch-expand { color: rgb(150, 160, 180); font-size: 10px; \
                                   background-color: rgb(28, 34, 50); border: 0; \
                                   border-radius: 4px; padding: 2px 5px; }";
