@@ -82,9 +82,9 @@ fn gloss_view(state: &GlossState) -> GlossView {
                 state.pending.push(GlossIntent::Navigate(url));
             }
         },
-        // Hover emphasis waits on pane pointer-move routing, which no pane has
-        // yet; the handler is a no-op rather than half-wired.
-        |_state: &mut GlossState, _id: Option<Uuid>| {},
+        // Pointer-move routing is live (deliver_hover): the handler writes the
+        // hover emphasis, and the next sync's paint-leaf rebuild draws it.
+        |state: &mut GlossState, id: Option<Uuid>| state.swatch.hovered = id,
         |state: &mut GlossState| state.pending.push(GlossIntent::Expand),
     );
     Box::new(
@@ -132,6 +132,9 @@ pub struct GlossPane {
     runner: GlossRunner,
     registry: LeafRegistry<u64>,
     rendered: RenderedLeaves,
+    /// The dom node the pointer last hovered, for Enter/Leave transitions
+    /// (the hover contract is edge-triggered, like the browser's).
+    last_hover: Option<NodeId>,
 }
 
 impl GlossPane {
@@ -157,6 +160,7 @@ impl GlossPane {
             runner,
             registry: LeafRegistry::new(),
             rendered: RenderedLeaves::new(),
+            last_hover: None,
         }
     }
 
@@ -252,6 +256,50 @@ impl GlossPane {
             &mut self.registry,
             &mut self.rendered,
         )
+    }
+
+    /// Route a pointer MOVE at pane-local `(x, y)`: hit-test the dom and
+    /// dispatch the Enter/Leave hover transitions; the view's handler writes
+    /// `swatch.hovered` and the next sync repaints the emphasis. Returns
+    /// whether the hover target changed (the host redraws on true).
+    pub fn hover(&mut self, x: f32, y: f32, w: u32, h: u32) -> bool {
+        let hit = {
+            let dom = self.dom.borrow();
+            let layout =
+                IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
+            let scroll = ScrollOffsets::<NodeId>::default();
+            layout.hit_test(&*dom, x, y, &scroll)
+        };
+        if hit == self.last_hover {
+            return false;
+        }
+        if let Some(prev) = self.last_hover {
+            let _ = self.runner.dispatch_hover(
+                prev,
+                cambium::HoverEvent::new(cambium::HoverPhase::Leave, (x, y), (x, y)),
+            );
+        }
+        if let Some(node) = hit {
+            let _ = self.runner.dispatch_hover(
+                node,
+                cambium::HoverEvent::new(cambium::HoverPhase::Enter, (x, y), (x, y)),
+            );
+        }
+        self.last_hover = hit;
+        true
+    }
+
+    /// The pointer left this pane: dispatch the pending Leave (if any) so the
+    /// hover emphasis clears. Returns whether anything changed.
+    pub fn hover_leave(&mut self) -> bool {
+        let Some(prev) = self.last_hover.take() else {
+            return false;
+        };
+        let _ = self.runner.dispatch_hover(
+            prev,
+            cambium::HoverEvent::new(cambium::HoverPhase::Leave, (0.0, 0.0), (0.0, 0.0)),
+        );
+        true
     }
 
     /// Route a click at pane-local `(x, y)` into the view, then drain the

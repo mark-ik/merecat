@@ -197,6 +197,9 @@ pub struct Shell {
     /// The Overmap pane (O1): the switcher as a graph view, retained like the
     /// Gloss minimap it mirrors.
     overmap_pane: Option<crate::overmap_pane::OvermapPane>,
+    /// Which pane the pointer is hovering (pane pointer-move routing): lets a
+    /// move off a pane deliver its Leave so hover emphasis clears.
+    hovered_pane: Option<frisket::PaneId>,
     /// The chrome, as a cambium view over a FOREST of window-roots (one
     /// shared document, one projection per window): retained + diffed, row
     /// clicks live, lens windows carry the caption chip. Replaces the
@@ -314,6 +317,7 @@ impl Shell {
             workbench_pane: None,
             apparatus_pane: None,
             overmap_pane: None,
+            hovered_pane: None,
             chrome: crate::chrome_view::ChromeSurfaces::new(),
             wb_tab_drag: None,
             wb_divider_drag: None,
@@ -1011,6 +1015,58 @@ impl Shell {
     /// a seam is captured, each move becomes a ratio through cambium's
     /// `Split::ratio_at` over the split's own container rect, lowered as an
     /// ordinary Action — the same spine as everything else.
+    /// Route a pointer move into the pane under it (pane pointer-move
+    /// routing): the swatch panes get their Enter/Leave hover transitions, so
+    /// the hover emphasis the component always supported finally lights up.
+    /// A move off a hovering pane delivers its Leave. Ephemeral, so it drives
+    /// the panes' semantic methods directly (the gesture law), never an Action.
+    fn deliver_hover(&mut self, x: f32, y: f32) {
+        let plan = self.surface_plan();
+        let hit = crate::surface::hit_test(&plan, self.app.focus, x, y);
+        let pane_hit = match hit.as_ref().map(|h| h.kind) {
+            Some(crate::surface::SurfaceKind::Pane(id)) => Some(id),
+            _ => None,
+        };
+        let mut redraw = false;
+        // Leaving the previously hovered pane clears its emphasis.
+        if let Some(prev) = self.hovered_pane
+            && pane_hit != Some(prev)
+        {
+            redraw |= match self.pane_content(prev) {
+                Some(PaneContent::Gloss) => {
+                    self.gloss_pane.as_mut().is_some_and(|p| p.hover_leave())
+                }
+                Some(PaneContent::Overmap) => {
+                    self.overmap_pane.as_mut().is_some_and(|p| p.hover_leave())
+                }
+                _ => false,
+            };
+        }
+        self.hovered_pane = pane_hit;
+        if let (Some(hit), Some(id)) = (hit, pane_hit) {
+            let dims = plan
+                .iter()
+                .find(|s| s.id == hit.id)
+                .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+            if let Some((rw, rh)) = dims {
+                redraw |= match self.pane_content(id) {
+                    Some(PaneContent::Gloss) => self
+                        .gloss_pane
+                        .as_mut()
+                        .is_some_and(|p| p.hover(hit.local.0, hit.local.1, rw, rh)),
+                    Some(PaneContent::Overmap) => self
+                        .overmap_pane
+                        .as_mut()
+                        .is_some_and(|p| p.hover(hit.local.0, hit.local.1, rw, rh)),
+                    _ => false,
+                };
+            }
+        }
+        if redraw {
+            self.request_redraw();
+        }
+    }
+
     fn deliver_move(&mut self, x: f32, y: f32) {
         // A workbench divider drag: the band's pair re-weights toward the
         // pointer (host math over platen's N-ary fractions), lowered as an
@@ -2949,6 +3005,7 @@ impl ApplicationHandler for Shell {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
                 self.deliver_move(self.cursor.0, self.cursor.1);
+                self.deliver_hover(self.cursor.0, self.cursor.1);
                 if self.app.canvas.cursor_moved(self.cursor.0, self.cursor.1) {
                     self.request_redraw();
                 }

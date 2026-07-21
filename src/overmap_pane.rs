@@ -69,7 +69,9 @@ fn overmap_view(state: &OvermapState) -> OvermapView {
                 state.pending.push(OvermapIntent::Switch(*session));
             }
         },
-        |_state: &mut OvermapState, _id: Option<Uuid>| {},
+        // Pointer-move routing is live (deliver_hover): the handler writes the
+        // hover emphasis, and the next sync's paint-leaf rebuild draws it.
+        |state: &mut OvermapState, id: Option<Uuid>| state.swatch.hovered = id,
         // Expand = leave the overmap for the canvas (the Gloss semantics: the
         // full view of the CURRENT session is the canvas).
         |state: &mut OvermapState| state.pending.push(OvermapIntent::Expand),
@@ -106,6 +108,9 @@ pub struct OvermapPane {
     runner: OvermapRunner,
     registry: LeafRegistry<u64>,
     rendered: RenderedLeaves,
+    /// The dom node the pointer last hovered, for Enter/Leave transitions
+    /// (the hover contract is edge-triggered, like the browser's).
+    last_hover: Option<NodeId>,
 }
 
 impl OvermapPane {
@@ -119,7 +124,9 @@ impl OvermapPane {
                     edges: Vec::new(),
                 },
             )
-            .with_label("Session overmap"),
+            .with_label("Session overmap")
+            // Identity is the point of an overview of sessions: labels render.
+            .with_node_labels(true),
             session_of: HashMap::new(),
             pending: Vec::new(),
             viewport_w: 0.0,
@@ -132,6 +139,7 @@ impl OvermapPane {
             runner,
             registry: LeafRegistry::new(),
             rendered: RenderedLeaves::new(),
+            last_hover: None,
         }
     }
 
@@ -261,6 +269,50 @@ impl OvermapPane {
         )
     }
 
+    /// Route a pointer MOVE at pane-local `(x, y)`: hit-test the dom and
+    /// dispatch the Enter/Leave hover transitions; the view's handler writes
+    /// `swatch.hovered` and the next sync repaints the emphasis. Returns
+    /// whether the hover target changed (the host redraws on true).
+    pub fn hover(&mut self, x: f32, y: f32, w: u32, h: u32) -> bool {
+        let hit = {
+            let dom = self.dom.borrow();
+            let layout =
+                IncrementalLayout::new(&*dom, &[crate::ui::CAMBIUM_SHEET], w as f32, h as f32);
+            let scroll = ScrollOffsets::<NodeId>::default();
+            layout.hit_test(&*dom, x, y, &scroll)
+        };
+        if hit == self.last_hover {
+            return false;
+        }
+        if let Some(prev) = self.last_hover {
+            let _ = self.runner.dispatch_hover(
+                prev,
+                cambium::HoverEvent::new(cambium::HoverPhase::Leave, (x, y), (x, y)),
+            );
+        }
+        if let Some(node) = hit {
+            let _ = self.runner.dispatch_hover(
+                node,
+                cambium::HoverEvent::new(cambium::HoverPhase::Enter, (x, y), (x, y)),
+            );
+        }
+        self.last_hover = hit;
+        true
+    }
+
+    /// The pointer left this pane: dispatch the pending Leave (if any) so the
+    /// hover emphasis clears. Returns whether anything changed.
+    pub fn hover_leave(&mut self) -> bool {
+        let Some(prev) = self.last_hover.take() else {
+            return false;
+        };
+        let _ = self.runner.dispatch_hover(
+            prev,
+            cambium::HoverEvent::new(cambium::HoverPhase::Leave, (0.0, 0.0), (0.0, 0.0)),
+        );
+        true
+    }
+
     /// Route a click at pane-local `(x, y)`; drain the recorded intents.
     pub fn click(&mut self, x: f32, y: f32, w: u32, h: u32) -> Vec<OvermapIntent> {
         let hit = {
@@ -349,6 +401,29 @@ mod tests {
             pane.rendered.get(OVERMAP_LEAF).is_some_and(|c| !c.is_empty()),
             "the overmap leaf must render paint commands at its laid-out box"
         );
+    }
+
+    /// Pointer-move routing: hovering a session node writes the hover
+    /// emphasis; moving off the node (or off the pane) clears it.
+    #[test]
+    fn hovering_a_session_node_sets_and_clears_emphasis() {
+        let (mut pane, _app, donor) = pane_on_fork_pair();
+        let (x, y) = pane
+            .resolve(
+                &genet_probe::Selector::class("graph-canvas-swatch-node")
+                    .with_attr("data-key", &donor.0.to_string()),
+                [0.0, 0.0, 480.0, 400.0],
+            )
+            .expect("the donor session node resolves");
+        assert!(pane.hover(x, y, 480, 400), "entering the node is a change");
+        assert_eq!(
+            pane.runner.state().swatch.hovered,
+            Some(uuid::Uuid::from_u128(0xd0)),
+            "the hover emphasis names the hovered container"
+        );
+        assert!(!pane.hover(x, y, 480, 400), "same target, no re-dispatch");
+        assert!(pane.hover_leave(), "leaving the pane is a change");
+        assert_eq!(pane.runner.state().swatch.hovered, None, "emphasis cleared");
     }
 
     /// Clicking a session node records the Switch intent for THAT session —
