@@ -63,3 +63,21 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
 - `PaneContent::Gloss` grows its config (serde-defaulted).
 - Palette actions scoped to the active pane (the registry's category reread
   the harvest doc already earmarks).
+
+## Progress
+
+- **2026-07-21 (the preset half LANDED — merecat `b02025c`):**
+  `src/swatch_pane.rs` is the vocabulary: `ProjectionPreset` (id, label,
+  leaf key, component knobs, one pure `gather: fn(&App) -> SwatchModel`) and
+  the one retained `SwatchPane` over any preset. Activation rides each node
+  as DATA (`SwatchActivate::Open/Switch`), so presets need no handler code
+  and the shell lowers every variant through the spine. Gloss + the Overmap
+  are now `GLOSS_MINIMAP` / `OVERMAP_LINEAGE` preset consts of the one pane;
+  receipts re-ran green (rung5_gloss's `click-node` proves the probe contract
+  survived the refactor). Riding along: cambium's swatch grew `with_expand` /
+  `with_node_labels` knobs (the overmap labels its sessions), and pane
+  pointer-move routing landed (`deliver_hover` — the hover emphasis the
+  component always supported now lights up). **Remaining**: the sections half
+  (the provider registry, `PaneContent::Gloss(GlossConfig)`, and the UI
+  question above — untouched, still the real work).
+
