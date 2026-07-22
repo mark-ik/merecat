@@ -96,6 +96,11 @@ pub struct ProjectionPreset {
     pub expand: bool,
     /// Gather the projection from app truth.
     pub gather: fn(&App) -> SwatchModel,
+    /// Composed list sections rendered below the swatch (the gloss-composite
+    /// design): the swatch shrinks to the top and the sections stack below.
+    /// Empty = the swatch fills the pane (the Overmap's shape). Hardcoded per
+    /// preset for now; the per-frisket-leaf config is the follow-on slice.
+    pub sections: &'static [crate::sections::SectionProvider],
 }
 
 /// The Gloss minimap as a preset: the live canvas geometry, colored by
@@ -108,6 +113,9 @@ pub const GLOSS_MINIMAP: ProjectionPreset = ProjectionPreset {
     node_labels: false,
     expand: true,
     gather: gloss_gather,
+    // The minimap composes the recycle bin's Removed section: deleted nodes
+    // are gone from the graph, so the minimap is where you'd look for them.
+    sections: &[crate::sections::REMOVED_SECTION],
 };
 
 /// The Overmap as a preset: sessions as container nodes with fork lineage,
@@ -121,6 +129,8 @@ pub const OVERMAP_LINEAGE: ProjectionPreset = ProjectionPreset {
     node_labels: true,
     expand: true,
     gather: overmap_gather,
+    // The overmap IS the session graph; no composed sections (it fills).
+    sections: &[],
 };
 
 /// A node's palette state from the host's content lifecycle (the same data
@@ -282,6 +292,12 @@ struct SwatchState {
     pending: Vec<SwatchIntent>,
     viewport_w: f32,
     viewport_h: f32,
+    /// The composed sections (title + rows) rendered below the swatch, gathered
+    /// from the preset's providers. Empty for a fill-the-pane swatch.
+    sections: Vec<(&'static str, Vec<crate::sections::SectionRow>)>,
+    /// The swatch area's height (px): the whole pane when there are no
+    /// sections, the top fraction when there are. The sections stack below it.
+    swatch_h: f32,
 }
 
 type SwatchView = Box<dyn AnyView<SwatchState, (), GenetCtx, GenetElement>>;
@@ -352,6 +368,8 @@ impl SwatchPane {
             pending: Vec::new(),
             viewport_w: 0.0,
             viewport_h: 0.0,
+            sections: Vec::new(),
+            swatch_h: 0.0,
         };
         let runner =
             SwatchRunner::new(dom.clone(), swatch_view as fn(&SwatchState) -> SwatchView, state);
@@ -392,8 +410,21 @@ impl SwatchPane {
             .map(|&(from, to)| GraphCanvasEdge { from, to })
             .collect();
 
+        // Composed sections shrink the swatch to the top fraction; without
+        // them it fills the pane (the Overmap's shape, unchanged).
+        let sections: Vec<(&'static str, Vec<crate::sections::SectionRow>)> = self
+            .preset
+            .sections
+            .iter()
+            .map(|p| (p.title, (p.gather)(app)))
+            .collect();
+        let swatch_h = if sections.is_empty() {
+            pane_h
+        } else {
+            (pane_h * SWATCH_FRACTION).max(64.0)
+        };
         let sw = ((pane_w - 2.0 * SWATCH_PAD).max(32.0)) as u32;
-        let sh = ((pane_h - 2.0 * SWATCH_PAD).max(32.0)) as u32;
+        let sh = ((swatch_h - 2.0 * SWATCH_PAD).max(32.0)) as u32;
         self.runner.update(|state| {
             state.swatch.graph = GraphCanvasSubgraph { nodes, edges };
             state.swatch.selected = model.selected;
@@ -402,6 +433,8 @@ impl SwatchPane {
             state.activate_of = activate_of;
             state.viewport_w = pane_w;
             state.viewport_h = pane_h;
+            state.sections = sections;
+            state.swatch_h = swatch_h;
         });
         self.registry.insert(
             self.preset.leaf_key,

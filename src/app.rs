@@ -295,6 +295,9 @@ impl App {
                 h,
                 self.canvas.community(),
                 Some(&extents),
+                // Recency reading pairs the Spiral's newest-first ordering
+                // with the size-by-recency channel (P3).
+                self.canvas.size_by_recency(),
             );
             self.canvas.apply_strategy_positions(&positions);
             self.canvas.note_strategy_computed(&id, w, h, focus);
@@ -820,6 +823,20 @@ impl App {
             Action::ToggleHeightByDegree => {
                 let on = !self.canvas.height_by_degree();
                 self.canvas.set_height_by_degree(on);
+                vec![Effect::Redraw]
+            }
+            Action::FitView => {
+                self.canvas.fit_to_content();
+                vec![Effect::Redraw]
+            }
+            Action::ToggleSizeByRecency => {
+                let on = !self.canvas.size_by_recency();
+                self.canvas.set_size_by_recency(on);
+                // A size change moves extents and the recency ordering, so the
+                // active analytic layout must recompute; re-selecting the same
+                // strategy drops its input cache (last_strategy_inputs = None).
+                let active = self.canvas.layout_strategy().map(str::to_string);
+                self.canvas.set_layout_strategy(active);
                 vec![Effect::Redraw]
             }
             Action::SaveSession => vec![Effect::SaveSession],

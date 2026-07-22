@@ -1,0 +1,27 @@
+# Projection-engine proof 3 (P3a): recency drives scale + spiral ordinal.
+# size-by-recency grows the newest-visited node and shrinks the oldest; the
+# Spiral then seats newest-first (freshest at the center, age spiralling
+# outward) and fits the view so the whole spiral frames. Offline (mere://
+# sample ring). NOTE: recency here reflects the sample nodes' construction
+# order — visit() does not (yet) refresh last_visited on an existing node
+# (recorded finding), so the opens below only select. Fresh profile.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://gamma
+settle 30
+capture 01_uniform_force
+
+act Toggle size-by-recency
+settle 20
+capture 02_recency_sizes
+
+act Layout: Spiral
+settle 20
+act Fit view
+settle 20
+capture 03_recency_spiral
+
+log projection proof 3 (recency) complete

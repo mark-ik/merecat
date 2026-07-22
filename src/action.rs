@@ -77,6 +77,10 @@ pub enum Action {
     },
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
+    /// Frame the camera on the current content bounds. An analytic layout can
+    /// place nodes anywhere in world space (and the extent-aware Spiral spreads
+    /// wide), so the view needs an explicit fit. (Projection proofs — P3.)
+    FitView,
     /// Switch the canvas layout: `Some(id)` selects an analytic cartography
     /// strategy (the shell projects it per frame through the canvas's
     /// recompute gate); `None` reverts to force-directed physics. The first
@@ -90,6 +94,10 @@ pub enum Action {
     TiltBy(f32),
     /// Toggle height-by-degree (hubs float above the ground plane).
     ToggleHeightByDegree,
+    /// Toggle size-by-recency: newest content reads largest, older shrinks.
+    /// Pairs with the Spiral (newest at center, age spiralling outward) —
+    /// projection-engine proof 3, the recency channel.
+    ToggleSizeByRecency,
     /// Persist the session now (close path; enrichment saves ride effects).
     SaveSession,
     /// Flip the focused node's live content: spawn a document session for it
@@ -293,6 +301,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Forward", Action::NavForward),
         ("Reload", Action::Reload),
         ("Reseed layout", Action::ReseedLayout),
+        ("Fit view", Action::FitView),
         // Plain product vocabulary for the arrangement register (matches the
         // arrangements registry display names, the Merely brand's projection
         // names); the strategy id stays technical. Force-directed is the
@@ -307,6 +316,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ),
         ("Toggle isometric view", Action::ToggleIsometric),
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
+        ("Toggle size-by-recency", Action::ToggleSizeByRecency),
         ("Orbit left", Action::OrbitBy(-0.15)),
         ("Orbit right", Action::OrbitBy(0.15)),
         ("Toggle live content", Action::ToggleNodeContent),
