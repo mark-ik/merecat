@@ -81,3 +81,24 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
   (the provider registry, `PaneContent::Gloss(GlossConfig)`, and the UI
   question above — untouched, still the real work).
 
+- **2026-07-22 (the sections half, slice 1 LANDED — merecat `151b416`):**
+  `src/sections.rs` is the section-provider registry: `SectionProvider` (id,
+  title, a pure `gather: fn(&App) -> Vec<SectionRow>` — the same currency as a
+  preset's `gather`, the seam the swatch half left), with `RECENT_SECTION` /
+  `REMOVED_SECTION` (the Trail's Recent/Removed gathers, now composable) and
+  `by_id` lookup. `ProjectionPreset` grew a `sections: &[SectionProvider]`
+  field: `GLOSS_MINIMAP` composes `[REMOVED]` (deleted nodes are gone from the
+  graph, so the minimap is where you look for them), the Overmap composes none
+  (it fills). The swatch shrinks to the top `SWATCH_FRACTION` and the sections
+  stack below in a scrollable column; `swatch_view` renders title + rows,
+  inert display. Receipt `rung5_gloss_composite.scn` headed ok (the Removed
+  row shows under the minimap after a delete); `rung5_gloss` re-run green (the
+  `click-node` probe survived the swatch shrink). The registry test caught a
+  real semantic: the Removed section filters by ORIGINAL node id, so a plain
+  open (new id) does not clear it — only recover (which restores the id) does.
+  **Remaining (slices 2+):** a section row's click (a Recent row navigates, a
+  Removed row recovers — the swatch's `resolve`/probe contract extended to the
+  section rows); the per-frisket-leaf config (`PaneContent::Gloss(GlossConfig)`
+  so a pane chooses its sections, persisted with `frame.json`); and the
+  add/remove UI (the right-click palette scoped to the active pane).
+
