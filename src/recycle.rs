@@ -22,7 +22,7 @@
 use std::path::{Path, PathBuf};
 
 use armillary::{ActorHandle, Emitter, Wake, spawn_named};
-use eidetic::{DeletedNode, Store, list_deleted, record_deleted};
+use eidetic::{DeletedNode, Store, clear_deleted, list_deleted, record_deleted};
 use eidetic_fjall::FjallStore;
 use std::sync::mpsc::Receiver;
 
@@ -36,6 +36,11 @@ pub enum BinCommand {
     /// Re-point the store at another session's bin (a session switch), then
     /// answer with ITS list.
     Reopen(PathBuf),
+    /// Permanently forget EVERY staged node ("empty the recycle bin"), then
+    /// answer with the (now empty) list. Athanor's oven, on command. (Per-item
+    /// purge — `eidetic::purge_deleted` — lands with its Removed-row affordance
+    /// and the scheduled age-out pass.)
+    Empty,
     /// Drop the open store and ack — the close path's handshake: Windows
     /// cannot rename a directory whose files are open, so the shell releases
     /// the bin BEFORE moving the session dir to the trash. No list is emitted
@@ -129,6 +134,21 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
                     if let Err(err) = pollster::block_on(record_deleted(store, &deleted)) {
                         out.emit(Update::BinFailed {
                             error: format!("record: {err}"),
+                        });
+                        continue;
+                    }
+                    emit_list(store, &out);
+                }
+                BinCommand::Empty => {
+                    let Some(store) = store.as_mut() else {
+                        out.emit(Update::BinFailed {
+                            error: "empty: the bin store is not open".to_string(),
+                        });
+                        continue;
+                    };
+                    if let Err(err) = pollster::block_on(clear_deleted(store)) {
+                        out.emit(Update::BinFailed {
+                            error: format!("empty: {err}"),
                         });
                         continue;
                     }

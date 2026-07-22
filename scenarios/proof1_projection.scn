@@ -1,0 +1,26 @@
+# Projection-engine proof 1: the analytic catalog reaches the host. The
+# palette switches the canvas to the phyllotaxis cartography strategy; the
+# shell's new drive loop projects it through the canvas's recompute gate and
+# the analytic layout holds still; reverting re-settles the physics. Offline
+# (mere:// nodes ride the sample ring); run on a FRESH profile (MERECAT_ROOT).
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://beta
+settle 10
+open mere://gamma
+# Let the force layout settle into its own arrangement first: the baseline.
+settle 120
+capture 01_force_baseline
+
+act Layout: Spiral
+settle 30
+capture 02_phyllotaxis
+
+act Layout: Force-directed
+settle 90
+capture 03_force_restored
+
+log projection proof 1 complete

@@ -41,4 +41,17 @@ assert focused example
 assert no-row Removed
 capture 02_recovered
 
-log recycle bin (delete + identity recover through eidetic) complete
+# Delete it again and permanently forget it. "Empty recycle bin" is athanor's
+# oven on command: it clears the eidetic store (the actor answers with the
+# empty list), so the record is GONE, not merely derived away — a fresh open
+# of the same url would mint a stranger, not recover it. Irreversible.
+act Delete node
+settle 15
+assert row Removed
+act Empty recycle bin
+settle 15
+assert event recycle-bin-emptied
+assert no-row Removed
+capture 03_emptied
+
+log recycle bin (delete, identity recover, empty the bin) complete

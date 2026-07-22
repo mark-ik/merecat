@@ -77,6 +77,11 @@ pub enum Action {
     },
     /// Re-seed the canvas layout and replay the settle.
     ReseedLayout,
+    /// Switch the canvas layout: `Some(id)` selects an analytic cartography
+    /// strategy (the shell projects it per frame through the canvas's
+    /// recompute gate); `None` reverts to force-directed physics. The first
+    /// host wiring of the analytic catalog (projection-engine proof 1).
+    SetLayoutStrategy(Option<&'static str>),
     /// Toggle the isometric (2.5D foreshortened) view.
     ToggleIsometric,
     /// Orbit the view (yaw) by radians.
@@ -180,6 +185,9 @@ pub enum Action {
     /// (a Trail Removed-row click): the node re-mints under the same uuid
     /// (identity restored), with its recorded title and tags.
     RecoverDeletedNode(uuid::Uuid),
+    /// Permanently forget every staged node ("empty the recycle bin") —
+    /// athanor's oven, on command. Irreversible; the records leave the store.
+    EmptyRecycleBin,
     /// Restore a trashed SESSION from the manifest trash and switch to it
     /// (overmap O3; a Trail Removed-sessions-row click). The whole session
     /// directory moved to `.trash/` intact at close, so restore is
@@ -285,6 +293,18 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Forward", Action::NavForward),
         ("Reload", Action::Reload),
         ("Reseed layout", Action::ReseedLayout),
+        // Plain product vocabulary for the arrangement register (matches the
+        // arrangements registry display names, the Merely brand's projection
+        // names); the strategy id stays technical. Force-directed is the
+        // orrery surface's native arrangement (revert = None).
+        (
+            "Layout: Spiral",
+            Action::SetLayoutStrategy(Some("phyllotaxis.default")),
+        ),
+        (
+            "Layout: Force-directed",
+            Action::SetLayoutStrategy(None),
+        ),
         ("Toggle isometric view", Action::ToggleIsometric),
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
         ("Orbit left", Action::OrbitBy(-0.15)),
@@ -304,6 +324,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open node in Workbench", Action::OpenInWorkbench),
         ("Close workbench tile", Action::CloseWorkbenchTile),
         ("Delete node", Action::DeleteFocusedNode),
+        ("Empty recycle bin", Action::EmptyRecycleBin),
         ("Close pane", Action::CloseActivePane),
         ("Maximize pane", Action::ToggleMaximizePane),
         ("New session", Action::NewSession),
@@ -346,6 +367,9 @@ pub enum Effect {
     /// actor persists it in the session's eidetic store and answers with the
     /// refreshed list).
     RecordDeleted { record: RemovedRecord },
+    /// Permanently forget every staged node — the bin actor clears its store
+    /// and answers with the empty list ("empty the recycle bin").
+    EmptyRecycleBin,
     /// Close a session (overmap O3): the shell releases the bin store (its
     /// open files block the rename on Windows), moves the closing session's
     /// whole directory to the manifest trash via `App::apply_trash`, and

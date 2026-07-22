@@ -170,6 +170,10 @@ fn action_for(command: &str) -> Option<Action> {
     match command.trim().to_ascii_lowercase().as_str() {
         "save_session" => Some(Action::SaveSession),
         "reseed_layout" => Some(Action::ReseedLayout),
+        // The analytic-layout lane (projection-engine proof 1): the runner
+        // reaches the same strategy switch the palette does.
+        "layout_spiral" => Some(Action::SetLayoutStrategy(Some("phyllotaxis.default"))),
+        "layout_force" => Some(Action::SetLayoutStrategy(None)),
         "toggle_isometric" => Some(Action::ToggleIsometric),
         "toggle_height_by_degree" => Some(Action::ToggleHeightByDegree),
         "toggle_live_content" => Some(Action::ToggleNodeContent),

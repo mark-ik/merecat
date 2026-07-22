@@ -148,6 +148,9 @@ pub enum AppEvent {
     /// The recycle-bin store failed (open / record / list) — the Removed
     /// section may be stale or empty for the WRONG reason; loud + attributable.
     BinFailed(String),
+    /// The recycle bin was emptied on command (athanor's oven), by how many
+    /// records were permanently forgotten.
+    RecycleBinEmptied(usize),
     /// A removed node was recovered (re-opened), by its url.
     NodeRecovered(String),
     OmnibarOpened,
@@ -202,6 +205,7 @@ impl AppEvent {
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),
             AppEvent::BinFailed(error) => format!("bin-failed {error}"),
+            AppEvent::RecycleBinEmptied(n) => format!("recycle-bin-emptied {n}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

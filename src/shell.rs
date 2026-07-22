@@ -359,6 +359,9 @@ impl Shell {
                     self.bin_handle
                         .command(crate::recycle::BinCommand::Record(record));
                 }
+                Effect::EmptyRecycleBin => {
+                    self.bin_handle.command(crate::recycle::BinCommand::Empty);
+                }
                 // The session switch (rung 6's second half). Ordering is the
                 // point of this being an EFFECT: the departing session saves
                 // under ITS directory while it is still the live state, the
@@ -1541,6 +1544,9 @@ impl Shell {
             let (rw, rh) = (rect.w.round().max(1.0) as u32, rect.h.round().max(1.0) as u32);
             let (scene, clear) = match surface.kind {
                 crate::surface::SurfaceKind::Canvas => {
+                    // Analytic layout strategies project through the host loop
+                    // (recompute-gated) before the frame reads positions.
+                    self.app.drive_layout_strategy(rw, rh);
                     let (scene, animating) = self.app.canvas.frame(rw, rh);
                     needs_redraw |= animating;
                     (scene, wgpu::Color::WHITE)
@@ -1812,6 +1818,7 @@ impl Shell {
                     let saved = self.app.canvas.viewport();
                     self.app.canvas.set_viewport(new_viewport);
                     self.app.canvas.resize(rw, rh);
+                    self.app.drive_layout_strategy(rw, rh);
                     let (scene, anim) = self.app.canvas.frame(rw, rh);
                     animating |= anim;
                     new_viewport = self.app.canvas.viewport();

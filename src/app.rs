@@ -271,6 +271,36 @@ impl App {
             .map(|m| *m.root_graph_id.as_uuid())
     }
 
+    /// Drive the active analytic layout strategy for this frame: recompute the
+    /// projection when its inputs changed (the canvas's recompute gate) and
+    /// buffer the positions into the canvas, which overlays them after the
+    /// physics snapshot. The cartography host loop the canvas documents but
+    /// no host ran until now (projection-engine proof 1). A no-op under
+    /// force-directed. Called by the shell right before `canvas.frame()`.
+    pub fn drive_layout_strategy(&mut self, w: u32, h: u32) {
+        let Some(id) = self.canvas.layout_strategy().map(str::to_string) else {
+            return;
+        };
+        self.canvas.refresh_community_cache(&id);
+        let focus = self.canvas.focused_key();
+        if self.canvas.needs_strategy_recompute(&id, w, h, focus) {
+            // The host measures (per-node face footprints), the strategy
+            // places — extent-aware spacing per the P2 contract.
+            let extents = self.canvas.strategy_extents();
+            let positions = mere::canvas::project_canvas_strategy(
+                &id,
+                self.canvas.graph(),
+                focus,
+                w,
+                h,
+                self.canvas.community(),
+                Some(&extents),
+            );
+            self.canvas.apply_strategy_positions(&positions);
+            self.canvas.note_strategy_computed(&id, w, h, focus);
+        }
+    }
+
     /// Write the LIVE state into the facet store: the canvas arrangement as
     /// the `arrangement.*` family (positions are not graph truth, so the graph
     /// alone loses the layout; sizes / sprites / hulls / materials / faces
@@ -768,6 +798,12 @@ impl App {
                     Vec::new()
                 }
             }
+            Action::SetLayoutStrategy(id) => {
+                self.canvas.set_layout_strategy(id.map(str::to_string));
+                // The projection itself is computed on the next frame by
+                // `drive_layout_strategy` (it needs the surface viewport).
+                vec![Effect::Redraw]
+            }
             Action::ToggleIsometric => {
                 let on = !self.canvas.is_isometric();
                 self.canvas.set_isometric(on);
@@ -939,6 +975,16 @@ impl App {
                     });
                 }
                 effects
+            }
+            Action::EmptyRecycleBin => {
+                // Athanor's oven, on command: the bin actor clears its store
+                // and answers with the empty list (which refreshes the mirror).
+                // A no-op when the bin is already empty (honest — no event).
+                if self.removed.is_empty() {
+                    return vec![Effect::Redraw];
+                }
+                self.events.push(AppEvent::RecycleBinEmptied(self.removed.len()));
+                vec![Effect::EmptyRecycleBin, Effect::Redraw]
             }
             Action::NewWindow => {
                 let ordinal = self.seed_lens_space();
@@ -2020,6 +2066,48 @@ mod tests {
             "Removed derives away once the node is present (record still staged)"
         );
         assert!(!app.removed.is_empty(), "the bin record itself remains");
+    }
+
+    /// Empty-the-bin is athanor's oven on command: it lowers the EmptyRecycleBin
+    /// effect (the actor clears the store) only when there is something to
+    /// forget, and folding the port's empty answer clears the mirror.
+    #[test]
+    fn empty_recycle_bin_forgets_on_command() {
+        let mut app = App::test_stub();
+        // An empty bin is a no-op: no effect, no event (honest, no placebo).
+        let fx = app.update(Action::EmptyRecycleBin);
+        assert!(
+            !fx.iter().any(|e| matches!(e, Effect::EmptyRecycleBin)),
+            "nothing to empty lowers no effect: {fx:?}"
+        );
+
+        // Stage two records (as the bin port's answer would), then empty.
+        app.apply_update(Update::BinListed {
+            records: vec![
+                crate::action::RemovedRecord {
+                    node_id: uuid::Uuid::new_v4(),
+                    url: "https://a.test".into(),
+                    title: None,
+                    tags: Vec::new(),
+                    deleted_at_ms: 2,
+                },
+                crate::action::RemovedRecord {
+                    node_id: uuid::Uuid::new_v4(),
+                    url: "https://b.test".into(),
+                    title: None,
+                    tags: Vec::new(),
+                    deleted_at_ms: 1,
+                },
+            ],
+        });
+        let fx = app.update(Action::EmptyRecycleBin);
+        assert!(
+            fx.iter().any(|e| matches!(e, Effect::EmptyRecycleBin)),
+            "a non-empty bin lowers the clear effect: {fx:?}"
+        );
+        // The store's empty answer (folded as the drain would) clears the mirror.
+        app.apply_update(Update::BinListed { records: Vec::new() });
+        assert!(app.removed.is_empty(), "the mirror is empty after the bin clears");
     }
 
 
