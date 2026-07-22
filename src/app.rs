@@ -132,6 +132,14 @@ pub struct App {
     /// the shell's actor. Feeds the Trail's Removed section (records whose
     /// node is absent from the graph); recovery restores the ORIGINAL id.
     pub removed: Vec<crate::action::RemovedRecord>,
+    /// A staged denizen install awaiting its visible grant review (B1).
+    pub pending_install: Option<crate::denizen::PendingInstall>,
+    /// The session's denizen runtime: residents, derived authority, the gate.
+    pub denizens: crate::denizen::Denizens,
+    /// The attributed edit journal (mere's spine): every graph mutation
+    /// captured under its author — `user` for the UI, a denizen's subject hex
+    /// during a run. Shared with the capture hook installed at boot.
+    pub journal: std::sync::Arc<std::sync::Mutex<mere::kernel::graph::GraphJournal>>,
     /// The manifest trash, cached (overmap O3): each closed session's whole
     /// directory sits under `.trash/`, so the trash IS the removed-sessions
     /// record — derived, no parallel bin. Refreshed on adopt / close /
@@ -155,6 +163,11 @@ impl App {
     pub fn boot(address: Option<&str>) -> (Self, Vec<Effect>) {
         let data_root = session::default_merecat_root();
         let _ = std::fs::create_dir_all(&data_root);
+        // The attributed journal + its capture hook (participant gate B1):
+        // every mutation that flows through apply_graph_delta records here
+        // under the current author.
+        let (journal, hook) = mere::kernel::graph::journal_capture_hook();
+        mere::kernel::graph::set_captured_delta_hook(Some(hook));
         let mut sessions = session::load_manifests(&data_root);
         // Pre-overmap manifests minted nil root_graph_ids; the container id
         // must be real (scene.* facet key + overmap identity), so heal at boot.
@@ -186,6 +199,9 @@ impl App {
             roster_tab: 0,
             removed: Vec::new(),
             trash: Vec::new(),
+            pending_install: None,
+            denizens: crate::denizen::Denizens::default(),
+            journal,
             next_pane_id: 1,
             events: Vec::new(),
         };
@@ -287,7 +303,7 @@ impl App {
             // The host measures (per-node face footprints), the strategy
             // places — extent-aware spacing per the P2 contract.
             let extents = self.canvas.strategy_extents();
-            let positions = mere::canvas::project_canvas_strategy(
+            let strategy = mere::canvas::project_canvas_strategy_with_score(
                 &id,
                 self.canvas.graph(),
                 focus,
@@ -299,7 +315,8 @@ impl App {
                 // with the size-by-recency channel (P3).
                 self.canvas.size_by_recency(),
             );
-            self.canvas.apply_strategy_positions(&positions);
+            self.canvas.apply_strategy_positions(&strategy.positions);
+            self.canvas.set_projection_score(strategy.score);
             self.canvas.note_strategy_computed(&id, w, h, focus);
         }
     }
@@ -419,22 +436,49 @@ impl App {
     /// The dynamic switcher entries for the omnibar's `>` lane: a switch per
     /// OTHER session, most recently updated first ("New session" is a static
     /// palette entry).
+    /// The denizen rows for the palette's actions lane: the pending
+    /// install's visible review (the Confirm row IS the ask), then one Run
+    /// row per resident (B1: the palette populated from denizen residency).
+    pub fn denizen_actions(&self) -> Vec<(String, Action)> {
+        let mut rows = Vec::new();
+        if let Some(pending) = &self.pending_install {
+            rows.push((
+                crate::denizen::review_line(pending),
+                Action::ConfirmInstallDenizen,
+            ));
+            rows.push((
+                format!("Cancel install {}", pending.label),
+                Action::CancelInstallDenizen,
+            ));
+        }
+        let mut residents: Vec<_> = self.denizens.residents.iter().collect();
+        residents.sort_by(|(_, a), (_, b)| a.label.cmp(&b.label));
+        for (member, resident) in residents {
+            rows.push((
+                format!("Run {}", resident.label),
+                Action::RunDenizen { member: *member },
+            ));
+        }
+        rows
+    }
+
     pub fn session_actions(&self) -> Vec<(String, Action)> {
+        // Denizen rows lead: a pending install's review must be the first
+        // thing the opened palette shows (B1's visible grant review).
+        let mut rows = self.denizen_actions();
         let mut others: Vec<_> = self
             .sessions
             .iter()
             .filter(|(id, _)| *id != self.session_id)
             .collect();
         others.sort_by_key(|(_, m)| std::cmp::Reverse(m.updated_at));
-        others
-            .into_iter()
-            .map(|(id, _)| {
-                (
-                    format!("Switch to session {}", self.session_label(id)),
-                    Action::SwitchSession(id),
-                )
-            })
-            .collect()
+        rows.extend(others.into_iter().map(|(id, _)| {
+            (
+                format!("Switch to session {}", self.session_label(id)),
+                Action::SwitchSession(id),
+            )
+        }));
+        rows
     }
 
     /// Adopt `id`'s persisted state wholesale — the load half of a boot and
@@ -459,6 +503,9 @@ impl App {
         // halts; the saved layout is applied from the facet store next).
         self.canvas
             .set_graph(session::load_session_graph(&sdir).unwrap_or_default());
+        if let Some(score) = session::load_projection_score(&sdir) {
+            self.canvas.restore_projection_score(score);
+        }
         // The facet store (`facets.json`): pruned to the live graph's nodes
         // (a deleted node's facets go with it), then the arrangement.* family
         // re-dresses the canvas — the durable layout, since the graph itself
@@ -475,7 +522,12 @@ impl App {
         if let Some(container) = self.container_id() {
             let nil = uuid::Uuid::nil();
             if container != nil && self.facets.facets_of(&nil).is_some() {
-                session_runtime::copy_scene_facets(&self.facets.clone(), &mut self.facets, nil, container);
+                session_runtime::copy_scene_facets(
+                    &self.facets.clone(),
+                    &mut self.facets,
+                    nil,
+                    container,
+                );
                 self.facets.remove_node(&nil);
             }
         }
@@ -490,6 +542,9 @@ impl App {
         session_runtime::retain_present_nodes(&mut self.facets, &present);
         self.canvas
             .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
+        // The denizen runtime derives from the binding facets + nested logs.
+        self.pending_install = None;
+        self.denizens = crate::denizen::rebuild(&self.facets, &sdir);
         // The scene's own view settings ride the `scene.*` container facets:
         // the sizing mode + metric and the physics damping re-open as saved.
         let scene = self
@@ -498,7 +553,8 @@ impl App {
             .unwrap_or_default();
         self.physics_damping = scene.physics_damping;
         self.canvas.set_physics_damping(scene.physics_damping);
-        self.canvas.apply_cartography_importance_metric(&scene.importance_metric);
+        self.canvas
+            .apply_cartography_importance_metric(&scene.importance_metric);
         self.canvas.apply_cartography_sizing(
             session_runtime::read_arrangement_sizes(&self.facets),
             scene.size_by_degree,
@@ -507,9 +563,10 @@ impl App {
         let sprites = session_runtime::read_arrangement_sprites(&self.facets);
         self.canvas
             .apply_cartography_sprites(sprites.iter().map(|(id, uri)| (*id, uri.as_str())));
-        self.canvas.apply_cartography_sprite_hulls(
-            session_runtime::read_arrangement_sprite_hulls(&self.facets),
-        );
+        self.canvas
+            .apply_cartography_sprite_hulls(session_runtime::read_arrangement_sprite_hulls(
+                &self.facets,
+            ));
         self.canvas
             .apply_cartography_materials(session_runtime::read_arrangement_materials(&self.facets));
         let faces = session_runtime::read_arrangement_faces(&self.facets);
@@ -552,7 +609,10 @@ impl App {
         // The history seeds from wherever the session opens (the focused
         // node's url, or an empty sentinel Back can never step past).
         self.history = chrome::nav::History::new(
-            self.canvas.focused_url().map(str::to_string).unwrap_or_default(),
+            self.canvas
+                .focused_url()
+                .map(str::to_string)
+                .unwrap_or_default(),
         );
         // Restore WHERE the user was (rung 6): re-select the most recently
         // visited node when nothing is selected (restored live content
@@ -744,7 +804,9 @@ impl App {
                     return vec![Effect::Redraw];
                 };
                 self.events.push(AppEvent::NavigatedBack(url.clone()));
-                if !url.is_empty() && !self.canvas.select_by_url(&url) {
+                if !url.is_empty() {
+                    // Navigation is a revisit even when its node already
+                    // exists, so P3's recency-derived score remains honest.
                     self.canvas.visit(&url);
                 }
                 vec![Effect::Redraw]
@@ -754,9 +816,7 @@ impl App {
                     return vec![Effect::Redraw];
                 };
                 self.events.push(AppEvent::NavigatedForward(url.clone()));
-                if !self.canvas.select_by_url(&url) {
-                    self.canvas.visit(&url);
-                }
+                self.canvas.visit(&url);
                 vec![Effect::Redraw]
             }
             Action::Reload => {
@@ -780,7 +840,9 @@ impl App {
                 // without content stays without (reload is not a spawn).
                 if matches!(
                     self.content.get(node),
-                    Some(crate::content::NodeContent::Live | crate::content::NodeContent::Requested)
+                    Some(
+                        crate::content::NodeContent::Live | crate::content::NodeContent::Requested
+                    )
                 ) {
                     self.content.note_requested(node);
                     self.events.push(AppEvent::ContentState {
@@ -803,6 +865,9 @@ impl App {
             }
             Action::SetLayoutStrategy(id) => {
                 self.canvas.set_layout_strategy(id.map(str::to_string));
+                if id != Some("phyllotaxis.default") {
+                    self.canvas.set_projection_score(None);
+                }
                 // The projection itself is computed on the next frame by
                 // `drive_layout_strategy` (it needs the surface viewport).
                 vec![Effect::Redraw]
@@ -854,6 +919,112 @@ impl App {
                 }
                 vec![Effect::SwitchSession { id }]
             }
+            // ---- Denizen residency (participant gate B1) ----
+            Action::InstallDenizen { path } => {
+                match crate::denizen::stage_install(std::path::Path::new(&path)) {
+                    Ok(pending) => {
+                        self.events
+                            .push(AppEvent::DenizenStaged(pending.label.clone()));
+                        self.pending_install = Some(pending);
+                        // Surface the review: the palette opens on the actions
+                        // lane, whose top rows are the Confirm (carrying the
+                        // ASK) and Cancel.
+                        self.omnibar = OmnibarState {
+                            open: true,
+                            text: ">".to_string(),
+                            ..OmnibarState::default()
+                        };
+                        self.focus = FocusTarget::Chrome;
+                        let actions = self.session_actions();
+                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                        vec![Effect::Redraw]
+                    }
+                    Err(err) => {
+                        tracing::warn!(%err, %path, "denizen install refused at staging");
+                        self.events.push(AppEvent::DenizenRefused(err));
+                        vec![Effect::Redraw]
+                    }
+                }
+            }
+            Action::ConfirmInstallDenizen => {
+                let Some(pending) = self.pending_install.take() else {
+                    return vec![Effect::Redraw];
+                };
+                let label = pending.label.clone();
+                let member = crate::denizen::install(self, pending);
+                self.events.push(AppEvent::DenizenInstalled(label));
+                let _ = member;
+                self.omnibar = OmnibarState::default();
+                self.focus = FocusTarget::Canvas;
+                vec![Effect::SaveSession, Effect::Redraw]
+            }
+            Action::CancelInstallDenizen => {
+                if self.pending_install.take().is_some() {
+                    self.events.push(AppEvent::DenizenRefused("cancelled".into()));
+                }
+                self.omnibar = OmnibarState::default();
+                vec![Effect::Redraw]
+            }
+            Action::RunDenizen { member } => {
+                let Some((subject, label, source)) = self
+                    .denizens
+                    .residents
+                    .get(&member)
+                    .map(|r| (r.subject, r.label.clone(), ()))
+                    .and_then(|(s, l, ())| {
+                        self.facets
+                            .get(&member, &chartulary::FacetId::new(
+                                crate::denizen::SCENARIO_SOURCE_FACET,
+                            ))
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .map(|src| (s, l, src))
+                    })
+                else {
+                    return vec![Effect::Redraw];
+                };
+                // Evaluate the body (read-only against app truth; mutation
+                // only ever leaves as typed Actions). The runnable lane is the
+                // piccolo feature; a runtime-free build refuses honestly.
+                #[cfg(not(feature = "piccolo"))]
+                let actions: Vec<Action> = {
+                    let _ = (&source, &subject);
+                    tracing::warn!(%label, "denizen run refused: built without the piccolo feature");
+                    self.events.push(AppEvent::DenizenRefused(
+                        "this build carries no script runtime".to_string(),
+                    ));
+                    return vec![Effect::Redraw];
+                };
+                #[cfg(feature = "piccolo")]
+                let actions = match crate::script::run_control(
+                    self,
+                    &source,
+                    crate::denizen::RUN_BUDGET,
+                ) {
+                    Ok(actions) => actions,
+                    Err(err) => {
+                        tracing::warn!(%err, %label, "denizen run failed");
+                        self.events.push(AppEvent::DenizenRefused(err));
+                        return vec![Effect::Redraw];
+                    }
+                };
+                // Lower the emitted Actions through this same spine with the
+                // journal scoped to the denizen's author, so every captured
+                // graph edit reads back attributed to the subject.
+                if let Ok(mut journal) = self.journal.lock() {
+                    journal.set_author(subject.to_hex());
+                }
+                let mut effects = Vec::new();
+                for action in actions {
+                    effects.extend(self.update(action));
+                }
+                if let Ok(mut journal) = self.journal.lock() {
+                    journal.set_author(mere::kernel::graph::USER_AUTHOR);
+                }
+                self.events.push(AppEvent::DenizenRan(label));
+                effects.push(Effect::SaveSession);
+                effects.push(Effect::Redraw);
+                effects
+            }
             Action::RecoverSession(id) => {
                 // Overmap O3 recovery: the trashed directory moves back whole
                 // (graph + facets + bin), the manifest re-lists, and the
@@ -887,9 +1058,7 @@ impl App {
                     .filter(|(id, _)| *id != closing)
                     .max_by_key(|(_, m)| m.updated_at)
                     .map(|(id, _)| id)
-                    .unwrap_or_else(|| {
-                        Self::mint_session(&self.data_root, &mut self.sessions)
-                    });
+                    .unwrap_or_else(|| Self::mint_session(&self.data_root, &mut self.sessions));
                 // The disk half (bin release + trash move + adopt-without-save)
                 // is ordering the SHELL owns — see Effect::TrashSession.
                 vec![Effect::TrashSession { closing, next }]
@@ -971,8 +1140,7 @@ impl App {
                 // the store (append-only until athanor's pass); the Trail's
                 // Removed section derives it away because the node is present
                 // again.
-                let Some(record) = self.removed.iter().find(|r| r.node_id == id).cloned()
-                else {
+                let Some(record) = self.removed.iter().find(|r| r.node_id == id).cloned() else {
                     return vec![Effect::Redraw];
                 };
                 let member = self.canvas.recover_node(
@@ -983,7 +1151,8 @@ impl App {
                 );
                 self.canvas.center_on_selected();
                 self.history.visit(record.url.clone());
-                self.events.push(AppEvent::NodeRecovered(record.url.clone()));
+                self.events
+                    .push(AppEvent::NodeRecovered(record.url.clone()));
                 let mut effects = vec![Effect::SaveSession, Effect::Redraw];
                 if fetch::is_fetchable(&record.url) {
                     effects.push(Effect::FetchPage {
@@ -1000,7 +1169,8 @@ impl App {
                 if self.removed.is_empty() {
                     return vec![Effect::Redraw];
                 }
-                self.events.push(AppEvent::RecycleBinEmptied(self.removed.len()));
+                self.events
+                    .push(AppEvent::RecycleBinEmptied(self.removed.len()));
                 vec![Effect::EmptyRecycleBin, Effect::Redraw]
             }
             Action::NewWindow => {
@@ -1058,7 +1228,8 @@ impl App {
                 // window — summon-beside lands there, the divider op reweights
                 // there (the lens-frisket-ops receipt's hinge).
                 self.active_pane = Some(pane_id);
-                self.events.push(AppEvent::PaneTornOut(content.tag().to_string()));
+                self.events
+                    .push(AppEvent::PaneTornOut(content.tag().to_string()));
                 // The move is durable structure in TWO trees; persist it (the
                 // lens-window sidecar is what makes the window survive a
                 // restart).
@@ -1116,7 +1287,9 @@ impl App {
                 // route, so the setting is seen applying (the Reload shape).
                 if matches!(
                     self.content.get(member),
-                    Some(crate::content::NodeContent::Live | crate::content::NodeContent::Requested)
+                    Some(
+                        crate::content::NodeContent::Live | crate::content::NodeContent::Requested
+                    )
                 ) && let Some(url) = self
                     .canvas
                     .graph()
@@ -1136,7 +1309,11 @@ impl App {
                 effects.push(Effect::Redraw);
                 effects
             }
-            Action::SetNodeSprite { member, data_uri, hull } => {
+            Action::SetNodeSprite {
+                member,
+                data_uri,
+                hull,
+            } => {
                 self.canvas.set_node_sprite(member, data_uri);
                 // The traced collider: the node collides at its picture. Under
                 // 3 points the tracer found no opaque region — keep the
@@ -1153,9 +1330,11 @@ impl App {
                 // Resolve the node by MEMBER, not by URL round-trip: two
                 // nodes may share a URL (the sample graph + an open), and
                 // get_node_by_url picks arbitrarily between them.
-                let Some(target) = self.canvas.focused_member().zip(
-                    self.canvas.focused_url().map(str::to_string),
-                ) else {
+                let Some(target) = self
+                    .canvas
+                    .focused_member()
+                    .zip(self.canvas.focused_url().map(str::to_string))
+                else {
                     return Vec::new();
                 };
                 let (node, url) = target;
@@ -1178,7 +1357,11 @@ impl App {
             Action::OmnibarOpen { command } => {
                 self.omnibar = OmnibarState {
                     open: true,
-                    text: if command { ">".to_string() } else { String::new() },
+                    text: if command {
+                        ">".to_string()
+                    } else {
+                        String::new()
+                    },
                     ..OmnibarState::default()
                 };
                 self.omnibar.cursor = self.omnibar.text.len();
@@ -1223,9 +1406,9 @@ impl App {
                 if self.omnibar.backspace() {
                     self.omnibar.selected = 0;
                     {
-                    let actions = self.session_actions();
-                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                }
+                        let actions = self.session_actions();
+                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                    }
                 }
                 vec![Effect::Redraw]
             }
@@ -1233,9 +1416,9 @@ impl App {
                 if self.omnibar.delete_forward() {
                     self.omnibar.selected = 0;
                     {
-                    let actions = self.session_actions();
-                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                }
+                        let actions = self.session_actions();
+                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+                    }
                 }
                 vec![Effect::Redraw]
             }
@@ -1282,13 +1465,13 @@ impl App {
                     self.focus = FocusTarget::Canvas;
                 }
                 let committed = self.omnibar.selection().cloned().or_else(|| {
-                    normalize_address(self.omnibar.text.trim())
-                        .map(|url| Suggestion::Go { url })
+                    normalize_address(self.omnibar.text.trim()).map(|url| Suggestion::Go { url })
                 });
                 if let Some(s) = committed.as_ref() {
-                    self.events.push(AppEvent::OmnibarCommitted(
-                        crate::observe::suggestion_line(s),
-                    ));
+                    self.events
+                        .push(AppEvent::OmnibarCommitted(crate::observe::suggestion_line(
+                            s,
+                        )));
                 }
                 let mut effects = match committed {
                     Some(Suggestion::Node { url, .. }) => {
@@ -1505,14 +1688,21 @@ impl App {
                     crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
                     crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
                 };
-                if self.workbench.split_beside_axis(dragged, target, axis, after) {
+                if self
+                    .workbench
+                    .split_beside_axis(dragged, target, axis, after)
+                {
                     self.events.push(AppEvent::WorkbenchSplit);
                     vec![Effect::SaveSession, Effect::Redraw]
                 } else {
                     vec![Effect::Redraw]
                 }
             }
-            Action::WorkbenchSplitOut { dragged, axis, after } => {
+            Action::WorkbenchSplitOut {
+                dragged,
+                axis,
+                after,
+            } => {
                 let axis = match axis {
                     crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
                     crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
@@ -1554,6 +1744,13 @@ impl App {
             roster_tab: 0,
             removed: Vec::new(),
             trash: Vec::new(),
+            pending_install: None,
+            denizens: crate::denizen::Denizens::default(),
+            journal: {
+                let (journal, hook) = mere::kernel::graph::journal_capture_hook();
+                mere::kernel::graph::set_captured_delta_hook(Some(hook));
+                journal
+            },
             next_pane_id: 1,
             events: Vec::new(),
         }
@@ -1623,10 +1820,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&app.data_root);
         // A manifest so the session has a container id for its `scene.*` facets.
         let container = uuid::Uuid::from_u128(0xc0ffee);
-        app.sessions.insert(session_runtime::GraphSessionManifest::new(
-            app.session_id,
-            frisket::GraphId::from_uuid(container),
-        ));
+        app.sessions
+            .insert(session_runtime::GraphSessionManifest::new(
+                app.session_id,
+                frisket::GraphId::from_uuid(container),
+            ));
         let sdir = app.session_dir();
         std::fs::create_dir_all(&sdir).unwrap();
 
@@ -1688,6 +1886,160 @@ mod tests {
         let _ = std::fs::remove_dir_all(&app.data_root);
     }
 
+    /// The B1 residency arc, headless: a staged install shows its ask, the
+    /// confirm mints the denizen (node + binding facet + gate-projected grant
+    /// in a persisted nested world), and the runtime rebuilds from durable
+    /// truth alone.
+    #[test]
+    fn denizen_installs_after_visible_review() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-denizen-b1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("trail-keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        assert!(app.pending_install.is_some());
+        let rows = app.denizen_actions();
+        assert!(
+            rows[0].0.contains("may run control scripts"),
+            "the ask is the first palette row: {rows:?}"
+        );
+        assert!(
+            app.take_events().iter().any(|e| matches!(e, AppEvent::DenizenStaged(_))),
+            "staging is observable"
+        );
+
+        app.update(Action::ConfirmInstallDenizen);
+        assert!(app.pending_install.is_none());
+        assert_eq!(app.denizens.residents.len(), 1);
+        let (&member, resident) = app.denizens.residents.iter().next().unwrap();
+        let binding = session_runtime::read_denizen_binding(&app.facets, member)
+            .expect("the binding facet is durable truth");
+        assert_eq!(binding.subject, resident.subject.to_hex());
+        assert_eq!(binding.kind, session_runtime::DenizenKind::Scenario);
+        assert!(
+            resident
+                .nested
+                .graph()
+                .key_of(&servitor::Gate::projection_id(crate::denizen::SCENARIO_SCOPE))
+                .is_some(),
+            "the grant projection is in the nested world"
+        );
+        assert!(
+            crate::denizen::nested_log_path(&app.session_dir(), &resident.subject.to_hex())
+                .exists(),
+            "the nested log persisted at its birth"
+        );
+
+        let rebuilt = crate::denizen::rebuild(&app.facets, &app.session_dir());
+        assert_eq!(rebuilt.residents.len(), 1);
+        assert!(
+            servitor::AuthorityProvider::covers(
+                &rebuilt.authority,
+                resident.subject,
+                crate::denizen::SCENARIO_SCOPE,
+                servitor::Mode::Write
+            ),
+            "authority derives from the projection, not from a second store"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// The gate refuses a denizen's petition outside its granted scope, and
+    /// commits an in-scope one attributed — the servitor pipeline live over a
+    /// resident's actual nested world.
+    #[test]
+    fn resident_petitions_run_through_the_gate() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-denizen-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let (&member, _) = app.denizens.residents.iter().next().unwrap();
+
+        let subject = app.denizens.residents[&member].subject;
+        let authority = app.denizens.authority.clone();
+        let gate = app.denizens.gate.clone();
+        let resident = app.denizens.residents.get_mut(&member).unwrap();
+
+        let rev = resident.nested.revision();
+        let committed = gate
+            .petition(
+                &authority,
+                &mut resident.nested,
+                subject,
+                crate::denizen::SCENARIO_SCOPE,
+                rev,
+                vec![chartulary::EditSpec::InsertNode(chartulary::Container::new(
+                    "scenario/kept-note",
+                ))],
+            )
+            .expect("an in-scope petition commits");
+        let entry = &resident.nested.log().entries()[committed.batch.0 as usize];
+        assert_eq!(entry.author, subject.to_author(), "attributed to the denizen");
+
+        let rev = resident.nested.revision();
+        let err = gate
+            .petition(
+                &authority,
+                &mut resident.nested,
+                subject,
+                "notes/",
+                rev,
+                vec![chartulary::EditSpec::InsertNode(chartulary::Container::new(
+                    "notes/sneaky",
+                ))],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, servitor::GateError::Unauthorized { .. }),
+            "an ungranted path refuses: {err:?}"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// With the piccolo runtime: a run lowers the body's Actions through the
+    /// spine, and the journal attributes the captured edits to the subject.
+    #[cfg(feature = "piccolo")]
+    #[test]
+    fn denizen_runs_attributed() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-denizen-run-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let (&member, resident) = app.denizens.residents.iter().next().unwrap();
+        let hex = resident.subject.to_hex();
+
+        app.update(Action::RunDenizen { member });
+        assert!(
+            app.canvas.graph().get_node_by_url("mere://kept/note").is_some(),
+            "the body's Action landed through the spine"
+        );
+        let journal = app.journal.lock().unwrap();
+        assert!(
+            journal.entries().iter().any(|e| e.author == hex),
+            "the captured edit reads back attributed to the subject"
+        );
+        assert_eq!(
+            journal.author(),
+            mere::kernel::graph::USER_AUTHOR,
+            "the author scope restored after the run"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
     /// The fork arm (G4-R R2): forking from a node mints a new session whose
     /// manifest carries the parent back-reference, snapshots the connected
     /// component (not the rest of the graph), carries the donor's per-node
@@ -1700,10 +2052,11 @@ mod tests {
             std::env::temp_dir().join(format!("merecat-fork-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&app.data_root);
         let donor_container = uuid::Uuid::from_u128(0xd0);
-        app.sessions.insert(session_runtime::GraphSessionManifest::new(
-            app.session_id,
-            frisket::GraphId::from_uuid(donor_container),
-        ));
+        app.sessions
+            .insert(session_runtime::GraphSessionManifest::new(
+                app.session_id,
+                frisket::GraphId::from_uuid(donor_container),
+            ));
         std::fs::create_dir_all(app.session_dir()).unwrap();
 
         // A two-node connected component plus a disconnected bystander.
@@ -1725,7 +2078,10 @@ mod tests {
         // Donor character: live content on `a` (so web.content refreshes true
         // from live truth) and a scene damping.
         app.physics_damping = 4.75;
-        app.apply_update(Update::ContentSpawned { node: a_id, facts: None });
+        app.apply_update(Update::ContentSpawned {
+            node: a_id,
+            facts: None,
+        });
 
         let donor_session = app.session_id;
         let effects = app.update(Action::ForkNode { member: a_id });
@@ -1792,9 +2148,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&app.data_root);
         // Two real sessions on disk (manifests bound to the root so trash ops
         // have a home), the second is current.
-        app.sessions = session_runtime::ManifestStore::with_root(session::sessions_root(
-            &app.data_root,
-        ));
+        app.sessions =
+            session_runtime::ManifestStore::with_root(session::sessions_root(&app.data_root));
         let keeper = frisket::SessionId::new();
         let mut keeper_m = session_runtime::GraphSessionManifest::new(
             keeper,
@@ -1824,7 +2179,10 @@ mod tests {
         assert_eq!(app.trash.len(), 1);
         assert_eq!(app.trash[0].session_id, closing_id);
         assert_eq!(app.trash[0].display_name.as_deref(), Some("expedition"));
-        assert!(app.sessions.get(closing_id).is_none(), "gone from the live set");
+        assert!(
+            app.sessions.get(closing_id).is_none(),
+            "gone from the live set"
+        );
 
         // Recover: the manifest re-lists with the SAME id + graph id, the
         // trash cache empties, and the switch adopts it.
@@ -1951,7 +2309,11 @@ mod tests {
         assert_eq!(moved.0, roster_id, "same pane id across the move");
         // The moved pane STAYS active, so pane-anchored ops follow it: a
         // summon lands beside it IN THE LENS (the window as pane host).
-        assert_eq!(app.active_pane, Some(roster_id), "the moved pane stays active");
+        assert_eq!(
+            app.active_pane,
+            Some(roster_id),
+            "the moved pane stays active"
+        );
         app.update(Action::SummonPane(PaneKind::Trail));
         let lens = app.lenses[0].as_ref().unwrap();
         assert!(
@@ -1994,7 +2356,10 @@ mod tests {
         let mut app = App::test_stub();
         let id = app.session_id;
         app.sessions
-            .insert(session_runtime::GraphSessionManifest::new(id, GraphId::nil()));
+            .insert(session_runtime::GraphSessionManifest::new(
+                id,
+                GraphId::nil(),
+            ));
         // The default label is the uuid prefix.
         assert_eq!(app.session_label(id), id.as_uuid().to_string()[..8]);
 
@@ -2007,7 +2372,10 @@ mod tests {
         app.update(Action::OmnibarCommit);
         assert_eq!(app.session_label(id), "Research");
         assert!(!app.omnibar.open, "commit closes the bar");
-        assert!(matches!(app.omnibar.mode, OmnibarMode::Address), "mode resets");
+        assert!(
+            matches!(app.omnibar.mode, OmnibarMode::Address),
+            "mode resets"
+        );
 
         // An empty rename clears back to the uuid fallback.
         app.update(Action::RenameSession {
@@ -2046,7 +2414,10 @@ mod tests {
                 _ => None,
             })
             .expect("delete stages a bin record: {fx:?}");
-        assert_eq!(record.node_id, original, "the record carries the ORIGINAL id");
+        assert_eq!(
+            record.node_id, original,
+            "the record carries the ORIGINAL id"
+        );
         assert_eq!(record.url, url);
         assert!(
             fx.iter().any(|e| matches!(e, Effect::CloseContent { .. })),
@@ -2058,9 +2429,9 @@ mod tests {
             records: vec![record],
         });
         assert!(
-            trail_rows(&app)
-                .iter()
-                .any(|r| matches!(&r.action, RowAction::Recover(id) if id == &original.to_string())),
+            trail_rows(&app).iter().any(
+                |r| matches!(&r.action, RowAction::Recover(id) if id == &original.to_string())
+            ),
             "the staged node derives into the Trail's Removed section"
         );
 
@@ -2123,10 +2494,14 @@ mod tests {
             "a non-empty bin lowers the clear effect: {fx:?}"
         );
         // The store's empty answer (folded as the drain would) clears the mirror.
-        app.apply_update(Update::BinListed { records: Vec::new() });
-        assert!(app.removed.is_empty(), "the mirror is empty after the bin clears");
+        app.apply_update(Update::BinListed {
+            records: Vec::new(),
+        });
+        assert!(
+            app.removed.is_empty(),
+            "the mirror is empty after the bin clears"
+        );
     }
-
 
     /// The rung7_lens_ops receipt's exact op sequence, app-level: tear out
     /// the roster, summon the trail beside it (in the lens), reweight, close
@@ -2159,7 +2534,9 @@ mod tests {
         // Back: the previous node re-selects, with NO fetch effect.
         let effects = app.update(Action::NavBack);
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })),
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::FetchPage { .. })),
             "Back never refetches: {effects:?}"
         );
         assert_eq!(app.canvas.focused_url(), Some("https://example.com/a"));
@@ -2176,12 +2553,26 @@ mod tests {
         let node = app.canvas.focused_member().unwrap();
         app.apply_update(Update::ContentSpawned { node, facts: None });
         let effects = app.update(Action::Reload);
-        assert!(effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })));
-        assert!(effects.iter().any(|e| matches!(e, Effect::CloseContent { .. })));
-        assert!(effects.iter().any(|e| matches!(e, Effect::SpawnContent { .. })));
-        let described: Vec<String> = app.take_events().iter().map(
-            crate::observe::AppEvent::describe,
-        ).collect();
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::FetchPage { .. }))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::CloseContent { .. }))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnContent { .. }))
+        );
+        let described: Vec<String> = app
+            .take_events()
+            .iter()
+            .map(crate::observe::AppEvent::describe)
+            .collect();
         assert!(described.iter().any(|e| e.starts_with("nav-back ")));
         assert!(described.iter().any(|e| e.starts_with("nav-forward ")));
         assert!(described.iter().any(|e| e.starts_with("reloaded ")));
@@ -2218,7 +2609,10 @@ mod tests {
         let b = app.canvas.focused_member().unwrap();
         app.update(Action::OpenInWorkbench);
         assert_eq!(app.workbench.slot_count(), 2);
-        app.update(Action::WorkbenchStackOnto { dragged: b, target: a });
+        app.update(Action::WorkbenchStackOnto {
+            dragged: b,
+            target: a,
+        });
         assert_eq!(app.workbench.slot_count(), 1);
         assert_eq!(app.workbench.tile_count(), 2);
         // Activate the buried tab; close the focused (beta) tile.
@@ -2235,12 +2629,17 @@ mod tests {
         let mut app = App::test_stub();
         app.update(Action::OpenAddress("https://example.com/a".to_string()));
         let a = app.canvas.focused_member().unwrap();
-        app.apply_update(Update::ContentSpawned { node: a, facts: None });
+        app.apply_update(Update::ContentSpawned {
+            node: a,
+            facts: None,
+        });
         app.update(Action::OpenAddress("https://example.com/b".to_string()));
         app.refresh_browser_states();
         assert!(app.browser.get(a).is_some_and(|b| b.content_on));
         assert!(
-            app.browser.get(app.canvas.focused_member().unwrap()).is_none(),
+            app.browser
+                .get(app.canvas.focused_member().unwrap())
+                .is_none(),
             "a node without content stays out of the sidecar"
         );
         // Round trip through the converged store: web.* facets in facets.json.
@@ -2297,7 +2696,9 @@ mod tests {
         }
         let effects = app.update(Action::OmnibarCommit);
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FetchPage { .. })),
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::FetchPage { .. })),
             "selecting an existing node must not refetch: {effects:?}"
         );
         assert!(!app.omnibar.open);

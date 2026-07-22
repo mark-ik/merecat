@@ -2,9 +2,9 @@
 # size-by-recency grows the newest-visited node and shrinks the oldest; the
 # Spiral then seats newest-first (freshest at the center, age spiralling
 # outward) and fits the view so the whole spiral frames. Offline (mere://
-# sample ring). NOTE: recency here reflects the sample nodes' construction
-# order — visit() does not (yet) refresh last_visited on an existing node
-# (recorded finding), so the opens below only select. Fresh profile.
+# sample ring). Reopening alpha after gamma is deliberate: `visit()` stamps
+# the existing node through the graph delta, so alpha becomes the newest
+# score ordinal rather than merely moving focus. Fresh profile.
 settle 30
 key escape
 
@@ -12,6 +12,8 @@ open mere://alpha
 settle 10
 open mere://gamma
 settle 30
+open mere://alpha
+settle 10
 capture 01_uniform_force
 
 act Toggle size-by-recency
@@ -22,6 +24,8 @@ act Layout: Spiral
 settle 20
 act Fit view
 settle 20
+act Save session
+settle 5
 capture 03_recency_spiral
 
-log projection proof 3 (recency) complete
+log projection proof 3 persisted score complete

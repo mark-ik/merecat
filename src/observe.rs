@@ -141,6 +141,14 @@ pub enum AppEvent {
     SessionForked,
     /// A trashed session was restored (overmap O3), by its label.
     SessionRecovered(String),
+    /// A denizen install was staged for review, by label (B1).
+    DenizenStaged(String),
+    /// A denizen was installed after visible review, by label.
+    DenizenInstalled(String),
+    /// A resident denizen ran its body, by label.
+    DenizenRan(String),
+    /// A denizen install or run was refused, with the reason.
+    DenizenRefused(String),
     /// A session's display name was set, by its new label.
     SessionRenamed(String),
     /// A node was removed from the graph into the recycle bin, by its url.
@@ -201,6 +209,10 @@ impl AppEvent {
             AppEvent::SessionClosed => "session-closed".to_string(),
             AppEvent::SessionForked => "session-forked".to_string(),
             AppEvent::SessionRecovered(label) => format!("session-recovered {label}"),
+            AppEvent::DenizenStaged(label) => format!("denizen-staged {label}"),
+            AppEvent::DenizenInstalled(label) => format!("denizen-installed {label}"),
+            AppEvent::DenizenRan(label) => format!("denizen-ran {label}"),
+            AppEvent::DenizenRefused(reason) => format!("denizen-refused {reason}"),
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),

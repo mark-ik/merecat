@@ -156,14 +156,21 @@ pub fn recompute_suggestions(
     let text = state.text.trim();
 
     if let Some(rest) = text.strip_prefix('>') {
-        // The actions lane: the palette registry plus the caller's dynamic
-        // entries (the session switcher rides here).
+        // The actions lane: the caller's dynamic entries LEAD the static
+        // registry — a pending denizen install's grant review must be the
+        // first thing an opened palette shows (participant gate B1), and the
+        // contextual rows (review, run, session switches) outrank the fixed
+        // verbs generally.
         let needle = rest.trim().to_lowercase();
         state.suggestions.extend(
-            crate::action::palette_actions()
-                .into_iter()
-                .map(|(label, action)| (label.to_string(), action))
-                .chain(extra_actions.iter().cloned())
+            extra_actions
+                .iter()
+                .cloned()
+                .chain(
+                    crate::action::palette_actions()
+                        .into_iter()
+                        .map(|(label, action)| (label.to_string(), action)),
+                )
                 .filter(|(label, _)| needle.is_empty() || label.to_lowercase().contains(&needle))
                 .map(|(label, action)| Suggestion::Act { label, action }),
         );

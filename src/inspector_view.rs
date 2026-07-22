@@ -88,7 +88,45 @@ pub fn inspector_sections(app: &App) -> Vec<InspectorSection> {
             title: "Content".to_string(),
             rows: content_rows,
         },
+        InspectorSection {
+            title: "Journal".to_string(),
+            rows: journal_rows(app),
+        },
     ]
+}
+
+/// The attributed edit spine's tail, newest first (participant gate B1: WHO
+/// changed the graph, readable). The author renders as the resident's label
+/// when the subject hex matches a denizen, `you` for the UI author.
+fn journal_rows(app: &App) -> Vec<(String, String)> {
+    let Ok(journal) = app.journal.lock() else {
+        return Vec::new();
+    };
+    journal
+        .entries()
+        .iter()
+        .rev()
+        .take(5)
+        .map(|entry| {
+            let author = if entry.author == mere::kernel::graph::USER_AUTHOR {
+                "you".to_string()
+            } else {
+                app.denizens
+                    .residents
+                    .values()
+                    .find(|r| r.subject.to_hex() == entry.author)
+                    .map(|r| r.label.clone())
+                    .unwrap_or_else(|| entry.author[..8.min(entry.author.len())].to_string())
+            };
+            let debug = format!("{:?}", entry.delta);
+            let kind = debug
+                .split(|c: char| c == ' ' || c == '{' || c == '(')
+                .next()
+                .unwrap_or("edit")
+                .to_string();
+            (author, kind)
+        })
+        .collect()
 }
 
 /// The sections flattened to "Key: value" lines (the observation snapshot's

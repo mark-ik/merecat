@@ -38,6 +38,17 @@ fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", b
 # root (session_graph_store's blessed single-session shape). App-side
 # material that moves here with the port, like fetch.
 session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Denizen residency (participant gate B1): the authority gate over a denizen's
+# nested chartulary graph, plus the substrate types the host speaks to it in.
+servitor = { git = "https://github.com/mark-ik/servitor.git", branch = "main" }
+chartulary = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
+codicil = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
+# Denizen subjects are content-derived: blake3(source) is the 32-byte keyholder.
+blake3 = "1"
+
+# The portable projection score stored beside a Merecat session. The app maps
+# browser graph truth into it; Scenograph itself stays product-free.
+sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
 # The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
 # split tree — HOME since meerkat's deletion (2026-07-18): a workspace member
 # of this repo, per the 2026-07-14 destination decision (its PaneContent
@@ -120,13 +131,13 @@ base64 = "0.22"
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 
 [features]
 default = []
 # Piccolo drives Merecat's capability-scoped control scripts. It is kept
 # opt-in so the browser host's ordinary build carries no scripting runtime.
-piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo", "dep:serde_json"]
+piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo"]
 
 # Registry patches mirrored from mere's workspace manifest: a `[patch]` lives
 # in the top-level manifest of whoever builds, so a standalone consumer of

@@ -1,0 +1,11 @@
+# Projection-engine proof 3, restart half. Run against the profile created by
+# proof3_recency.scn. The session restores the product-free Spiral score before
+# the first frame, rebinds its opaque Mere source refs, and paints that score's
+# positions through the ordinary canvas strategy buffer.
+settle 40
+key escape
+assert nodes >= 14
+assert visible
+capture 01_score_restored
+
+log projection proof 3 persisted score restored

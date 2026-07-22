@@ -1,0 +1,27 @@
+# Participant gate B1 receipt: a local scenario pack installs from file
+# AFTER a visible grant review, runs from the palette, and its edits read
+# back attributed in the Inspector's Journal section. FRESH profile;
+# requires the piccolo feature (the runnable lane).
+settle 30
+key escape
+
+drop-file 200 200 scenarios/fixtures/trail_keeper.lua
+settle 10
+assert event denizen-staged
+capture 01_grant_review
+
+act Install trail_keeper
+settle 15
+assert event denizen-installed
+
+act Run trail_keeper
+settle 20
+assert event denizen-ran
+assert focused kept/note
+
+act Open Inspector pane
+settle 15
+assert row trail_keeper
+capture 02_denizen_ran_attributed
+
+log b1 receipt complete

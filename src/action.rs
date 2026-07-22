@@ -196,6 +196,20 @@ pub enum Action {
     /// Permanently forget every staged node ("empty the recycle bin") —
     /// athanor's oven, on command. Irreversible; the records leave the store.
     EmptyRecycleBin,
+    /// Stage a scenario pack (.lua) as a denizen install: read + derive the
+    /// content subject, then surface the VISIBLE grant review in the palette
+    /// (participant gate B1). Nothing is minted or granted here.
+    InstallDenizen { path: String },
+    /// Commit the staged install after the visible review: mint the denizen
+    /// node + binding facets, project the grant into its nested world through
+    /// the servitor gate, and register the palette Run row.
+    ConfirmInstallDenizen,
+    /// Discard the staged install; nothing was minted.
+    CancelInstallDenizen,
+    /// Run a resident denizen's scenario body: piccolo evaluates it under a
+    /// step budget, and its emitted Actions lower through this same spine
+    /// with mere's GraphJournal scoped to the denizen's author (attribution).
+    RunDenizen { member: uuid::Uuid },
     /// Restore a trashed SESSION from the manifest trash and switch to it
     /// (overmap O3; a Trail Removed-sessions-row click). The whole session
     /// directory moved to `.trash/` intact at close, so restore is

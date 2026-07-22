@@ -12,6 +12,7 @@ use frisket::{FrisketLayout, SessionId};
 // out of session-runtime with the pane model).
 use frisket::store as frisket_store;
 use mere::kernel::graph::Graph;
+use sceno::Score;
 use session_runtime::{GraphSessionManifest, ManifestStore, session_graph_store};
 
 /// The per-user data root (`<data_dir>/merecat`). A `MERECAT_ROOT` override
@@ -87,13 +88,61 @@ pub fn load_manifests(data_root: &Path) -> ManifestStore {
 
 /// The sidecar files a session owns (the flat layout's file set, and each
 /// session directory's).
-const SESSION_FILES: [&str; 5] = [
+const PROJECTION_SCORE_FILE: &str = "projection-score.json";
+
+const SESSION_FILES: [&str; 6] = [
     session_graph_store::GRAPH_FILE,
     frisket_store::FRAME_FILE,
     WORKBENCH_FILE,
     session_runtime::browser_node_state::BROWSER_NODES_FILE,
     frisket_store::WINDOWS_FILE,
+    PROJECTION_SCORE_FILE,
 ];
+
+/// The persisted product-free score for this session's active analytic view.
+pub fn projection_score_path(session_dir: &Path) -> PathBuf {
+    session_dir.join(PROJECTION_SCORE_FILE)
+}
+
+/// Persist a score atomically. It is view state: a missing or malformed score
+/// must never prevent the graph session itself from opening.
+pub fn save_projection_score(session_dir: &Path, score: &Score) {
+    let target = projection_score_path(session_dir);
+    let tmp = target.with_extension("json.tmp");
+    let result = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(session_dir)?;
+        let bytes = serde_json::to_vec_pretty(score).map_err(std::io::Error::other)?;
+        std::fs::write(&tmp, bytes)?;
+        if target.exists() {
+            std::fs::remove_file(&target)?;
+        }
+        std::fs::rename(&tmp, &target)
+    })();
+    if let Err(err) = result {
+        tracing::warn!(%err, path = ?target, "failed to persist projection score");
+        let _ = std::fs::remove_file(tmp);
+    }
+}
+
+/// Restore the last valid score. A corrupt sidecar is diagnosed and ignored;
+/// the canvas will recompute a fresh score from current graph truth.
+pub fn load_projection_score(session_dir: &Path) -> Option<Score> {
+    let path = projection_score_path(session_dir);
+    match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(score) => Some(score),
+            Err(err) => {
+                tracing::warn!(%err, path = ?path, "failed to parse projection score");
+                None
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            tracing::warn!(%err, path = ?path, "failed to read projection score");
+            None
+        }
+    }
+}
 
 /// One-time migration from the flat single-session layout: when a flat
 /// `graph.json` sits at the root and no session holds anything yet, mint a
@@ -270,7 +319,10 @@ pub fn heal_nil_graph_ids(sessions: &mut ManifestStore) -> usize {
         if let Err(err) = sessions.flush_dirty() {
             tracing::warn!(%err, "failed to persist healed session graph ids");
         }
-        tracing::info!(count = nil.len(), "healed nil root_graph_ids (overmap identity)");
+        tracing::info!(
+            count = nil.len(),
+            "healed nil root_graph_ids (overmap identity)"
+        );
     }
     nil.len()
 }
@@ -322,6 +374,7 @@ pub fn load_workbench(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sceno::{Arrangement, Spiral};
 
     fn temp_root(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -384,5 +437,18 @@ mod tests {
         // The recorded id is unknown; the newest manifest wins. `a` was
         // touched later than `b` was created, so updated_at prefers `a`.
         assert_eq!(pick_session(&root, &store), Some(a));
+    }
+
+    #[test]
+    fn projection_score_sidecar_round_trips_without_becoming_graph_truth() {
+        let root = temp_root("projection-score");
+        let score = Score::new(Arrangement::Spiral(Spiral::default()));
+        save_projection_score(&root, &score);
+        assert_eq!(load_projection_score(&root), Some(score));
+        assert!(projection_score_path(&root).exists());
+        assert!(
+            !root.join(session_graph_store::GRAPH_FILE).exists(),
+            "the score remains a view sidecar"
+        );
     }
 }

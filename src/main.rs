@@ -37,6 +37,7 @@ mod inspector_pane;
 mod inspector_view;
 mod trail_pane;
 mod observe;
+mod denizen;
 mod overmap;
 mod pane;
 mod recycle;

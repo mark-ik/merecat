@@ -518,6 +518,9 @@ impl Shell {
         self.app.refresh_browser_states();
         self.app.refresh_facets();
         session::save_node_facets(&sdir, &self.app.facets);
+        if let Some(score) = self.app.canvas.projection_score() {
+            session::save_projection_score(&sdir, score);
+        }
         // Stamp a derived display name the first time the session has content
         // to name it after (unset -> "Example Domain"), then bump recency so
         // the switcher orders by last-used. Derive before the mutable borrow.
@@ -1307,6 +1310,15 @@ impl Shell {
             && let Some((data_uri, hull)) = decode_sprite(path)
         {
             self.act(Action::SetNodeSprite { member, data_uri, hull });
+            return;
+        }
+        // A dropped .lua is a scenario pack: stage the denizen install and
+        // surface the VISIBLE grant review (participant gate B1). Nothing is
+        // minted until the palette's Confirm row commits.
+        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+            self.act(Action::InstallDenizen {
+                path: path.display().to_string(),
+            });
             return;
         }
         // Not an image over a node: the file becomes a node. Forward slashes
@@ -2476,11 +2488,21 @@ impl genet_probe::Automatable for Shell {
     }
 
     fn act(&mut self, label: &str) -> bool {
-        match crate::action::palette_actions()
+        // Static rows first, then the dynamic rows (denizen review/run,
+        // session switches) — so a scenario can `act` what the palette shows.
+        let action = crate::action::palette_actions()
             .into_iter()
             .find(|(l, _)| *l == label)
-        {
-            Some((_, action)) => {
+            .map(|(_, action)| action)
+            .or_else(|| {
+                self.app
+                    .session_actions()
+                    .into_iter()
+                    .find(|(l, _)| l == label || l.starts_with(label))
+                    .map(|(_, action)| action)
+            });
+        match action {
+            Some(action) => {
                 Shell::act(self, action);
                 true
             }
