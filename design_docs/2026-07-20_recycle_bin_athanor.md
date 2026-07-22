@@ -65,12 +65,38 @@ merecat opens an `eidetic_fjall::FjallStore` at the session dir
   canvas `recover_with_id(uuid, url, title, tags)`. Edges are not restored
   (they left with the node); full-subgraph capture is a later fidelity step.
 
-### Slice 3 — the oven (later)
+### Slice 3 — the oven
 athanor's forgetting pass permanently drops staged records and bakes an engram
 on the way out (distill before forget), on command ("empty the bin") or the
 steady-heat schedule. Config knobs land in Apparatus, live passes in Steward
-(the Alembic plan's §8 answer). athanor is currently pure pass-logic with no
-live consumer; this is where merecat becomes its first.
+(the Alembic plan's §8 answer).
+
+**The on-command half LANDED 2026-07-21/22** (mere `df316b6` + merecat
+`94c3043`):
+
+- mere `df316b6`: `eidetic::deleted` grew its deletion door — the append-only
+  bin had no way out. `purge_deleted(node_id)` drops a node's tombstone(s)
+  (`list_typed` -> `delete_manifest`, all matching since a node deleted twice
+  has two); `clear_deleted` empties the bin. Both return real counts, both
+  idempotent on an empty/absent bin. 3 tests, landed in isolation while the
+  wider tree was transiently red on a concurrent cartography refactor
+  (eidetic-core is independent of it).
+- merecat `94c3043` (committed forward by the concurrent projection-proof
+  session): `BinCommand::Empty` -> `clear_deleted` -> the refreshed (empty)
+  list; `Action::EmptyRecycleBin` (palette "Empty recycle bin") lowers
+  `Effect::EmptyRecycleBin` only when the bin is non-empty (no placebo), and
+  the `recycle-bin-emptied` event carries the count. Receipt
+  `rung6_delete_recover.scn` grew a third leg (delete -> Removed -> empty ->
+  Removed gone, record forgotten from the STORE, not just derived away);
+  headed RESULT ok, 88 unit tests green.
+
+**Remaining (the oven's other halves):** the scheduled steady-heat pass (an
+athanor policy pass over the bin — `propose_retirement` / `apply_retirement`
+in R0 shape, purging only the age-policied subset via `purge_deleted`); the
+engram bake (distill a staged node before forgetting); per-item "delete
+permanently" (a Removed-row affordance over `purge_deleted`, whose port
+command is deferred until it has a producer); and the config surface (knobs in
+Apparatus, live passes in Steward).
 
 ## Status
 
