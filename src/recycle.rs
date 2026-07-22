@@ -16,17 +16,31 @@
 //! [`pollster::block_on`] on the actor thread: they are serial disk IO over
 //! one LSM store, which wants ordering, not a runtime.
 //!
-//! Athanor (the oven: permanent forgetting + engram bake, on command or
-//! schedule) is slice 3 and will speak to the same actor.
+//! Athanor (the oven) speaks through this actor two ways now: on command,
+//! [`BinCommand::Empty`] clears the whole bin (`eidetic::clear_deleted`); on
+//! each session open, [`retire_then_list`] runs athanor's retirement pass to
+//! permanently forget only the tombstones past the retention window. The
+//! remaining halves are the continuous background timer (this runs at session
+//! open, not on a clock), the engram bake (distill before forget), and the
+//! Apparatus retention knob.
 
 use std::path::{Path, PathBuf};
+
+use std::sync::mpsc::Receiver;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use armillary::{ActorHandle, Emitter, Wake, spawn_named};
 use eidetic::{DeletedNode, Store, clear_deleted, list_deleted, record_deleted};
 use eidetic_fjall::FjallStore;
-use std::sync::mpsc::Receiver;
+use session_runtime::athanor;
 
 use crate::action::{RemovedRecord, Update};
+
+/// How long a deleted node sits in the recycle bin before athanor's steady-heat
+/// pass permanently forgets it. A generous default; the Apparatus knob (per the
+/// Alembic plan's §8 config home) is the follow-on that makes it a real setting.
+const RETENTION_DAYS: u64 = 30;
+const DAY_MS: u64 = 86_400_000;
 
 /// Commands the bin actor takes (the shell sends these; ordering on the one
 /// channel is the consistency story).
@@ -87,6 +101,29 @@ fn open(dir: &Path) -> Result<FjallStore, String> {
     FjallStore::open(dir).map_err(|e| e.to_string())
 }
 
+/// The steady-heat trigger: on each session open, retire (permanently forget)
+/// the tombstones past the retention window, then list the survivors. Athanor's
+/// retirement pass (session-runtime) decides which; a failed retire logs and
+/// still lists (forgetting is best-effort, never blocks the bin from showing).
+/// This runs at session open, not on a background timer — the continuous actor
+/// is the remaining half.
+fn retire_then_list(store: &mut dyn Store, out: &Emitter<Update>) {
+    if let Ok(deleted) = pollster::block_on(list_deleted(store)) {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let proposal = athanor::propose_retirement(&deleted, RETENTION_DAYS * DAY_MS, now_ms);
+        if !proposal.is_empty() {
+            match pollster::block_on(athanor::apply_retirement(store, &proposal)) {
+                Ok(n) => tracing::info!(retired = n, "recycle bin: retired aged-out tombstones"),
+                Err(err) => tracing::warn!(%err, "recycle bin: retirement pass failed"),
+            }
+        }
+    }
+    emit_list(store, out);
+}
+
 /// List the bin and emit it (newest first), or emit the failure.
 fn emit_list(store: &mut dyn Store, out: &Emitter<Update>) {
     match pollster::block_on(list_deleted(store)) {
@@ -109,7 +146,7 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
     spawn_named("recycle-bin", wake, move |commands, out: Emitter<Update>| {
         let mut store = match open(&dir) {
             Ok(mut store) => {
-                emit_list(&mut store, &out);
+                retire_then_list(&mut store, &out);
                 Some(store)
             }
             Err(err) => {
@@ -160,7 +197,7 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
                 }
                 BinCommand::Reopen(dir) => match open(&dir) {
                     Ok(mut fresh) => {
-                        emit_list(&mut fresh, &out);
+                        retire_then_list(&mut fresh, &out);
                         store = Some(fresh);
                     }
                     Err(err) => {
