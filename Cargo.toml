@@ -29,6 +29,9 @@ path = "src/main.rs"
 # STAYS in mere (the 2026-07-09 amendment reversed its move); the crate
 # was called `orrery` at merecat's founding. Boundary pass plan, 2026-07-09.
 mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Mere's graph-to-Scenograph adapter remains kernel-aware and product-owned.
+# G3 consumes its existing score + scene lowering directly.
+cartography = { package = "mere-cartography", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The fetch actor (armillary + netfetcher/errand + the cookie jar): merecat's
 # web lane, consumed as an individual crate from mere's workspace while it
 # still lives there — per the boundary pass, fetch is app-side material that
@@ -49,6 +52,15 @@ blake3 = "1"
 # The portable projection score stored beside a Merecat session. The app maps
 # browser graph truth into it; Scenograph itself stays product-free.
 sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+scenomise = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+scenotime = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+# Graphshell's portable client/endpoint contracts and native receipt view.
+# The sibling is still local-only while its archived donor rename gates
+# publication; the gitignored Cargo config redirects these intended sources.
+graphshell = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell-client = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell-endpoint = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell-protocol = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
 # The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
 # split tree — HOME since meerkat's deletion (2026-07-18): a workspace member
 # of this repo, per the 2026-07-14 destination decision (its PaneContent

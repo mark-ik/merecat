@@ -1724,12 +1724,11 @@ impl App {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_stub() -> Self {
+    fn isolated(data_root: PathBuf) -> Self {
         Self {
             canvas: Canvas::new(),
             omnibar: OmnibarState::default(),
-            data_root: std::env::temp_dir().join("merecat-app-test"),
+            data_root,
             sessions: session_runtime::ManifestStore::new(),
             session_id: frisket::SessionId::new(),
             content: ContentStates::default(),
@@ -1757,6 +1756,57 @@ impl App {
             next_pane_id: 1,
             events: Vec::new(),
         }
+    }
+
+    /// Deterministic live graph truth for Graphshell's headed G3 receipt.
+    pub(crate) fn projection_fixture() -> Self {
+        use mere::kernel::geometry::PortablePoint;
+        use mere::kernel::graph::apply::{add_node, assert_relation};
+        use mere::kernel::graph::{EdgeAssertion, Graph, SemanticSubKind};
+
+        let mut app = Self::isolated(std::env::temp_dir().join("merecat-graphshell-g3"));
+        let mut graph = Graph::new();
+        let notes = add_node(
+            &mut graph,
+            Some(uuid::Uuid::from_u128(0x101)),
+            "mere://field-notes".to_string(),
+            PortablePoint::zero(),
+        );
+        let radios = add_node(
+            &mut graph,
+            Some(uuid::Uuid::from_u128(0x102)),
+            "mere://radio-map".to_string(),
+            PortablePoint::zero(),
+        );
+        let harmony = add_node(
+            &mut graph,
+            Some(uuid::Uuid::from_u128(0x103)),
+            "mere://harmony-map".to_string(),
+            PortablePoint::zero(),
+        );
+        let relation = || EdgeAssertion::Semantic {
+            sub_kind: SemanticSubKind::Hyperlink,
+            label: None,
+            decay_progress: None,
+        };
+        let _ = assert_relation(&mut graph, notes, radios, relation());
+        let _ = assert_relation(&mut graph, notes, harmony, relation());
+        app.canvas.set_graph(graph);
+        let _ = app
+            .canvas
+            .set_node_title_for(uuid::Uuid::from_u128(0x101), "Field notes".into());
+        let _ = app
+            .canvas
+            .set_node_title_for(uuid::Uuid::from_u128(0x102), "Radio map".into());
+        let _ = app
+            .canvas
+            .set_node_title_for(uuid::Uuid::from_u128(0x103), "Harmony map".into());
+        app
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_stub() -> Self {
+        Self::isolated(std::env::temp_dir().join("merecat-app-test"))
     }
 
     /// Fold one typed service answer into state.

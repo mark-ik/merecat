@@ -2,11 +2,12 @@
 //! library.
 //!
 //! Architecture (design_docs/2026-07-10_merecat_architecture_plan.md): one
-//! typed vocabulary. Platform events lower to [`action::Action`]s;
-//! [`app::App::update`] mutates state and returns [`action::Effect`]s; the
-//! [`shell::Shell`] runs effects through ports (the fetch and physics actors,
-//! the persistence store) and folds their typed answers back through
-//! [`app::App::apply_update`]. Continuous canvas gestures map onto
+//! typed vocabulary. Platform events lower to [`merecat::action::Action`]s;
+//! [`merecat::app::App::update`] mutates state and returns
+//! [`merecat::action::Effect`]s; [`merecat::shell::Shell`] runs effects through
+//! ports (the fetch and physics actors, the persistence store) and folds their
+//! typed answers back through [`merecat::app::App::apply_update`]. Continuous
+//! canvas gestures map onto
 //! `mere::canvas`'s semantic input methods directly — the canvas is hosted,
 //! not wrapped.
 //!
@@ -23,36 +24,6 @@
 //! marquee-selects; a bare empty click clears. Space re-seeds the layout;
 //! `i` toggles the isometric view, `q`/`e` orbit, `[`/`]` tilt, `h` toggles
 //! height-by-degree.
-
-mod a11y;
-mod action;
-mod app;
-mod apparatus_pane;
-mod browse;
-mod cambium_pane;
-mod chrome_view;
-mod content;
-mod swatch_pane;
-mod inspector_pane;
-mod inspector_view;
-mod trail_pane;
-mod observe;
-mod denizen;
-mod overmap;
-mod pane;
-mod recycle;
-mod sections;
-mod roster_view;
-mod scenario;
-#[cfg(feature = "piccolo")]
-mod script;
-mod session;
-mod shell;
-mod surface;
-mod trail_view;
-mod ui;
-mod workbench_pane;
-mod workbench_tiling;
 
 use winit::event_loop::EventLoop;
 
@@ -75,6 +46,6 @@ fn main() {
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let proxy = event_loop.create_proxy();
-    let mut shell = shell::Shell::new(proxy, address);
+    let mut shell = merecat::shell::Shell::new(proxy, address);
     event_loop.run_app(&mut shell).expect("event loop error");
 }
