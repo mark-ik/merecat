@@ -1,0 +1,30 @@
+# The gloss-composite (design_docs/2026-07-20_gloss_composite_pane.md, sections
+# half slice 1): the Gloss pane is a minimap PLUS composed list sections. Here
+# it composes the recycle bin's Removed section — deleted nodes are gone from
+# the graph, so the minimap is exactly where you'd look for them. Delete a node,
+# open Gloss, and the Removed row shows under the shrunk minimap (inert display
+# this slice; a row click and the add/remove UI are follow-ons). Visual receipt
+# (the section rows live in the swatch pane's own DOM, not the snapshot's list
+# rows, so this captures rather than asserts them). Network-dependent; FRESH.
+settle 30
+key escape
+
+open https://www.iana.org/
+settle 40
+open https://example.com/
+settle 40
+assert focused example
+
+# Delete example.com: it stages into the recycle bin, absent from the graph.
+act Delete node
+settle 15
+assert event node-removed
+
+# Open the Gloss pane: minimap on top, the Removed section below it.
+act Open Gloss pane
+settle 10
+assert pane gloss
+assert surface pane
+capture 01_gloss_with_removed
+
+log gloss composite (minimap + Removed section) complete

@@ -35,6 +35,9 @@ use crate::overmap;
 
 /// Inset (px) of the swatch from the pane edges.
 const SWATCH_PAD: f32 = 12.0;
+/// When a swatch preset composes sections, the swatch takes this fraction of
+/// the pane height and the sections stack below (the gloss-composite split).
+const SWATCH_FRACTION: f32 = 0.55;
 
 /// What activating (clicking) a swatch node means — data on the node, so the
 /// one pane needs no per-preset handler code and the shell lowers each variant
@@ -316,22 +319,64 @@ fn swatch_view(state: &SwatchState) -> SwatchView {
         |state: &mut SwatchState, id: Option<Uuid>| state.swatch.hovered = id,
         |state: &mut SwatchState| state.pending.push(SwatchIntent::Expand),
     );
-    Box::new(
-        cambium::el::<_, SwatchState, ()>(
-            "div",
-            cambium::el::<_, SwatchState, ()>("div", swatch).attr(
-                "style",
-                format!("position: absolute; left: {SWATCH_PAD}px; top: {SWATCH_PAD}px;"),
-            ),
-        )
-        .attr("class", "pane")
-        .attr(
+    // The swatch fills the top (its own leaf is sized to `swatch_h` in sync).
+    let mut children: Vec<SwatchView> = vec![Box::new(
+        cambium::el::<_, SwatchState, ()>("div", swatch).attr(
             "style",
-            format!(
-                "position: relative; width: {}px; height: {}px;",
-                state.viewport_w, state.viewport_h
-            ),
+            format!("position: absolute; left: {SWATCH_PAD}px; top: {SWATCH_PAD}px;"),
         ),
+    )];
+
+    // Composed sections stack below the swatch in a scrollable column (the
+    // gloss-composite: the minimap plus, say, the recycle bin's Removed rows).
+    if !state.sections.is_empty() {
+        let mut section_kids: Vec<SwatchView> = Vec::new();
+        for (title, rows) in &state.sections {
+            section_kids.push(Box::new(
+                cambium::el::<_, SwatchState, ()>("div", title.to_string()).attr(
+                    "style",
+                    "color: #7d8590; padding: 6px 12px 2px; font-size: 11px;",
+                ),
+            ));
+            if rows.is_empty() {
+                section_kids.push(Box::new(
+                    cambium::el::<_, SwatchState, ()>("div", "nothing here".to_string())
+                        .attr("style", "color: #484f58; padding: 2px 12px; font-size: 12px;"),
+                ));
+            } else {
+                for row in rows {
+                    section_kids.push(Box::new(
+                        cambium::el::<_, SwatchState, ()>("div", row.text.clone()).attr(
+                            "style",
+                            "color: #c9d1d9; padding: 2px 12px; font-size: 12px;",
+                        ),
+                    ));
+                }
+            }
+        }
+        children.push(Box::new(
+            cambium::el::<_, SwatchState, ()>("div", section_kids).attr(
+                "style",
+                format!(
+                    "position: absolute; left: 0px; top: {}px; width: {}px; height: {}px; overflow-y: auto;",
+                    state.swatch_h,
+                    state.viewport_w,
+                    (state.viewport_h - state.swatch_h).max(0.0),
+                ),
+            ),
+        ));
+    }
+
+    Box::new(
+        cambium::el::<_, SwatchState, ()>("div", children)
+            .attr("class", "pane")
+            .attr(
+                "style",
+                format!(
+                    "position: relative; width: {}px; height: {}px;",
+                    state.viewport_w, state.viewport_h
+                ),
+            ),
     )
 }
 
