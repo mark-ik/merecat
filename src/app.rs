@@ -995,9 +995,12 @@ impl App {
                     return vec![Effect::Redraw];
                 };
                 #[cfg(feature = "piccolo")]
-                let actions = match crate::script::run_control(
+                let actions = match crate::script::run(
                     self,
                     &source,
+                    // B2: what this run may do derives from the denizen's
+                    // grant (the participant node), never a blanket flag.
+                    crate::script::capabilities_from_grant(&self.denizens.authority, subject),
                     crate::denizen::RUN_BUDGET,
                 ) {
                     Ok(actions) => actions,

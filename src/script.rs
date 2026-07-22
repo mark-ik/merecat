@@ -210,6 +210,32 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
     }
 }
 
+/// Derive a run's capabilities from a denizen's structural caps (participant
+/// gate B2): each script capability class maps to a path under
+/// [`crate::denizen::APP_SCOPE`], and the bit is set only when the provider
+/// covers that path for the subject. A denizen granted nothing under `app/`
+/// evaluates read-less and dispatch-less — the denial surfaces in the run.
+pub(crate) fn capabilities_from_grant(
+    authority: &impl servitor::AuthorityProvider,
+    subject: servitor::Subject,
+) -> ScriptCapabilities {
+    use servitor::Mode;
+    let mut bits = 0u8;
+    if authority.covers(subject, "app/read", Mode::Read) {
+        bits |= READ_APP;
+    }
+    if authority.covers(subject, "app/dispatch", Mode::Write) {
+        bits |= DISPATCH_ACTION;
+    }
+    if authority.covers(subject, "app/navigate", Mode::Write) {
+        bits |= NAVIGATE;
+    }
+    if authority.covers(subject, "app/panes", Mode::Write) {
+        bits |= CONTROL_PANES;
+    }
+    ScriptCapabilities(bits)
+}
+
 /// Run a control script with full control capabilities against `app`,
 /// returning the Actions it emitted (the shell lowers them through the same
 /// `App::update` spine a keypress takes — the automation runner of the "one
@@ -270,6 +296,31 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B2: capabilities derive from the denizen's grant. A subject granted
+    /// only its own world evaluates without the app classes (the denial is
+    /// the capability system's, by name); a subject granted `app/` runs.
+    #[test]
+    fn grant_derived_capabilities_deny_the_ungranted() {
+        use servitor::{Grant, Mode, PrefixAuthority, Subject};
+        let app = App::test_stub();
+        let subject = Subject::new([9; 32]);
+
+        let world_only =
+            PrefixAuthority::new().with_grant(Grant::new(subject, "scenario/", Mode::Write));
+        let caps = capabilities_from_grant(&world_only, subject);
+        let err = run(&app, "mere.open('mere://x')", caps, 500).unwrap_err();
+        assert!(
+            err.contains("navigation.open"),
+            "the ungranted class denies by name: {err}"
+        );
+
+        let control = PrefixAuthority::new()
+            .with_grant(Grant::new(subject, crate::denizen::APP_SCOPE, Mode::Write));
+        let caps = capabilities_from_grant(&control, subject);
+        let actions = run(&app, "mere.open('mere://x')", caps, 500).unwrap();
+        assert_eq!(actions.len(), 1, "the granted surface runs");
+    }
 
     #[test]
     fn script_can_read_snapshot_without_mutation() {

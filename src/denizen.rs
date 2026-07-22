@@ -34,6 +34,12 @@ pub const SCENARIO_SOURCE_FACET: &str = "scenario.source";
 /// nested world (`Mode::Write`). The visible review names it.
 pub const SCENARIO_SCOPE: &str = "scenario/";
 
+/// The capability path covering the app control surface (B2): the piccolo
+/// lane derives its `ScriptCapabilities` from coverage under this prefix
+/// (`app/read`, `app/dispatch`, `app/navigate`, `app/panes`), so what a
+/// denizen's script may DO is read from its grant, not from a feature flag.
+pub const APP_SCOPE: &str = "app/";
+
 /// The piccolo step budget a denizen run gets — generous for a control
 /// script, hard against a runaway loop.
 pub const RUN_BUDGET: u64 = 20_000;
@@ -244,17 +250,23 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
         &chartulary::AcceptAll,
     );
 
-    // The nested world: fresh log, grant projected by the gate (read-only,
-    // gate-authored — the browsable record authority derives from).
+    // The nested world: fresh log, BOTH grants projected by the gate
+    // (read-only, gate-authored — the browsable record authority derives
+    // from): the denizen's own world, and the app control surface the
+    // review named (B2: the piccolo lane reads this, not a feature flag).
     let mut nested = GraphLog::with_id(LogId::new(hex.clone()));
-    let grant = Grant::new(subject, SCENARIO_SCOPE, Mode::Write);
-    if let Err(err) = app.denizens.gate.project_grant(&mut nested, &grant) {
-        tracing::warn!(?err, "failed to project the install grant");
+    let world = Grant::new(subject, SCENARIO_SCOPE, Mode::Write);
+    let control = Grant::new(subject, APP_SCOPE, Mode::Write);
+    for grant in [&world, &control] {
+        if let Err(err) = app.denizens.gate.project_grant(&mut nested, grant) {
+            tracing::warn!(?err, "failed to project an install grant");
+        }
     }
     save_nested(&app.session_dir(), &hex, &nested);
 
-    app.denizens.authority =
-        std::mem::take(&mut app.denizens.authority).with_grant(grant);
+    app.denizens.authority = std::mem::take(&mut app.denizens.authority)
+        .with_grant(world)
+        .with_grant(control);
     app.denizens.residents.insert(
         member,
         Resident {
