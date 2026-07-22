@@ -90,13 +90,29 @@ steady-heat schedule. Config knobs land in Apparatus, live passes in Steward
   Removed gone, record forgotten from the STORE, not just derived away);
   headed RESULT ok, 88 unit tests green.
 
-**Remaining (the oven's other halves):** the scheduled steady-heat pass (an
-athanor policy pass over the bin — `propose_retirement` / `apply_retirement`
-in R0 shape, purging only the age-policied subset via `purge_deleted`); the
-engram bake (distill a staged node before forgetting); per-item "delete
-permanently" (a Removed-row affordance over `purge_deleted`, whose port
-command is deferred until it has a producer); and the config surface (knobs in
-Apparatus, live passes in Steward).
+**The retirement pass LANDED 2026-07-22** (mere `499b071` + merecat `232f188`):
+athanor's third pass, beside forgetting (content) and consolidation (engrams).
+`propose_retirement(deleted, keep_ms, now_ms)` names the tombstone ids past the
+retention window (pure, R0 — a "what will be forgotten" preview is possible);
+`apply_retirement` purges them via `purge_deleted`. The bin actor's
+`retire_then_list` runs it on each session open (spawn + Reopen), a 30-day
+window (a named const; the Apparatus knob is the config follow-on),
+best-effort (a failed retire logs and still lists). 2 athanor tests green in
+isolation; the existing receipt re-run green (the window never fires in a
+seconds-long run).
+
+**Remaining (the oven's last halves):**
+- The **continuous background timer** — retirement fires at session open now,
+  not on a clock. The true steady-heat is an armillary actor self-ticking; the
+  design's "background daemon" shape.
+- The **engram bake** (distill a staged node before forgetting). Open design:
+  a single tombstone (url/title/tags) is thin for a graph engram, so this may
+  be a per-empty-batch distillation ("forgotten pages" engram) rather than
+  per-node. Needs a design pass before building.
+- **Per-item "delete permanently"** — a Removed-row affordance over
+  `purge_deleted` (the lib fn is landed; its port command waits for the UI).
+- **The config surface** — the retention knob in Apparatus, live passes in
+  Steward (the Alembic plan's §8 answer).
 
 ## Status
 
