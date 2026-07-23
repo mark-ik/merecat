@@ -11,14 +11,14 @@ use chartulary::{Container, EditSpec, GraphLog, Relation};
 use graphshell_client::{
     ClientState, PresentationResolution, ResolutionError, ResolvedPresentation,
 };
-use graphshell_endpoint::{IntentSink, PresentationSource, ProjectionSource};
+use graphshell_endpoint::{IntentSink, PresentationSource, ProjectionCatalog, ProjectionSource};
 use graphshell_protocol::{
     AdvertisedAction, BoundsRelationship, CachePolicy, CapabilityProfile, CardValueV1, ContentHash,
-    IntentEffect, IntentInvocation, IntentReference, IntentResult, NativeGlyphV1, PortableCardV1,
-    PresentationBinding, PresentationCapability, PresentationCodec, PresentationKey,
-    PresentationManifest, PresentationOffer, PresentationSemantics, ProjectionRequest,
-    ProjectionSession, ProjectionSnapshot, ProtocolVersion, ResourceRequest, ResourceResponse,
-    SemanticRole,
+    EndpointDescriptor, IntentEffect, IntentInvocation, IntentReference, IntentResult,
+    NativeGlyphV1, PortableCardV1, PresentationBinding, PresentationCapability, PresentationCodec,
+    PresentationKey, PresentationManifest, PresentationOffer, PresentationSemantics,
+    ProjectionOffer, ProjectionRequest, ProjectionSession, ProjectionSnapshot, ProtocolVersion,
+    ResourceRequest, ResourceResponse, SemanticRole,
 };
 use mere::kernel::graph::NodeKey;
 use sceno::{Arrangement, Score, Spiral};
@@ -51,6 +51,11 @@ pub struct MerecatEndpoint {
 impl MerecatEndpoint {
     pub fn new(app: App) -> Result<Self, String> {
         Self::with_card_extent(app, (248.0, 168.0))
+    }
+
+    /// Deterministic live graph used by the cross-process projection receipt.
+    pub fn fixture() -> Result<Self, String> {
+        Self::new(App::projection_fixture())
     }
 
     pub fn with_card_extent(app: App, card_extent: (f32, f32)) -> Result<Self, String> {
@@ -308,6 +313,22 @@ impl ProjectionSource for MerecatEndpoint {
     }
 }
 
+impl ProjectionCatalog for MerecatEndpoint {
+    fn describe(&self) -> EndpointDescriptor {
+        EndpointDescriptor {
+            label: "Merecat".into(),
+            projections: vec![ProjectionOffer {
+                label: "Browsing graph".into(),
+                request: ProjectionRequest {
+                    version: ProtocolVersion::V1,
+                    session: self.session.clone(),
+                    score: Score::new(Arrangement::Spiral(Spiral::default())),
+                },
+            }],
+        }
+    }
+}
+
 impl PresentationSource for MerecatEndpoint {
     type Error = String;
 
@@ -421,7 +442,7 @@ pub struct G3Run {
 }
 
 pub fn run_g3_canary() -> Result<G3Run, String> {
-    let mut endpoint = MerecatEndpoint::new(App::projection_fixture())?;
+    let mut endpoint = MerecatEndpoint::fixture()?;
     let session = endpoint.session().clone();
     let request = ProjectionRequest {
         version: ProtocolVersion::V1,
