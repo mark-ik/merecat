@@ -102,3 +102,38 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
   so a pane chooses its sections, persisted with `frame.json`); and the
   add/remove UI (the right-click palette scoped to the active pane).
 
+- **2026-07-22 (the sections half FINISHED — merecat `4afed14`):** all three
+  remaining slices.
+  - **Rows are live.** `SectionRow` carries a `SectionActivate` (Open /
+    Recover) as DATA, like a swatch node's, so a provider declares what its
+    rows mean and needs no handler code. Recent navigates; Removed recovers by
+    ORIGINAL id (the recycle bin's identity contract — the Trail and the Gloss
+    agree). Rows wear a `section-row` class and `click_pane_row` learned it, so
+    one verb addresses a composed row wherever it was composed. (The first
+    headed run missed exactly there; the selector was the fix.)
+  - **Composition rides the leaf.** `PaneContent::Gloss(GlossConfig)` carries
+    provider ids, so a pane's composition persists with `frame.json`, travels
+    on tear-out, and differs per lens window. Sections moved off
+    `ProjectionPreset` (slice 1's hardcode) to the pane instance:
+    `sections::resolve` maps the leaf's ids to providers each frame, SKIPPING
+    unknown ids so a newer build's config degrades instead of failing, and
+    `SwatchPane::set_sections` hands them over. frisket grew
+    `content_mut(pane_id)` — the seam for editing a leaf's own config in place.
+    The unit→tuple variant change is the deliberate no-legacy-friction cut
+    (DOC_POLICY §3): a pre-`GlossConfig` layout resets to default, logged.
+  - **Add/remove is pane-scoped palette rows.** While a Gloss is active the
+    palette offers `Gloss: add/remove section — <Title>` per provider;
+    `Action::TogglePaneSection` edits that leaf and persists. Rings as `Panes`
+    (composition edits the layout, not a node). At base a Gloss is a bare
+    minimap — you compose it.
+  - Receipt `rung5_gloss_composite.scn` headed ok end to end: bare minimap →
+    compose Removed → click the row to recover by original id → toggle back to
+    bare. 107 unit tests.
+
+  **What this generalizes to (not built):** the registry is pane-agnostic, so
+  any list pane could host foreign sections — the design's original "Trail's
+  Removed inside Gloss, a roster bucket beside the minimap". Only Gloss reads a
+  config today. Also open: section ORDER (config order is honoured but there is
+  no reorder affordance), and the drag-a-section-header gesture (UI candidate 3,
+  which wants draggable section headers first).
+
