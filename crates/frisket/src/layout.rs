@@ -317,6 +317,19 @@ impl FrisketLayout {
         dedup_node(&mut self.root, &mut seen);
     }
 
+    /// Mutable access to one pane's content, by id. The seam a host needs to
+    /// edit a leaf's OWN config in place — a Gloss pane's composed sections
+    /// ride its [`PaneContent::Gloss`], so toggling one is a leaf edit, which
+    /// is what makes the choice persist with the layout and travel with the
+    /// pane on tear-out. `None` when no leaf carries that id.
+    pub fn content_mut(&mut self, pane_id: PaneId) -> Option<&mut PaneContent> {
+        let path = path_for_pane_id(&self.root, pane_id)?;
+        match walk_mut(&mut self.root, &path)? {
+            PaneNode::Leaf { content, .. } => Some(content),
+            PaneNode::Split { .. } => None,
+        }
+    }
+
     /// Iterate every leaf in the layout in depth-first order
     /// (first-child before second-child). Yields `(pane_id, content,
     /// graph_id)` triples. Used by the host to assemble per-pane

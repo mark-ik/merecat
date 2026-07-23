@@ -679,7 +679,10 @@ impl Shell {
             || self.click(&genet_probe::Selector::class("list-row").containing(substr))
             // A settings option is a row for receipt purposes (the Apparatus
             // pane's radio options).
-            || self.click(&genet_probe::Selector::class("radio").containing(substr));
+            || self.click(&genet_probe::Selector::class("radio").containing(substr))
+            // A composed list section's row (the gloss-composite): the same
+            // verb addresses it, wherever the section was composed.
+            || self.click(&genet_probe::Selector::class("section-row").containing(substr));
         if !hit {
             self.app.note(crate::observe::AppEvent::InteractionMissed {
                 what: "click-row",
@@ -878,7 +881,7 @@ impl Shell {
                                     }
                                 }
                             }
-                            Some(PaneContent::Gloss) => {
+                            Some(PaneContent::Gloss(_)) => {
                                 // Same hit-test round trip; the outcome arrives
                                 // as drained intents (the swatch mutates state
                                 // rather than bubbling), lowered here.
@@ -900,6 +903,11 @@ impl Shell {
                                         crate::swatch_pane::SwatchIntent::Activate(
                                             crate::swatch_pane::SwatchActivate::Switch(id),
                                         ) => self.act(Action::SwitchSession(id)),
+                                        // A composed Removed row: recover the
+                                        // node under its ORIGINAL id.
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Recover(id),
+                                        ) => self.act(Action::RecoverDeletedNode(id)),
                                         crate::swatch_pane::SwatchIntent::Expand => {
                                             self.app.focus =
                                                 crate::surface::FocusTarget::Canvas;
@@ -958,6 +966,11 @@ impl Shell {
                                         crate::swatch_pane::SwatchIntent::Activate(
                                             crate::swatch_pane::SwatchActivate::Switch(id),
                                         ) => self.act(Action::SwitchSession(id)),
+                                        // A composed Removed row: recover the
+                                        // node under its ORIGINAL id.
+                                        crate::swatch_pane::SwatchIntent::Activate(
+                                            crate::swatch_pane::SwatchActivate::Recover(id),
+                                        ) => self.act(Action::RecoverDeletedNode(id)),
                                         crate::swatch_pane::SwatchIntent::Expand => {
                                             self.app.focus =
                                                 crate::surface::FocusTarget::Canvas;
@@ -1045,7 +1058,7 @@ impl Shell {
             && pane_hit != Some(prev)
         {
             redraw |= match self.pane_content(prev) {
-                Some(PaneContent::Gloss) => {
+                Some(PaneContent::Gloss(_)) => {
                     self.gloss_pane.as_mut().is_some_and(|p| p.hover_leave())
                 }
                 Some(PaneContent::Overmap) => {
@@ -1062,7 +1075,7 @@ impl Shell {
                 .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
             if let Some((rw, rh)) = dims {
                 redraw |= match self.pane_content(id) {
-                    Some(PaneContent::Gloss) => self
+                    Some(PaneContent::Gloss(_)) => self
                         .gloss_pane
                         .as_mut()
                         .is_some_and(|p| p.hover(hit.local.0, hit.local.1, rw, rh)),
@@ -1391,7 +1404,7 @@ impl Shell {
                     }
                 }
             }
-            PaneContent::Gloss => {
+            PaneContent::Gloss(_) => {
                 if let Some(pane) = self.gloss_pane.as_mut() {
                     for intent in pane.click(lx, ly, rw, rh) {
                         match intent {
@@ -1401,6 +1414,10 @@ impl Shell {
                             crate::swatch_pane::SwatchIntent::Activate(
                                 crate::swatch_pane::SwatchActivate::Switch(id),
                             ) => out.push(Action::SwitchSession(id)),
+                            // A composed Removed row: recover by ORIGINAL id.
+                            crate::swatch_pane::SwatchIntent::Activate(
+                                crate::swatch_pane::SwatchActivate::Recover(id),
+                            ) => out.push(Action::RecoverDeletedNode(id)),
                             crate::swatch_pane::SwatchIntent::Expand => {
                                 self.app.focus = crate::surface::FocusTarget::Canvas;
                             }
@@ -1451,14 +1468,19 @@ impl Shell {
                 grid.sync(&self.app, rw as f32, rh as f32);
                 grid.scene(rw, rh)
             }
-            Some(PaneContent::Gloss) => {
+            Some(PaneContent::Gloss(cfg)) => {
                 // The minimap: the swatch's custom-paint leaf renders through
-                // the pane's registry (the leaf pipeline).
+                // the pane's registry (the leaf pipeline). Its composed
+                // sections come from THIS LEAF's config, resolved against the
+                // section registry (unknown ids are ignored, so a config from
+                // a newer build degrades instead of failing).
+                let providers = crate::sections::resolve(&cfg.sections);
                 let pane = self
                     .gloss_pane
                     .get_or_insert_with(|| {
                         crate::swatch_pane::SwatchPane::new(crate::swatch_pane::GLOSS_MINIMAP)
                     });
+                pane.set_sections(providers);
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
@@ -2437,7 +2459,7 @@ impl genet_probe::Automatable for Shell {
                         guards.push(("trail", rect, pane.dom_ref()));
                     }
                 }
-                Some(PaneContent::Gloss) => {
+                Some(PaneContent::Gloss(_)) => {
                     if let Some(pane) = &self.gloss_pane {
                         guards.push(("gloss", rect, pane.dom_ref()));
                     }

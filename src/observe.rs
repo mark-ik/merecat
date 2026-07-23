@@ -156,6 +156,9 @@ pub enum AppEvent {
     /// The recycle-bin store failed (open / record / list) — the Removed
     /// section may be stale or empty for the WRONG reason; loud + attributable.
     BinFailed(String),
+    /// A pane's composed list section was added or removed (the
+    /// gloss-composite's add/remove), by provider id.
+    PaneSectionToggled { section: String, added: bool },
     /// The recycle bin was emptied on command (athanor's oven), by how many
     /// records were permanently forgotten.
     RecycleBinEmptied(usize),
@@ -218,6 +221,10 @@ impl AppEvent {
             AppEvent::NodeRecovered(url) => format!("node-recovered {url}"),
             AppEvent::BinFailed(error) => format!("bin-failed {error}"),
             AppEvent::RecycleBinEmptied(n) => format!("recycle-bin-emptied {n}"),
+            AppEvent::PaneSectionToggled { section, added } => {
+                let verb = if *added { "added" } else { "removed" };
+                format!("pane-section-{verb} {section}")
+            }
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

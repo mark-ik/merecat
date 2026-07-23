@@ -84,6 +84,21 @@ pub enum SplitAxis {
     Vertical,
 }
 
+/// A Gloss pane's composition: which named list sections it stacks under its
+/// swatch, by provider id (`"recent"`, `"removed"`). Empty = the swatch fills
+/// the pane (the base minimap). The host resolves each id against its section
+/// registry and ignores ones it does not know, so a config written by a newer
+/// build degrades instead of failing.
+///
+/// This rides the LEAF, so a pane's composition persists with `frame.json`,
+/// moves with the pane on tear-out, and differs per lens window — the
+/// arrangement-state home the gloss-composite design chose.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlossConfig {
+    #[serde(default)]
+    pub sections: Vec<String>,
+}
+
 /// What a leaf pane shows. Extension point: `Custom` carries a
 /// host-defined content kind for content not yet promoted to a
 /// dedicated mere-domain module.
@@ -91,7 +106,12 @@ pub enum SplitAxis {
 pub enum PaneContent {
     Workbench,
     Orrery,
-    Gloss,
+    /// The graph minimap, plus any composed list sections
+    /// ([`GlossConfig`]). Carries data like [`PaneContent::Tile`]; a
+    /// pre-`GlossConfig` layout (the bare `"Gloss"` string) does not
+    /// deserialize and the layout falls back to the default, logged —
+    /// the deliberate no-legacy-friction cut, pre-release.
+    Gloss(GlossConfig),
     /// The graph's manifest — every primitive (nodes / facets, edges, fields),
     /// examinable. The data-view counterpart to the orrery's space-view (see the
     /// graph-roster + frame-taxonomy design doc).
@@ -134,7 +154,7 @@ impl PaneContent {
         match self {
             PaneContent::Workbench => "workbench",
             PaneContent::Orrery => "orrery",
-            PaneContent::Gloss => "gloss",
+            PaneContent::Gloss(_) => "gloss",
             PaneContent::Roster => "roster",
             PaneContent::Inspector => "inspector",
             PaneContent::Trail => "trail",
@@ -163,7 +183,7 @@ impl PaneContent {
         match self {
             PaneContent::Orrery
             | PaneContent::Workbench
-            | PaneContent::Gloss
+            | PaneContent::Gloss(_)
             | PaneContent::Roster
             | PaneContent::Inspector
             | PaneContent::Trail

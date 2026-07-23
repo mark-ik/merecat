@@ -213,7 +213,7 @@ fn graph_bound_panes_are_classified_apart_from_window_chrome() {
     for c in [
         PaneContent::Orrery,
         PaneContent::Workbench,
-        PaneContent::Gloss,
+        PaneContent::Gloss(Default::default()),
         PaneContent::Roster,
         PaneContent::Inspector,
         PaneContent::Tile(uuid::Uuid::nil()),

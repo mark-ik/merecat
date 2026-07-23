@@ -1,11 +1,9 @@
-# The gloss-composite (design_docs/2026-07-20_gloss_composite_pane.md, sections
-# half slice 1): the Gloss pane is a minimap PLUS composed list sections. Here
-# it composes the recycle bin's Removed section — deleted nodes are gone from
-# the graph, so the minimap is exactly where you'd look for them. Delete a node,
-# open Gloss, and the Removed row shows under the shrunk minimap (inert display
-# this slice; a row click and the add/remove UI are follow-ons). Visual receipt
-# (the section rows live in the swatch pane's own DOM, not the snapshot's list
-# rows, so this captures rather than asserts them). Network-dependent; FRESH.
+# The gloss-composite, finished (design_docs/2026-07-20_gloss_composite_pane.md):
+# the Gloss pane is a minimap you COMPOSE. At base it is just the minimap; the
+# palette offers pane-scoped section rows; adding one stacks it under the swatch
+# (persisted on that pane's frisket leaf); and a composed row is live — clicking
+# the recycle bin's Removed row recovers the node under its ORIGINAL id.
+# Network-dependent (example.com + iana.org); FRESH profile.
 settle 30
 key escape
 
@@ -20,11 +18,30 @@ act Delete node
 settle 15
 assert event node-removed
 
-# Open the Gloss pane: minimap on top, the Removed section below it.
+# Open Gloss. At base it is a bare minimap — nothing composed yet.
 act Open Gloss pane
 settle 10
 assert pane gloss
-assert surface pane
-capture 01_gloss_with_removed
+capture 01_base_minimap
 
-log gloss composite (minimap + Removed section) complete
+# Compose the Removed section onto THIS pane (the pane-scoped palette row).
+act Gloss: add section — Removed
+settle 10
+assert event pane-section-added removed
+capture 02_composed_removed
+
+# The composed row is live: clicking it recovers the node by its ORIGINAL id
+# (the same identity contract the Trail's Removed row honours).
+click-row Recover example
+settle 40
+assert event node-recovered
+assert focused example
+capture 03_recovered_from_gloss
+
+# Composition is a toggle: removing it returns the bare minimap.
+act Gloss: remove section — Removed
+settle 10
+assert event pane-section-removed removed
+capture 04_back_to_minimap
+
+log gloss composite finished (compose + live rows + toggle off) complete

@@ -10,9 +10,11 @@
 //! the Gloss minimap and the Overmap are now two presets of it, and a third
 //! swatch consumer is a preset definition away.
 //!
-//! What stays outside the vocabulary on purpose: the pane's palette (mere's,
-//! via [`NodeState`]), and the section-composition half of the gloss-composite
-//! design (the provider registry) — that is the next rung, not this one.
+//! The section-composition half landed on top of this: a pane's composed list
+//! sections come from ITS LEAF's [`frisket::GlossConfig`] (resolved against
+//! [`crate::sections`]) via [`SwatchPane::set_sections`], so the swatch is the
+//! preset and the sections are per-pane config. What stays outside the
+//! vocabulary on purpose: the pane's palette (mere's, via [`NodeState`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -48,6 +50,9 @@ pub enum SwatchActivate {
     Open(String),
     /// Adopt this session (`Action::SwitchSession`).
     Switch(frisket::SessionId),
+    /// Recover a removed node by its ORIGINAL id
+    /// (`Action::RecoverDeletedNode`) — a composed Removed row's click.
+    Recover(uuid::Uuid),
 }
 
 /// What a swatch-pane interaction asks of the shell.
@@ -99,11 +104,6 @@ pub struct ProjectionPreset {
     pub expand: bool,
     /// Gather the projection from app truth.
     pub gather: fn(&App) -> SwatchModel,
-    /// Composed list sections rendered below the swatch (the gloss-composite
-    /// design): the swatch shrinks to the top and the sections stack below.
-    /// Empty = the swatch fills the pane (the Overmap's shape). Hardcoded per
-    /// preset for now; the per-frisket-leaf config is the follow-on slice.
-    pub sections: &'static [crate::sections::SectionProvider],
 }
 
 /// The Gloss minimap as a preset: the live canvas geometry, colored by
@@ -116,9 +116,6 @@ pub const GLOSS_MINIMAP: ProjectionPreset = ProjectionPreset {
     node_labels: false,
     expand: true,
     gather: gloss_gather,
-    // The minimap composes the recycle bin's Removed section: deleted nodes
-    // are gone from the graph, so the minimap is where you'd look for them.
-    sections: &[crate::sections::REMOVED_SECTION],
 };
 
 /// The Overmap as a preset: sessions as container nodes with fork lineage,
@@ -132,8 +129,6 @@ pub const OVERMAP_LINEAGE: ProjectionPreset = ProjectionPreset {
     node_labels: true,
     expand: true,
     gather: overmap_gather,
-    // The overmap IS the session graph; no composed sections (it fills).
-    sections: &[],
 };
 
 /// A node's palette state from the host's content lifecycle (the same data
@@ -345,12 +340,36 @@ fn swatch_view(state: &SwatchState) -> SwatchView {
                 ));
             } else {
                 for row in rows {
-                    section_kids.push(Box::new(
-                        cambium::el::<_, SwatchState, ()>("div", row.text.clone()).attr(
-                            "style",
-                            "color: #c9d1d9; padding: 2px 12px; font-size: 12px;",
-                        ),
-                    ));
+                    // The row's activation rides it as DATA (the swatch node's
+                    // rule): the click handler pushes the intent the provider
+                    // declared, so a new provider needs no handler code here.
+                    // `section-row` is the probe class a receipt addresses.
+                    let activate = row.activate.clone();
+                    section_kids.push(Box::new(cambium::on_click(
+                        cambium::el::<_, SwatchState, ()>("div", row.text.clone())
+                            .attr("class", "section-row")
+                            .attr(
+                                "style",
+                                "color: #c9d1d9; padding: 2px 12px; font-size: 12px;",
+                            ),
+                        move |state: &mut SwatchState, _click: cambium::PointerClick| {
+                            match &activate {
+                                Some(crate::sections::SectionActivate::Open(url)) => {
+                                    state
+                                        .pending
+                                        .push(SwatchIntent::Activate(SwatchActivate::Open(
+                                            url.clone(),
+                                        )));
+                                }
+                                Some(crate::sections::SectionActivate::Recover(id)) => {
+                                    state.pending.push(SwatchIntent::Activate(
+                                        SwatchActivate::Recover(*id),
+                                    ));
+                                }
+                                None => {}
+                            }
+                        },
+                    )));
                 }
             }
         }
@@ -386,6 +405,9 @@ fn swatch_view(state: &SwatchState) -> SwatchView {
 /// Overmap are two instances of this.
 pub struct SwatchPane {
     preset: ProjectionPreset,
+    /// The composed section providers, set by the host from THIS pane's leaf
+    /// config each frame. Empty = the swatch fills the pane.
+    sections: Vec<crate::sections::SectionProvider>,
     dom: DomHandle,
     runner: SwatchRunner,
     registry: LeafRegistry<u64>,
@@ -420,12 +442,20 @@ impl SwatchPane {
             SwatchRunner::new(dom.clone(), swatch_view as fn(&SwatchState) -> SwatchView, state);
         Self {
             preset,
+            sections: Vec::new(),
             dom,
             runner,
             registry: LeafRegistry::new(),
             rendered: RenderedLeaves::new(),
             last_hover: None,
         }
+    }
+
+    /// Set the composed section providers for this pane (the host resolves
+    /// them from the leaf's `GlossConfig` each frame). Cheap: providers are
+    /// `Copy` descriptors, and the rows themselves are gathered in `sync`.
+    pub fn set_sections(&mut self, sections: Vec<crate::sections::SectionProvider>) {
+        self.sections = sections;
     }
 
     /// Refresh from app truth at the pane's size: run the preset's gather,
@@ -458,7 +488,6 @@ impl SwatchPane {
         // Composed sections shrink the swatch to the top fraction; without
         // them it fills the pane (the Overmap's shape, unchanged).
         let sections: Vec<(&'static str, Vec<crate::sections::SectionRow>)> = self
-            .preset
             .sections
             .iter()
             .map(|p| (p.title, (p.gather)(app)))

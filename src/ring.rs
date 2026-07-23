@@ -81,6 +81,9 @@ pub fn ring_of(action: &Action) -> Ring {
         | SetActivePaneDivider(_)
         | SetSplitRatio { .. }
         | ToggleMaximizePane
+        // Composing a pane's list sections edits its LEAF (the layout), so it
+        // is arrangement, not a node/view edit.
+        | TogglePaneSection { .. }
         | OpenInWorkbench
         | TearOutTile { .. }
         | WorkbenchActivate(_)

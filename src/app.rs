@@ -37,7 +37,7 @@ fn pane_content(kind: PaneKind) -> PaneContent {
     match kind {
         PaneKind::Roster => PaneContent::Roster,
         PaneKind::Trail => PaneContent::Trail,
-        PaneKind::Gloss => PaneContent::Gloss,
+        PaneKind::Gloss => PaneContent::Gloss(Default::default()),
         PaneKind::Inspector => PaneContent::Inspector,
         PaneKind::Steward => PaneContent::Steward,
         PaneKind::Comms => PaneContent::Comms,
@@ -548,7 +548,45 @@ impl App {
                 Action::SwitchSession(id),
             )
         }));
+        rows.extend(self.pane_section_actions());
         rows
+    }
+
+    /// The composed-section rows for the ACTIVE pane, when it is a Gloss: one
+    /// add/remove per registered provider. Pane-scoped palette entries are how
+    /// the gloss-composite design chose to expose composition (the right-click
+    /// palette already selects the pane under the pointer), so no new chrome.
+    /// Empty when the active pane is not a composable one.
+    fn pane_section_actions(&self) -> Vec<(String, Action)> {
+        let Some(pane) = self.active_pane else {
+            return Vec::new();
+        };
+        let Some(PaneContent::Gloss(cfg)) = self.pane_content(pane) else {
+            return Vec::new();
+        };
+        crate::sections::ALL
+            .iter()
+            .map(|p| {
+                let on = cfg.sections.iter().any(|id| id == p.id);
+                let verb = if on { "remove" } else { "add" };
+                (
+                    format!("Gloss: {verb} section — {}", p.title),
+                    Action::TogglePaneSection {
+                        pane,
+                        section: p.id.to_string(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A pane's content by id, in whichever space holds it (primary or a lens).
+    pub fn pane_content(&self, pane: PaneId) -> Option<&PaneContent> {
+        self.frisket
+            .iter_leaves()
+            .chain(self.lenses.iter().flatten().flat_map(|s| s.iter_leaves()))
+            .find(|(id, _, _)| *id == pane)
+            .map(|(_, content, _)| content)
     }
 
     /// Adopt `id`'s persisted state wholesale — the load half of a boot and
@@ -1786,6 +1824,35 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
+            Action::TogglePaneSection { pane, section } => {
+                // Mutate the pane's OWN leaf, in whichever space holds it, so
+                // the composition persists with frame.json and travels with a
+                // tear-out. Unknown pane / non-composable content: honest no-op.
+                let Some(space) = self.space_of(pane) else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(layout) = self.space_mut(space) else {
+                    return vec![Effect::Redraw];
+                };
+                let mut changed = None;
+                if let Some(PaneContent::Gloss(cfg)) = layout.content_mut(pane) {
+                    if let Some(pos) = cfg.sections.iter().position(|s| s == &section) {
+                        cfg.sections.remove(pos);
+                        changed = Some(false);
+                    } else {
+                        cfg.sections.push(section.clone());
+                        changed = Some(true);
+                    }
+                }
+                match changed {
+                    Some(added) => {
+                        self.events
+                            .push(AppEvent::PaneSectionToggled { section, added });
+                        vec![Effect::SaveSession, Effect::Redraw]
+                    }
+                    None => vec![Effect::Redraw],
+                }
+            }
             // Workbench ops (rung 5 slice E). Platen owns the model and every
             // mutator; these arms lower intents onto it and persist. The
             // Workbench PANE (the frisket leaf) is where the tiling shows;
@@ -2636,7 +2703,7 @@ mod tests {
         let lens = app.lenses[0].as_ref().unwrap();
         assert!(
             lens.iter_leaves()
-                .any(|(_, c, _)| matches!(c, PaneContent::Gloss)),
+                .any(|(_, c, _)| matches!(c, PaneContent::Gloss(_))),
             "the gloss joined the existing lens"
         );
     }
@@ -2988,6 +3055,57 @@ mod tests {
     /// the ACTIVE pane. The close must remove the TRAIL (the summon made it
     /// active), never the roster.
     #[test]
+    /// The gloss-composite's add/remove: a Gloss pane starts as a bare
+    /// minimap, the palette offers pane-scoped section rows, toggling one
+    /// edits THAT LEAF (so it persists with the layout), and toggling again
+    /// removes it.
+    #[test]
+    fn composing_a_gloss_pane_toggles_sections_on_its_own_leaf() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Gloss));
+        let pane = app.active_pane.expect("the summoned gloss is active");
+
+        // At base it is a minimap: no composed sections.
+        let sections = |app: &App| match app.pane_content(pane) {
+            Some(PaneContent::Gloss(cfg)) => cfg.sections.clone(),
+            _ => panic!("the active pane is a Gloss"),
+        };
+        assert!(sections(&app).is_empty(), "base is a bare minimap");
+
+        // The palette offers an ADD row per provider while it is active.
+        let offered = app.session_actions();
+        assert!(
+            offered
+                .iter()
+                .any(|(label, _)| label == "Gloss: add section — Removed"),
+            "pane-scoped add row is offered: {offered:?}"
+        );
+
+        // Toggling composes it onto the leaf, and persists (SaveSession).
+        let fx = app.update(Action::TogglePaneSection {
+            pane,
+            section: "removed".to_string(),
+        });
+        assert_eq!(sections(&app), vec!["removed".to_string()]);
+        assert!(
+            fx.iter().any(|e| matches!(e, Effect::SaveSession)),
+            "the composition persists with the layout: {fx:?}"
+        );
+        // Now the palette offers REMOVE for it.
+        assert!(
+            app.session_actions()
+                .iter()
+                .any(|(label, _)| label == "Gloss: remove section — Removed")
+        );
+
+        // Toggling again removes it, back to the bare minimap.
+        app.update(Action::TogglePaneSection {
+            pane,
+            section: "removed".to_string(),
+        });
+        assert!(sections(&app).is_empty(), "toggled back off");
+    }
+
     fn lens_ops_close_removes_the_summoned_pane() {
         let mut app = App::test_stub();
         app.update(Action::SummonPane(PaneKind::Roster));

@@ -14,12 +14,23 @@
 
 use crate::app::App;
 
-/// One row of a composed section. Slice 1 is inert display text; the row will
-/// grow its activation (a url to navigate, a removed id to recover) when the
-/// click lane lands.
+/// What clicking a section row means. Data, like a swatch node's activation:
+/// providers declare it and the host lowers it through the spine, so a new
+/// provider needs no handler code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SectionActivate {
+    /// Navigate to this url (a Recent row).
+    Open(String),
+    /// Recover this removed node by its ORIGINAL id (a Removed row).
+    Recover(uuid::Uuid),
+}
+
+/// One row of a composed section: its display text plus what a click does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SectionRow {
     pub text: String,
+    /// `None` renders an inert row (an empty-state hint).
+    pub activate: Option<SectionActivate>,
 }
 
 /// A named list-section provider. The stable `id` is what a pane's config
@@ -57,6 +68,14 @@ pub fn by_id(id: &str) -> Option<&'static SectionProvider> {
     ALL.iter().find(|p| p.id == id)
 }
 
+/// Resolve a pane config's section ids to providers, in the config's order.
+/// An id this build does not know is SKIPPED, not an error: a layout written
+/// by a newer build (or one whose provider was retired) degrades to the
+/// sections that still exist rather than failing the pane.
+pub fn resolve(ids: &[String]) -> Vec<SectionProvider> {
+    ids.iter().filter_map(|id| by_id(id).copied()).collect()
+}
+
 fn gather_recent(app: &App) -> Vec<SectionRow> {
     app.canvas
         .graph()
@@ -64,6 +83,7 @@ fn gather_recent(app: &App) -> Vec<SectionRow> {
         .into_iter()
         .map(|rv| SectionRow {
             text: mere::trail::short_url(&rv.url),
+            activate: Some(SectionActivate::Open(rv.url)),
         })
         .collect()
 }
@@ -76,7 +96,11 @@ fn gather_removed(app: &App) -> Vec<SectionRow> {
         .filter(|r| graph.get_node_key_by_id(r.node_id).is_none())
         .filter(|r| seen.insert(r.node_id))
         .map(|r| SectionRow {
-            text: mere::trail::short_url(&r.url),
+            // The affordance IS the label, as in the Trail: a Removed row must
+            // not read identically to the same url's Recent row, or a
+            // text-addressed click cannot tell recover from navigate.
+            text: format!("Recover {}", mere::trail::short_url(&r.url)),
+            activate: Some(SectionActivate::Recover(r.node_id)),
         })
         .collect()
 }

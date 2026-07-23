@@ -151,6 +151,14 @@ pub enum Action {
     /// Toggle maximize on the active pane (a host view state; frisket has no
     /// maximize op). A maximized pane takes the whole pane area.
     ToggleMaximizePane,
+    /// Add or remove a composed list section on a pane, by provider id (the
+    /// gloss-composite's add/remove, offered as pane-scoped palette rows).
+    /// The choice rides the pane's frisket leaf, so it persists with
+    /// `frame.json` and moves with the pane on tear-out.
+    TogglePaneSection {
+        pane: frisket::PaneId,
+        section: String,
+    },
     /// Open the focused node as a workbench tile (rung 5 slice E): summons the
     /// Workbench pane if absent, opens the tile in platen's model, and spawns
     /// the node's content if it has none.
