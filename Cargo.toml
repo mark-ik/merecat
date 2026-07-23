@@ -101,6 +101,11 @@ genet-documents = { git = "https://github.com/mark-ik/genet.git", branch = "main
 # not a browser-page engine; Vano/Boa remain the JavaScript lanes.
 script-engine-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
 script-engine-piccolo = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
+# The app-core component host (mere): instantiates the envelope world and
+# backs `emit` with merecat's ring gate. Optional — the `wasm` feature.
+app-host = { git = "https://github.com/mark-ik/mere.git", branch = "main", optional = true }
+# Store limits for a component instance (the same wasmtime the host uses).
+wasmtime = { version = "45", optional = true }
 genet-extract = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-static-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # `linked_icon_href` (the page's declared `<link rel=icon>`) + image decode
@@ -148,6 +153,10 @@ serde_json = "1"
 
 [features]
 default = []
+# The wasm denizen lane (participant gate B3): an `app-core` component acts
+# through the action envelope, ring-gated per emission. Opt-in like piccolo
+# so an ordinary browser build carries no wasm runtime.
+wasm = ["dep:app-host", "dep:wasmtime"]
 # Piccolo drives Merecat's capability-scoped control scripts. It is kept
 # opt-in so the browser host's ordinary build carries no scripting runtime.
 piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo"]

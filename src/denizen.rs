@@ -31,19 +31,54 @@ use crate::app::App;
 /// namespace beside `denizen.binding`; the binding stays app-agnostic).
 pub const SCENARIO_SOURCE_FACET: &str = "scenario.source";
 
+/// The facet naming a component denizen's `.wasm` file, relative to the
+/// session's `denizens/` dir. The bytes live on disk (never in a facet); the
+/// facet is the pointer, exactly like the world's log id is a pointer.
+pub const COMPONENT_FACET: &str = "component.file";
+
+/// The capability path covering the app's READ face (the observe tier): not
+/// an emission ring — nothing is dispatched by reading — so every resident
+/// gets it, and the rings are what the review actually asks for.
+pub const READ_SCOPE: &str = "app/read";
+
 /// The capability path a rung-1 scenario denizen is granted over its own
 /// nested world (`Mode::Write`). The visible review names it.
 pub const SCENARIO_SCOPE: &str = "scenario/";
 
-/// The capability path covering the app control surface (B2): the piccolo
-/// lane derives its `ScriptCapabilities` from coverage under this prefix
-/// (`app/read`, `app/dispatch`, `app/navigate`, `app/panes`), so what a
-/// denizen's script may DO is read from its grant, not from a feature flag.
-pub const APP_SCOPE: &str = "app/";
-
 /// The piccolo step budget a denizen run gets — generous for a control
 /// script, hard against a runaway loop.
 pub const RUN_BUDGET: u64 = 20_000;
+
+/// What a pack actually IS: a control script's source, or a wasm component's
+/// bytes. Both are content-addressed the same way (blake3 over the bytes), so
+/// identity does not care which lane runs it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackBody {
+    /// A piccolo control script (`.lua`).
+    Scenario(String),
+    /// An `app-core` wasm component (`.wasm`).
+    Component(Vec<u8>),
+}
+
+impl PackBody {
+    /// The denizen kind this body resides as.
+    pub fn kind(&self) -> session_runtime::DenizenKind {
+        match self {
+            PackBody::Scenario(_) => session_runtime::DenizenKind::Scenario,
+            PackBody::Component(_) => session_runtime::DenizenKind::Pack,
+        }
+    }
+
+    /// How the review names the runnable. Short on purpose: the whole ask
+    /// has to fit one palette row without clipping, and what matters in it
+    /// is the RINGS.
+    pub fn noun(&self) -> &'static str {
+        match self {
+            PackBody::Scenario(_) => "lua",
+            PackBody::Component(_) => "wasm",
+        }
+    }
+}
 
 /// A staged install awaiting the VISIBLE grant review: nothing is minted, no
 /// grant exists, until the user confirms from the palette.
@@ -53,10 +88,24 @@ pub struct PendingInstall {
     pub path: PathBuf,
     /// The denizen's display label (the file stem).
     pub label: String,
-    /// The runnable source.
-    pub source: String,
+    /// The runnable body.
+    pub body: PackBody,
     /// The content-derived subject.
     pub subject: Subject,
+    /// The action RINGS this install would grant — the default profile,
+    /// PRESELECTED for the review, never silently granted: the confirm row
+    /// names them, and only confirming turns the ask into a grant.
+    pub rings: Vec<crate::ring::Ring>,
+}
+
+/// The default ring profile a staged pack arrives with. Control rings
+/// (navigate / panes / dispatch) are what a helper needs to be useful; the
+/// session ring (fork / close / delete / recover) is destructive, so it is
+/// never preselected — a pack that wants it must be granted it deliberately.
+/// Host-only is not a profile choice at all: no grant can cover it.
+pub fn default_rings() -> Vec<crate::ring::Ring> {
+    use crate::ring::Ring;
+    vec![Ring::Navigate, Ring::Panes, Ring::Dispatch]
 }
 
 /// One resident denizen's live half: its subject and its nested world,
@@ -93,31 +142,64 @@ impl Denizens {
 /// and surface the review. `Err` is a human-readable refusal (unreadable
 /// file, empty source).
 pub fn stage_install(path: &Path) -> Result<PendingInstall, String> {
-    let source =
-        std::fs::read_to_string(path).map_err(|err| format!("unreadable pack: {err}"))?;
-    if source.trim().is_empty() {
+    let bytes = std::fs::read(path).map_err(|err| format!("unreadable pack: {err}"))?;
+    if bytes.is_empty() {
         return Err("the pack is empty".to_string());
     }
+    // The subject is the bytes' blake3 either way: the same pack is the same
+    // denizen whichever lane runs it, and an edited pack faces a fresh review.
+    let subject = Subject::new(*blake3::hash(&bytes).as_bytes());
+    let is_component = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("wasm"));
+    let body = if is_component {
+        PackBody::Component(bytes)
+    } else {
+        let source = String::from_utf8(bytes)
+            .map_err(|_| "the pack is not valid UTF-8 (a component must end in .wasm)".to_string())?;
+        if source.trim().is_empty() {
+            return Err("the pack is empty".to_string());
+        }
+        PackBody::Scenario(source)
+    };
     let label = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("denizen")
         .to_string();
-    let subject = Subject::new(*blake3::hash(source.as_bytes()).as_bytes());
     Ok(PendingInstall {
         path: path.to_path_buf(),
         label,
-        source,
+        body,
         subject,
+        rings: default_rings(),
     })
+}
+
+/// Where a component denizen's `.wasm` lives: `sessions/<id>/denizens/<subject>.wasm`
+/// (beside the worlds — a resident's whole substance in one place).
+pub fn component_path(session_dir: &Path, file: &str) -> PathBuf {
+    session_dir.join("denizens").join(file)
 }
 
 /// The review line the palette shows on the Confirm row — the ASK, visible
 /// before any grant exists.
 pub fn review_line(pending: &PendingInstall) -> String {
+    let rings = pending
+        .rings
+        .iter()
+        .map(|r| r.name())
+        .collect::<Vec<_>>()
+        .join(", ");
+    // One row, no clipping: the label, the lane, and the RINGS this install
+    // would grant. `own world` stands for the `scenario/` scope every
+    // resident gets over its own nested graph.
     format!(
-        "Install {}: may run control scripts and write {} in its own world — Confirm",
-        pending.label, SCENARIO_SCOPE
+        "Install {} ({}) — grants: {}, own world — Confirm",
+        pending.label,
+        pending.body.noun(),
+        rings
     )
 }
 
@@ -322,14 +404,43 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
     session_runtime::write_denizen_binding(
         &mut app.facets,
         member,
-        &session_runtime::DenizenBinding::new(hex.clone(), session_runtime::DenizenKind::Scenario),
+        &session_runtime::DenizenBinding::new(hex.clone(), pending.body.kind()),
     );
-    let _ = app.facets.set(
-        member,
-        chartulary::FacetId::new(SCENARIO_SOURCE_FACET),
-        serde_json::json!(pending.source),
-        &chartulary::AcceptAll,
-    );
+    // The runnable: a script's source rides a facet; a component's bytes ride
+    // the disk beside the worlds, with the facet as the pointer.
+    match &pending.body {
+        PackBody::Scenario(source) => {
+            let _ = app.facets.set(
+                member,
+                chartulary::FacetId::new(SCENARIO_SOURCE_FACET),
+                serde_json::json!(source),
+                &chartulary::AcceptAll,
+            );
+        }
+        PackBody::Component(bytes) => {
+            let file = format!("{hex}.wasm");
+            let target = component_path(&app.session_dir(), &file);
+            let written = (|| -> std::io::Result<()> {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&target, bytes)
+            })();
+            match written {
+                Ok(()) => {
+                    let _ = app.facets.set(
+                        member,
+                        chartulary::FacetId::new(COMPONENT_FACET),
+                        serde_json::json!(file),
+                        &chartulary::AcceptAll,
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(%err, path = ?target, "failed to store the component");
+                }
+            }
+        }
+    }
     let _ = app.facets.set(
         member,
         chartulary::FacetId::new("scenario.label"),
@@ -337,23 +448,36 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
         &chartulary::AcceptAll,
     );
 
-    // The nested world: fresh log, BOTH grants projected by the gate
+    // The nested world: fresh log, every granted path projected by the gate
     // (read-only, gate-authored — the browsable record authority derives
-    // from): the denizen's own world, and the app control surface the
-    // review named (B2: the piccolo lane reads this, not a feature flag).
+    // from). What is granted is exactly what the review named: the denizen's
+    // own world, the read face, and ONE PATH PER PRESELECTED RING. No blanket
+    // `app/` grant — an unnamed ring is an ungranted ring, and the session
+    // ring only appears here if the review asked for it.
     let mut nested = GraphLog::with_id(LogId::new(hex.clone()));
-    let world = Grant::new(subject, SCENARIO_SCOPE, Mode::Write);
-    let control = Grant::new(subject, APP_SCOPE, Mode::Write);
-    for grant in [&world, &control] {
+    let mut grants = vec![
+        Grant::new(subject, SCENARIO_SCOPE, Mode::Write),
+        Grant::new(subject, READ_SCOPE, Mode::Write),
+    ];
+    grants.extend(
+        pending
+            .rings
+            .iter()
+            .filter_map(|ring| ring.path())
+            .map(|path| Grant::new(subject, path, Mode::Write)),
+    );
+    for grant in &grants {
         if let Err(err) = app.denizens.gate.project_grant(&mut nested, grant) {
             tracing::warn!(?err, "failed to project an install grant");
         }
     }
     save_nested(&app.session_dir(), &hex, &nested);
 
-    app.denizens.authority = std::mem::take(&mut app.denizens.authority)
-        .with_grant(world)
-        .with_grant(control);
+    let mut authority = std::mem::take(&mut app.denizens.authority);
+    for grant in grants {
+        authority = authority.with_grant(grant);
+    }
+    app.denizens.authority = authority;
     app.denizens.residents.insert(
         member,
         Resident {
@@ -380,7 +504,15 @@ mod tests {
         let b = stage_install(&path).unwrap();
         assert_eq!(a.subject, b.subject, "same source, same subject");
         assert_eq!(a.label, "trail-keeper");
-        assert!(review_line(&a).contains("may run control scripts"), "the ask is visible");
+        let review = review_line(&a);
+        assert!(review.contains("grants:"), "the ask is visible: {review}");
+        for ring in default_rings() {
+            assert!(review.contains(ring.name()), "the ask names {}: {review}", ring.name());
+        }
+        assert!(
+            review.chars().count() < 96,
+            "the ask must fit one palette row without clipping: {review}"
+        );
 
         std::fs::write(&path, "mere.open('mere://other')").unwrap();
         let c = stage_install(&path).unwrap();

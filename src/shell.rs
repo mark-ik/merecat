@@ -1312,10 +1312,15 @@ impl Shell {
             self.act(Action::SetNodeSprite { member, data_uri, hull });
             return;
         }
-        // A dropped .lua is a scenario pack: stage the denizen install and
-        // surface the VISIBLE grant review (participant gate B1). Nothing is
-        // minted until the palette's Confirm row commits.
-        if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+        // A dropped .lua (a control script) or .wasm (an `app-core` component)
+        // is a pack: stage the denizen install and surface the VISIBLE grant
+        // review with its ring profile (participant gate B1/B3). Nothing is
+        // minted, and no grant exists, until the palette's Confirm commits.
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("lua") || e.eq_ignore_ascii_case("wasm"))
+        {
             self.act(Action::InstallDenizen {
                 path: path.display().to_string(),
             });

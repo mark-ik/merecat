@@ -1,0 +1,27 @@
+# Participant gate B3 receipt: a dropped `.wasm` installs as a COMPONENT
+# denizen after the same visible review — whose row names its ring profile —
+# and running it lowers only the emissions its grant covers. The guest emits
+# one action per ring: navigate + dispatch land, session and gate management
+# are refused inside the run. FRESH profile; requires the wasm feature.
+settle 30
+key escape
+
+drop-file 200 200 scenarios/fixtures/app_core_guest.wasm
+settle 10
+assert event denizen-staged
+# The ring profile is visible in the Confirm row (the capture shows it;
+# the unit test asserts the exact ring names).
+assert suggestions >= 2
+capture 01_ring_review
+
+act Install app_core_guest
+settle 15
+assert event denizen-installed
+
+act Run app_core_guest
+settle 25
+assert event denizen-ran
+assert focused kept/note
+capture 02_component_acted
+
+log wasm denizen receipt complete

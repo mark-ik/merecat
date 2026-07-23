@@ -212,9 +212,9 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
 }
 
 /// Derive a run's capabilities from a denizen's structural caps (participant
-/// gate B2): each script capability class maps to a path under
-/// [`crate::denizen::APP_SCOPE`], and the bit is set only when the provider
-/// covers that path for the subject. A denizen granted nothing under `app/`
+/// gate B2): each script capability class maps to a path under `app/`
+/// (the same paths [`crate::ring`] gates emissions by), and the bit is set
+/// only when the provider covers that path. A denizen granted nothing under `app/`
 /// evaluates read-less and dispatch-less — the denial surfaces in the run.
 pub(crate) fn capabilities_from_grant(
     authority: &impl servitor::AuthorityProvider,
@@ -316,8 +316,10 @@ mod tests {
             "the ungranted class denies by name: {err}"
         );
 
-        let control = PrefixAuthority::new()
-            .with_grant(Grant::new(subject, crate::denizen::APP_SCOPE, Mode::Write));
+        // The bare `app/` prefix models a TOTAL app grant — every ring at
+        // once. No install writes that (install grants one path per reviewed
+        // ring); the test uses it to exercise the fully-granted script.
+        let control = PrefixAuthority::new().with_grant(Grant::new(subject, "app/", Mode::Write));
         let caps = capabilities_from_grant(&control, subject);
         let actions = run(&app, "mere.open('mere://x')", caps, 500).unwrap();
         assert_eq!(actions.len(), 1, "the granted surface runs");

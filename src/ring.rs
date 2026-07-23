@@ -158,6 +158,26 @@ pub fn emit_allowed(
     }
 }
 
+/// Every ring, in privilege order (least first). Host-only is deliberately
+/// absent: it is not a choice a review can offer.
+pub const GRANTABLE_RINGS: [Ring; 4] = [Ring::Navigate, Ring::Panes, Ring::Dispatch, Ring::Session];
+
+/// The interface-shaped names of the rings this subject's authority actually
+/// covers — the `caps.granted()` answer a component reads to skip a feature
+/// instead of emitting into a denial. The grant stays authoritative; this is
+/// the guest's read-only window onto it.
+pub fn granted_ring_names(authority: &PrefixAuthority, subject: Subject) -> Vec<String> {
+    GRANTABLE_RINGS
+        .iter()
+        .filter(|ring| {
+            ring.path().is_some_and(|path| {
+                servitor::AuthorityProvider::covers(authority, subject, path, Mode::Write)
+            })
+        })
+        .map(|ring| format!("mere:script/actions#{}", ring.name()))
+        .collect()
+}
+
 /// An envelope that failed to become an action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EnvelopeError {

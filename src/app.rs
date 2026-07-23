@@ -482,6 +482,33 @@ impl App {
     /// The denizen rows for the palette's actions lane: the pending
     /// install's visible review (the Confirm row IS the ask), then one Run
     /// row per resident (B1: the palette populated from denizen residency).
+    /// Lower a denizen's emitted Actions through this same spine with the
+    /// journal scoped to its subject, so every captured graph edit reads back
+    /// attributed. Shared by both runnable lanes: piccolo returns Actions
+    /// after evaluation, the component lane returns the ring-gate's accepted
+    /// queue — by here, both are authorized.
+    fn lower_denizen_actions(
+        &mut self,
+        subject: servitor::Subject,
+        label: String,
+        actions: Vec<Action>,
+    ) -> Vec<Effect> {
+        if let Ok(mut journal) = self.journal.lock() {
+            journal.set_author(subject.to_hex());
+        }
+        let mut effects = Vec::new();
+        for action in actions {
+            effects.extend(self.update(action));
+        }
+        if let Ok(mut journal) = self.journal.lock() {
+            journal.set_author(mere::kernel::graph::USER_AUTHOR);
+        }
+        self.events.push(AppEvent::DenizenRan(label));
+        effects.push(Effect::SaveSession);
+        effects.push(Effect::Redraw);
+        effects
+    }
+
     pub fn denizen_actions(&self) -> Vec<(String, Action)> {
         let mut rows = Vec::new();
         if let Some(pending) = &self.pending_install {
@@ -1025,20 +1052,63 @@ impl App {
                 vec![Effect::Redraw]
             }
             Action::RunDenizen { member } => {
-                let Some((subject, label, source)) = self
+                let Some((subject, label)) = self
                     .denizens
                     .residents
                     .get(&member)
-                    .map(|r| (r.subject, r.label.clone(), ()))
-                    .and_then(|(s, l, ())| {
-                        self.facets
-                            .get(&member, &chartulary::FacetId::new(
-                                crate::denizen::SCENARIO_SOURCE_FACET,
-                            ))
-                            .and_then(|v| v.as_str().map(str::to_string))
-                            .map(|src| (s, l, src))
-                    })
+                    .map(|r| (r.subject, r.label.clone()))
                 else {
+                    return vec![Effect::Redraw];
+                };
+                let facet = |id: &str| {
+                    self.facets
+                        .get(&member, &chartulary::FacetId::new(id))
+                        .and_then(|v| v.as_str().map(str::to_string))
+                };
+                // Which lane runs this resident is a property of what it IS
+                // (a script's source facet, or a component's file pointer),
+                // never of what it may DO — that is the grant's business.
+                let component_file = facet(crate::denizen::COMPONENT_FACET);
+                let source = facet(crate::denizen::SCENARIO_SOURCE_FACET);
+                if let Some(file) = component_file {
+                    // The wasm lane: emissions are ring-gated inside the run,
+                    // and what comes back is already authorized.
+                    #[cfg(not(feature = "wasm"))]
+                    {
+                        let _ = file;
+                        tracing::warn!(%label, "component run refused: built without the wasm feature");
+                        self.events.push(AppEvent::DenizenRefused(
+                            "this build carries no component runtime".to_string(),
+                        ));
+                        return vec![Effect::Redraw];
+                    }
+                    #[cfg(feature = "wasm")]
+                    {
+                        let path = crate::denizen::component_path(&self.session_dir(), &file);
+                        let run = match crate::component::run(
+                            &path,
+                            &self.denizens.authority,
+                            subject,
+                            "run",
+                            "",
+                        ) {
+                            Ok(run) => run,
+                            Err(err) => {
+                                tracing::warn!(%err, %label, "component run failed");
+                                self.events.push(AppEvent::DenizenRefused(err));
+                                return vec![Effect::Redraw];
+                            }
+                        };
+                        for line in &run.logs {
+                            tracing::info!(%label, "{line}");
+                        }
+                        for refusal in &run.refusals {
+                            tracing::info!(%label, "component emission refused: {refusal}");
+                        }
+                        return self.lower_denizen_actions(subject, label, run.actions);
+                    }
+                }
+                let Some(source) = source else {
                     return vec![Effect::Redraw];
                 };
                 // Evaluate the body (read-only against app truth; mutation
@@ -1069,23 +1139,7 @@ impl App {
                         return vec![Effect::Redraw];
                     }
                 };
-                // Lower the emitted Actions through this same spine with the
-                // journal scoped to the denizen's author, so every captured
-                // graph edit reads back attributed to the subject.
-                if let Ok(mut journal) = self.journal.lock() {
-                    journal.set_author(subject.to_hex());
-                }
-                let mut effects = Vec::new();
-                for action in actions {
-                    effects.extend(self.update(action));
-                }
-                if let Ok(mut journal) = self.journal.lock() {
-                    journal.set_author(mere::kernel::graph::USER_AUTHOR);
-                }
-                self.events.push(AppEvent::DenizenRan(label));
-                effects.push(Effect::SaveSession);
-                effects.push(Effect::Redraw);
-                effects
+                self.lower_denizen_actions(subject, label, actions)
             }
             Action::RecoverSession(id) => {
                 // Overmap O3 recovery: the trashed directory moves back whole
@@ -2075,7 +2129,7 @@ mod tests {
         assert!(app.pending_install.is_some());
         let rows = app.denizen_actions();
         assert!(
-            rows[0].0.contains("may run control scripts"),
+            rows[0].0.contains("grants:") && rows[0].0.contains("(lua)"),
             "the ask is the first palette row: {rows:?}"
         );
         assert!(
@@ -2696,6 +2750,97 @@ mod tests {
             "Removed derives away once the node is present (record still staged)"
         );
         assert!(!app.removed.is_empty(), "the bin record itself remains");
+    }
+
+    /// The envelope lane end to end (participant gate B3): a dropped `.wasm`
+    /// installs as a component denizen after the same VISIBLE review — whose
+    /// row now names its ring profile — and running it lowers exactly the
+    /// emissions its grant covers, attributed, while the ungranted ring and
+    /// gate management are refused inside the run.
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn a_component_denizen_acts_only_within_its_reviewed_rings() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-component-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = std::path::Path::new("scenarios/fixtures/app_core_guest.wasm");
+        assert!(
+            pack.exists(),
+            "the app-core guest fixture is missing at {}",
+            pack.display()
+        );
+
+        // Stage: the review names the component and its preselected rings.
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        let review = &app.denizen_actions()[0].0;
+        assert!(review.contains("(wasm)"), "the lane is named: {review}");
+        for ring in ["navigate", "panes", "dispatch"] {
+            assert!(review.contains(ring), "the ask names {ring}: {review}");
+        }
+        assert!(
+            !review.contains("session"),
+            "the destructive ring is never preselected: {review}"
+        );
+
+        app.update(Action::ConfirmInstallDenizen);
+        let (member, subject) = {
+            let (&m, r) = app.denizens.residents.iter().next().unwrap();
+            (m, r.subject)
+        };
+        let binding = session_runtime::read_denizen_binding(&app.facets, member).unwrap();
+        assert_eq!(binding.kind, session_runtime::DenizenKind::Pack);
+        let file = app
+            .facets
+            .get(&member, &chartulary::FacetId::new(crate::denizen::COMPONENT_FACET))
+            .and_then(|v| v.as_str().map(str::to_string))
+            .expect("the component facet points at the stored bytes");
+        assert!(
+            crate::denizen::component_path(&app.session_dir(), &file).is_file(),
+            "the component's bytes live beside the worlds"
+        );
+        // The grant is exactly the reviewed rings — no blanket `app/`.
+        let covers = |path: &str| {
+            servitor::AuthorityProvider::covers(
+                &app.denizens.authority,
+                subject,
+                path,
+                servitor::Mode::Write,
+            )
+        };
+        assert!(covers("app/navigate") && covers("app/panes") && covers("app/dispatch"));
+        assert!(!covers("app/session"), "an unreviewed ring is ungranted");
+
+        // Run: the guest emits one action per ring. Only the covered ones land.
+        let before = app.canvas.graph().node_count();
+        app.update(Action::RunDenizen { member });
+        assert!(
+            app.canvas.graph().get_node_by_url("mere://kept/note").is_some(),
+            "the navigate emission lowered through the spine"
+        );
+        assert_eq!(
+            app.canvas.graph().node_count(),
+            before + 1,
+            "and nothing else minted a node"
+        );
+        assert!(
+            app.take_events()
+                .iter()
+                .any(|e| matches!(e, AppEvent::DenizenRan(_))),
+            "the run is observable"
+        );
+        // Attribution: the component's edit reads back under its subject.
+        let journal = app.journal.lock().unwrap();
+        assert!(
+            journal
+                .entries()
+                .iter()
+                .any(|entry| entry.author == subject.to_hex()),
+            "the component's graph edit is attributed to its subject"
+        );
+        drop(journal);
+        let _ = std::fs::remove_dir_all(&app.data_root);
     }
 
     /// Archive-never-orphan at the node tier: deleting a denizen node moves

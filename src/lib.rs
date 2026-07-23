@@ -10,6 +10,8 @@ mod apparatus_pane;
 mod browse;
 mod cambium_pane;
 mod chrome_view;
+#[cfg(feature = "wasm")]
+mod component;
 mod content;
 mod denizen;
 mod inspector_pane;
