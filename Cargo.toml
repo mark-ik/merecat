@@ -55,8 +55,8 @@ sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
 scenomise = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
 scenotime = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
 # Graphshell's portable client/endpoint contracts and native receipt view.
-# The sibling is still local-only while its archived donor rename gates
-# publication; the gitignored Cargo config redirects these intended sources.
+# The committed Git sources are authoritative. The gitignored Cargo config
+# redirects them to a sibling checkout during cross-repository development.
 graphshell = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
 graphshell-client = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
 graphshell-endpoint = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
