@@ -133,6 +133,59 @@ pub fn nested_log_path(session_dir: &Path, log_id: &str) -> PathBuf {
     session_dir.join("denizens").join(format!("{log_id}.json"))
 }
 
+/// Where an ARCHIVED world sits while its bearer is in the recycle bin:
+/// `sessions/<id>/denizens/archive/<log-id>.json` (the file-level echo of
+/// chartulary's `archive/nested/...` slot convention).
+pub fn archived_world_path(session_dir: &Path, log_id: &str) -> PathBuf {
+    session_dir
+        .join("denizens")
+        .join("archive")
+        .join(format!("{log_id}.json"))
+}
+
+/// Archive a world: move its live file to the archive slot (archive-never-
+/// orphan — the move happens BEFORE the bearing node leaves the graph, and a
+/// failure aborts the delete). A world with no live file is fine: there is
+/// nothing to move, recovery starts it empty as always.
+pub fn archive_world(session_dir: &Path, log_id: &str) -> std::io::Result<()> {
+    let live = nested_log_path(session_dir, log_id);
+    if !live.is_file() {
+        return Ok(());
+    }
+    let archived = archived_world_path(session_dir, log_id);
+    if let Some(parent) = archived.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(&live, &archived)
+}
+
+/// Recover a world: move its archived file back to the live slot. A missing
+/// archive is fine (the world had no file, or an older build deleted without
+/// archiving) — the resident rebuilds on an empty world.
+pub fn unarchive_world(session_dir: &Path, log_id: &str) -> std::io::Result<()> {
+    let archived = archived_world_path(session_dir, log_id);
+    if !archived.is_file() {
+        return Ok(());
+    }
+    let live = nested_log_path(session_dir, log_id);
+    if let Some(parent) = live.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(&archived, &live)
+}
+
+/// Complete a forget: remove the archived world of a purged tombstone
+/// (emptying the bin, or athanor's retirement pass). Best-effort — the
+/// tombstone is already gone; a leftover file is litter, not data loss.
+pub fn purge_archived_world(session_dir: &Path, log_id: &str) {
+    let archived = archived_world_path(session_dir, log_id);
+    if archived.is_file()
+        && let Err(err) = std::fs::remove_file(&archived)
+    {
+        tracing::warn!(%err, log_id, "failed to purge an archived denizen world");
+    }
+}
+
 /// Persist a resident's nested log (whole-log JSON; the log IS the graph).
 /// Best-effort like every sidecar: a failed save warns, never panics.
 pub fn save_nested(session_dir: &Path, log_id: &str, nested: &GraphLog<Container, Relation>) {

@@ -19,6 +19,7 @@ mod overmap;
 mod pane;
 mod recycle;
 pub mod remote_projection;
+mod ring;
 mod roster_view;
 mod scenario;
 #[cfg(feature = "piccolo")]

@@ -467,4 +467,11 @@ pub struct RemovedRecord {
     pub tags: Vec<String>,
     /// Deletion time, unix milliseconds (the bin's newest-first ordering).
     pub deleted_at_ms: u64,
+    /// The world the node BORE at deletion (`Node.nested`, string form) —
+    /// its file sits in the archive slot while this record stands; recovery
+    /// re-bears it, purging the record purges the file.
+    pub nested: Option<String>,
+    /// The node's facet bundle at deletion (facet-id -> payload), restored
+    /// whole on recovery: residency binding, arrangement, web state.
+    pub facets: Option<serde_json::Value>,
 }

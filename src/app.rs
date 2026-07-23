@@ -1164,6 +1164,17 @@ impl App {
                     let graph = self.canvas.graph();
                     let (key, node) = graph.get_node_by_id(m)?;
                     let title = node.title.trim();
+                    // The node's whole character rides the tombstone: its
+                    // borne world (by id) and its facet bundle, so recovery
+                    // restores residency/arrangement/web state, not just
+                    // identity.
+                    let facets = self.facets.facets_of(&m).map(|f| {
+                        serde_json::Value::Object(
+                            f.iter()
+                                .map(|(id, value)| (id.as_str().to_string(), value.clone()))
+                                .collect(),
+                        )
+                    });
                     Some(crate::action::RemovedRecord {
                         node_id: node.id,
                         url: node.url().to_string(),
@@ -1177,14 +1188,36 @@ impl App {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0),
+                        nested: node.nested.as_ref().map(|log| log.as_str().to_string()),
+                        facets,
                     })
                 });
                 let Some(record) = record else {
                     return vec![Effect::Redraw];
                 };
+                // Archive-never-orphan: the world's file moves to the archive
+                // slot BEFORE the bearing node leaves; a failed archive
+                // aborts the delete (the node stays, nothing is lost).
+                if let Some(log_id) = &record.nested
+                    && let Err(err) = crate::denizen::archive_world(&self.session_dir(), log_id)
+                {
+                    tracing::warn!(%err, log_id, "world archive failed; delete aborted");
+                    return vec![Effect::Redraw];
+                }
                 let Some(member) = self.canvas.remove_focused() else {
+                    // The node did not leave after all: put the world back.
+                    if let Some(log_id) = &record.nested {
+                        let _ = crate::denizen::unarchive_world(&self.session_dir(), log_id);
+                    }
                     return vec![Effect::Redraw];
                 };
+                // The record is the archive now: the live facets go, and a
+                // denizen's runtime entry goes with its node.
+                self.facets.remove_node(&member);
+                if self.denizens.residents.remove(&member).is_some() {
+                    let sdir = self.session_dir();
+                    self.denizens = crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+                }
                 self.workbench.close_tile(member);
                 self.events.push(AppEvent::NodeRemoved(record.url.clone()));
                 vec![
@@ -1211,6 +1244,32 @@ impl App {
                     record.title.as_deref(),
                     &record.tags,
                 );
+                // Restore the node's character from the tombstone: the facet
+                // bundle whole, then the borne world (file back to the live
+                // slot, pointer re-borne through the spine), then the denizen
+                // runtime so a recovered resident resides again.
+                if let Some(serde_json::Value::Object(map)) = &record.facets {
+                    for (facet_id, value) in map {
+                        let _ = self.facets.set(
+                            member,
+                            chartulary::FacetId::new(facet_id.as_str()),
+                            value.clone(),
+                            &chartulary::AcceptAll,
+                        );
+                    }
+                }
+                if let Some(log_id) = &record.nested {
+                    let sdir = self.session_dir();
+                    if let Err(err) = crate::denizen::unarchive_world(&sdir, log_id) {
+                        tracing::warn!(%err, log_id, "world unarchive failed; recovering empty");
+                    }
+                    let _ = self.canvas.set_node_nested_for(
+                        member,
+                        Some(mere::kernel::graph::LogId::new(log_id.clone())),
+                    );
+                    self.denizens =
+                        crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+                }
                 self.canvas.center_on_selected();
                 self.history.visit(record.url.clone());
                 self.events
@@ -2639,6 +2698,95 @@ mod tests {
         assert!(!app.removed.is_empty(), "the bin record itself remains");
     }
 
+    /// Archive-never-orphan at the node tier: deleting a denizen node moves
+    /// its world file to the archive slot (nothing orphaned in the live dir,
+    /// nothing destroyed), the tombstone carries the world id + facet bundle,
+    /// and recovery restores full residency — world back live, binding facet
+    /// back, resident rebuilt.
+    #[test]
+    fn deleting_a_denizen_archives_its_world_and_recovery_restores_residency() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-bin-world-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let (member, world_id, world_revision) = {
+            let (&member, resident) = app.denizens.residents.iter().next().unwrap();
+            (member, resident.subject.to_hex(), resident.nested.revision())
+        };
+        assert!(
+            crate::denizen::nested_log_path(&app.session_dir(), &world_id).is_file(),
+            "the world is live before the delete"
+        );
+
+        // Delete: the install left the denizen node selected.
+        let fx = app.update(Action::DeleteFocusedNode);
+        let record = fx
+            .iter()
+            .find_map(|e| match e {
+                Effect::RecordDeleted { record } => Some(record.clone()),
+                _ => None,
+            })
+            .expect("delete stages a bin record: {fx:?}");
+        assert_eq!(record.node_id, member);
+        assert_eq!(record.nested.as_deref(), Some(world_id.as_str()));
+        assert!(
+            record
+                .facets
+                .as_ref()
+                .and_then(|f| f.get(session_runtime::DENIZEN_BINDING))
+                .is_some(),
+            "the tombstone carries the facet bundle incl. the binding"
+        );
+        assert!(
+            !crate::denizen::nested_log_path(&app.session_dir(), &world_id).is_file(),
+            "the live slot is empty"
+        );
+        assert!(
+            crate::denizen::archived_world_path(&app.session_dir(), &world_id).is_file(),
+            "the world moved to the archive slot, never orphaned"
+        );
+        assert!(
+            app.denizens.residents.is_empty(),
+            "the runtime entry left with the node"
+        );
+        assert!(
+            session_runtime::read_denizen_binding(&app.facets, member).is_none(),
+            "the live facets went to the tombstone"
+        );
+
+        // Recover: full residency returns.
+        app.apply_update(Update::BinListed { records: vec![record] });
+        app.update(Action::RecoverDeletedNode(member));
+        assert!(
+            crate::denizen::nested_log_path(&app.session_dir(), &world_id).is_file(),
+            "the world is live again"
+        );
+        assert!(
+            !crate::denizen::archived_world_path(&app.session_dir(), &world_id).is_file(),
+            "the archive slot emptied"
+        );
+        assert!(
+            session_runtime::read_denizen_binding(&app.facets, member).is_some(),
+            "the binding facet restored"
+        );
+        let resident = app
+            .denizens
+            .residents
+            .get(&member)
+            .expect("the recovered denizen resides again");
+        assert_eq!(
+            resident.nested.revision(),
+            world_revision,
+            "the same world, not a fresh one"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
     /// Empty-the-bin is athanor's oven on command: it lowers the EmptyRecycleBin
     /// effect (the actor clears the store) only when there is something to
     /// forget, and folding the port's empty answer clears the mirror.
@@ -2661,6 +2809,8 @@ mod tests {
                     title: None,
                     tags: Vec::new(),
                     deleted_at_ms: 2,
+                    nested: None,
+                    facets: None,
                 },
                 crate::action::RemovedRecord {
                     node_id: uuid::Uuid::new_v4(),
@@ -2668,6 +2818,8 @@ mod tests {
                     title: None,
                     tags: Vec::new(),
                     deleted_at_ms: 1,
+                    nested: None,
+                    facets: None,
                 },
             ],
         });

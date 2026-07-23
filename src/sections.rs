@@ -105,6 +105,8 @@ mod tests {
                 title: None,
                 tags: Vec::new(),
                 deleted_at_ms: 1,
+                    nested: None,
+                    facets: None,
             }],
         });
         let rows = (REMOVED_SECTION.gather)(&app);

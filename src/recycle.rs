@@ -82,6 +82,8 @@ fn to_record(d: DeletedNode) -> Option<RemovedRecord> {
         title: d.title,
         tags: d.tags,
         deleted_at_ms: d.deleted_at_ms,
+        nested: d.nested,
+        facets: d.facets,
     })
 }
 
@@ -93,6 +95,8 @@ fn to_deleted(r: &RemovedRecord, graph_id: Option<String>) -> DeletedNode {
         tags: r.tags.clone(),
         graph_id,
         deleted_at_ms: r.deleted_at_ms,
+        nested: r.nested.clone(),
+        facets: r.facets.clone(),
     }
 }
 
@@ -107,7 +111,7 @@ fn open(dir: &Path) -> Result<FjallStore, String> {
 /// still lists (forgetting is best-effort, never blocks the bin from showing).
 /// This runs at session open, not on a background timer — the continuous actor
 /// is the remaining half.
-fn retire_then_list(store: &mut dyn Store, out: &Emitter<Update>) {
+fn retire_then_list(store: &mut dyn Store, bin_dir: &Path, out: &Emitter<Update>) {
     if let Ok(deleted) = pollster::block_on(list_deleted(store)) {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -115,6 +119,18 @@ fn retire_then_list(store: &mut dyn Store, out: &Emitter<Update>) {
             .unwrap_or(0);
         let proposal = athanor::propose_retirement(&deleted, RETENTION_DAYS * DAY_MS, now_ms);
         if !proposal.is_empty() {
+            // A retired tombstone takes its archived world with it — the
+            // forget half of archive-never-orphan (the bin dir sits inside
+            // the session dir, where the archive slot lives).
+            if let Some(session_dir) = bin_dir.parent() {
+                for d in &deleted {
+                    if proposal.node_ids.contains(&d.node_id)
+                        && let Some(log_id) = &d.nested
+                    {
+                        crate::denizen::purge_archived_world(session_dir, log_id);
+                    }
+                }
+            }
             match pollster::block_on(athanor::apply_retirement(store, &proposal)) {
                 Ok(n) => tracing::info!(retired = n, "recycle bin: retired aged-out tombstones"),
                 Err(err) => tracing::warn!(%err, "recycle bin: retirement pass failed"),
@@ -144,9 +160,10 @@ fn emit_list(store: &mut dyn Store, out: &Emitter<Update>) {
 /// handle plus the update receiver the shell drains.
 pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver<Update>) {
     spawn_named("recycle-bin", wake, move |commands, out: Emitter<Update>| {
+        let mut current_dir = dir.clone();
         let mut store = match open(&dir) {
             Ok(mut store) => {
-                retire_then_list(&mut store, &out);
+                retire_then_list(&mut store, &current_dir, &out);
                 Some(store)
             }
             Err(err) => {
@@ -183,6 +200,18 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
                         });
                         continue;
                     };
+                    // Emptying the bin completes every forget: each staged
+                    // world's archived file goes with its tombstone.
+                    if let (Ok(deleted), Some(session_dir)) = (
+                        pollster::block_on(list_deleted(store)),
+                        current_dir.parent().map(std::path::Path::to_path_buf),
+                    ) {
+                        for d in &deleted {
+                            if let Some(log_id) = &d.nested {
+                                crate::denizen::purge_archived_world(&session_dir, log_id);
+                            }
+                        }
+                    }
                     if let Err(err) = pollster::block_on(clear_deleted(store)) {
                         out.emit(Update::BinFailed {
                             error: format!("empty: {err}"),
@@ -197,8 +226,9 @@ pub fn spawn_bin(wake: Wake, dir: PathBuf) -> (ActorHandle<BinCommand>, Receiver
                 }
                 BinCommand::Reopen(dir) => match open(&dir) {
                     Ok(mut fresh) => {
-                        retire_then_list(&mut fresh, &out);
+                        retire_then_list(&mut fresh, &dir, &out);
                         store = Some(fresh);
+                        current_dir = dir;
                     }
                     Err(err) => {
                         store = None;
