@@ -378,6 +378,29 @@ impl App {
             return Vec::new();
         }
 
+        // The world-carry: a donor node bearing a nested graph forks with a
+        // REAL copy of its world. The component copy deliberately drops
+        // `nested` (two live nodes must never share one world file); here the
+        // fork re-bears each carried world directly (`bear_nested`, no delta
+        // spine — the fork graph has no journal yet) and the world files copy
+        // below once the fork's session dir exists.
+        let mut carried_worlds: Vec<String> = Vec::new();
+        for (donor_id, minted_id) in &copy.id_remap {
+            let Some(log) = self
+                .canvas
+                .graph()
+                .get_node_key_by_id(*donor_id)
+                .and_then(|key| self.canvas.graph().get_node(key))
+                .and_then(|node| node.nested.clone())
+            else {
+                continue;
+            };
+            if let Some(key) = fork_graph.get_node_key_by_id(*minted_id) {
+                let _ = fork_graph.bear_nested(key, Some(log.clone()));
+                carried_worlds.push(log.as_str().to_string());
+            }
+        }
+
         // The facet-carry: whole per-node records through the remap, scene
         // settings donor-container -> fork-container.
         let fork_graph_id = GraphId::new();
@@ -405,6 +428,26 @@ impl App {
         let fork_dir = session::session_dir(&self.data_root, fork_id);
         session::save_session_graph(&fork_dir, &fork_graph);
         session::save_node_facets(&fork_dir, &fork_facets);
+        // Each carried world becomes the fork's own file: donor and fork
+        // evolve their copies independently thereafter. A missing donor file
+        // is fine — the resident rebuilds on an empty world, as always.
+        let donor_dir = self.session_dir();
+        for log_id in &carried_worlds {
+            let from = crate::denizen::nested_log_path(&donor_dir, log_id);
+            let to = crate::denizen::nested_log_path(&fork_dir, log_id);
+            if !from.is_file() {
+                continue;
+            }
+            let result = (|| -> std::io::Result<()> {
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&from, &to).map(|_| ())
+            })();
+            if let Err(err) = result {
+                tracing::warn!(%err, log_id, "failed to carry a denizen world into the fork");
+            }
+        }
         self.events.push(AppEvent::SessionForked);
         vec![Effect::SwitchSession { id: fork_id }]
     }
@@ -2212,6 +2255,67 @@ mod tests {
         assert!(
             (scene.physics_damping - 4.75).abs() < 0.001,
             "scene.* carried donor-container -> fork-container"
+        );
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// The world-carry: forking from a denizen node re-bears its nested graph
+    /// on the fork's copy AND copies the world file into the fork's session
+    /// dir — donor and fork hold independent worlds thereafter (the kernel
+    /// copy alone would leave the fork's denizen un-resided).
+    #[test]
+    fn fork_carries_denizen_worlds_as_real_copies() {
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-fork-world-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let (member, world_id, donor_revision) = {
+            let (&member, resident) = app.denizens.residents.iter().next().unwrap();
+            (member, resident.subject.to_hex(), resident.nested.revision())
+        };
+
+        let effects = app.fork_session_from(member);
+        let Some(crate::action::Effect::SwitchSession { id: fork_id }) = effects
+            .iter()
+            .find(|e| matches!(e, crate::action::Effect::SwitchSession { .. }))
+            .cloned()
+        else {
+            panic!("fork returns the switch effect: {effects:?}");
+        };
+        let fork_dir = session::session_dir(&app.data_root, fork_id);
+        let fork_graph = session::load_session_graph(&fork_dir).expect("fork graph persisted");
+        let (_, fork_node) = fork_graph
+            .nodes()
+            .find(|(_, n)| n.nested.is_some())
+            .expect("the fork's copy bears the world");
+        assert_ne!(fork_node.id, member, "a fork copy is a new entity");
+        assert_eq!(
+            fork_node.nested.as_ref().map(|log| log.as_str()),
+            Some(world_id.as_str()),
+            "same world identity, re-borne on the copy"
+        );
+        assert!(
+            crate::denizen::nested_log_path(&fork_dir, &world_id).is_file(),
+            "the fork owns a real world file"
+        );
+        assert!(
+            crate::denizen::nested_log_path(&app.session_dir(), &world_id).is_file(),
+            "the donor keeps its own"
+        );
+        // The fork rebuilds a full resident from its OWN dir, no legacy heal.
+        let fork_facets = session::load_node_facets(&fork_dir).expect("fork facets persisted");
+        let rebuilt = crate::denizen::rebuild(&fork_facets, &fork_graph, &fork_dir);
+        assert_eq!(rebuilt.residents.len(), 1, "the fork's denizen resides");
+        assert!(rebuilt.legacy_heals.is_empty());
+        assert_eq!(
+            rebuilt.residents.values().next().unwrap().nested.revision(),
+            donor_revision,
+            "the carried world is the donor's world, bit-for-bit at fork time"
         );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }

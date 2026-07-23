@@ -1,0 +1,25 @@
+# World-carry receipt: install a denizen (visible review, as B1), then fork
+# from its node. The fork's copy re-bears the nested world and the world
+# file copies into the fork's session dir — verified on disk after the run
+# (both sessions hold independent world files; the fork's graph.json bears
+# nested on the copy). FRESH profile; requires the piccolo feature.
+settle 30
+key escape
+
+drop-file 200 200 scenarios/fixtures/trail_keeper.lua
+settle 10
+assert event denizen-staged
+
+act Install trail_keeper
+settle 15
+assert event denizen-installed
+capture 01_denizen_resident
+
+act Fork from node
+settle 40
+assert sessions >= 2
+assert event session-forked
+assert visible
+capture 02_fork_adopted
+
+log denizen fork receipt complete
