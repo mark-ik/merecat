@@ -178,6 +178,7 @@ fn action_for(command: &str) -> Option<Action> {
         "toggle_isometric" => Some(Action::ToggleIsometric),
         "toggle_height_by_degree" => Some(Action::ToggleHeightByDegree),
         "toggle_size_by_recency" => Some(Action::ToggleSizeByRecency),
+        "toggle_physics" => Some(Action::TogglePhysics),
         "toggle_live_content" => Some(Action::ToggleNodeContent),
         "close_pane" => Some(Action::CloseActivePane),
         "maximize_pane" => Some(Action::ToggleMaximizePane),

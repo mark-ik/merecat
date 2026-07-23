@@ -894,6 +894,10 @@ impl App {
                 self.canvas.fit_to_content();
                 vec![Effect::Redraw]
             }
+            Action::TogglePhysics => {
+                self.canvas.toggle_physics_paused();
+                vec![Effect::Redraw]
+            }
             Action::ToggleSizeByRecency => {
                 let on = !self.canvas.size_by_recency();
                 self.canvas.set_size_by_recency(on);

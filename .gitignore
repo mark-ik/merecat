@@ -4,4 +4,4 @@ Cargo.lock
 # resolve owned sibling repos from GitHub; this file redirects them to the
 # working copies under repos/ for the cross-repo edit loop.
 /.cargo/
-/target-projection-proof/
+/target-*/

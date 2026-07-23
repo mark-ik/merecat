@@ -94,6 +94,11 @@ pub enum Action {
     TiltBy(f32),
     /// Toggle height-by-degree (hubs float above the ground plane).
     ToggleHeightByDegree,
+    /// Play/pause the layout physics. Global and orthogonal to the
+    /// arrangement: any arrangement composes with either state (a paused
+    /// Spiral holds its placement, a running one relaxes from it), and
+    /// force-directed is simply no arrangement with physics running.
+    TogglePhysics,
     /// Toggle size-by-recency: newest content reads largest, older shrinks.
     /// Pairs with the Spiral (newest at center, age spiralling outward) —
     /// projection-engine proof 3, the recency channel.
@@ -331,6 +336,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Toggle isometric view", Action::ToggleIsometric),
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
         ("Toggle size-by-recency", Action::ToggleSizeByRecency),
+        ("Play/pause physics", Action::TogglePhysics),
         ("Orbit left", Action::OrbitBy(-0.15)),
         ("Orbit right", Action::OrbitBy(0.15)),
         ("Toggle live content", Action::ToggleNodeContent),
