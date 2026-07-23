@@ -3,8 +3,9 @@
 //! the palette, and read its edits back attributed.
 //!
 //! The substrate is already built and this module only wires it: the node IS
-//! the denizen (the `denizen.binding` facet carries subject + nested-log id +
-//! kind), its inner world is a chartulary `GraphLog` the `servitor::Gate`
+//! the denizen (the `denizen.binding` facet carries subject + kind — agency;
+//! the world it bears hangs on `Node.nested` — structure, the kernel's
+//! `GraphBearing` impl), its inner world is a chartulary `GraphLog` the `servitor::Gate`
 //! commits into (grant projections read-only, petitions attributed and
 //! revision-checked), and its runnable body is a piccolo control script whose
 //! emitted Actions lower through the ordinary spine — under the denizen's
@@ -74,6 +75,11 @@ pub struct Denizens {
     pub residents: HashMap<Uuid, Resident>,
     pub authority: PrefixAuthority,
     pub gate: Gate,
+    /// Residents whose world id came from a LEGACY binding facet
+    /// (`nested_log` written before the containment ruling) rather than
+    /// `Node.nested`. The adopt path heals each: set the node's `nested`,
+    /// rewrite the binding without the field.
+    pub legacy_heals: Vec<(Uuid, String)>,
 }
 
 impl Denizens {
@@ -158,11 +164,21 @@ pub fn load_nested(session_dir: &Path, log_id: &str) -> Option<GraphLog<Containe
 }
 
 /// Rebuild the denizen runtime from durable truth on adopt: every
-/// `denizen.binding` facet names a resident; its nested log loads from disk
-/// (or starts empty), and its authority derives from the **grant projections**
-/// in that log — the projection is the readable record, the provider the
-/// derived index, so authority is never stored twice.
-pub fn rebuild(app_facets: &session_runtime::NodeFacetStore, session_dir: &Path) -> Denizens {
+/// `denizen.binding` facet names a resident; the graph node's `nested` field
+/// names its borne world (structure), whose log loads from disk (or starts
+/// empty), and its authority derives from the **grant projections** in that
+/// log — the projection is the readable record, the provider the derived
+/// index, so authority is never stored twice.
+///
+/// A binding written before the containment ruling named the world itself
+/// (`legacy_nested_log`); such a resident still rebuilds, and the member goes
+/// on [`Denizens::legacy_heals`] so the adopt path can move the pointer onto
+/// the node and rewrite the facet without it.
+pub fn rebuild(
+    app_facets: &session_runtime::NodeFacetStore,
+    graph: &mere::kernel::graph::Graph,
+    session_dir: &Path,
+) -> Denizens {
     let mut denizens = Denizens::default();
     for (member, binding) in session_runtime::read_denizen_bindings(app_facets) {
         let Ok(raw) = hex_to_bytes(&binding.subject) else {
@@ -170,9 +186,26 @@ pub fn rebuild(app_facets: &session_runtime::NodeFacetStore, session_dir: &Path)
             continue;
         };
         let subject = Subject::new(raw);
-        let nested = load_nested(session_dir, &binding.nested_log).unwrap_or_else(|| {
-            GraphLog::with_id(LogId::new(binding.nested_log.clone()))
-        });
+        let borne = graph
+            .get_node_key_by_id(member)
+            .and_then(|key| graph.get_node(key))
+            .and_then(|node| node.nested.as_ref())
+            .map(|log| log.as_str().to_string());
+        let log_id = match borne {
+            Some(id) => id,
+            None if !binding.legacy_nested_log.is_empty() => {
+                denizens
+                    .legacy_heals
+                    .push((member, binding.legacy_nested_log.clone()));
+                binding.legacy_nested_log.clone()
+            }
+            None => {
+                tracing::warn!(member = %member, "denizen binding on a node bearing no world; skipped");
+                continue;
+            }
+        };
+        let nested = load_nested(session_dir, &log_id)
+            .unwrap_or_else(|| GraphLog::with_id(LogId::new(log_id.clone())));
         // Derive the authority from the projections the gate wrote: node ids
         // `grant:<path>` under this denizen's subject.
         for (_, node) in nested.graph().nodes() {
@@ -184,7 +217,7 @@ pub fn rebuild(app_facets: &session_runtime::NodeFacetStore, session_dir: &Path)
         let label = app_facets
             .get(&member, &chartulary::FacetId::new("scenario.label"))
             .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_else(|| binding.nested_log[..8.min(binding.nested_log.len())].to_string());
+            .unwrap_or_else(|| log_id[..8.min(log_id.len())].to_string());
         denizens.residents.insert(
             member,
             Resident {
@@ -226,16 +259,17 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
         .map(|n| n.id)
         .expect("the just-visited node exists");
     let _ = app.canvas.set_node_title_for(member, pending.label.clone());
+    // The borne world is STRUCTURE: it hangs on the node itself
+    // (`Node.nested`, journaled through the delta spine), not on the facet.
+    let _ = app
+        .canvas
+        .set_node_nested_for(member, Some(LogId::new(hex.clone())));
 
-    // The binding + source + label facets: durable residency truth.
+    // The binding + source + label facets: durable agency truth.
     session_runtime::write_denizen_binding(
         &mut app.facets,
         member,
-        &session_runtime::DenizenBinding::new(
-            hex.clone(),
-            hex.clone(),
-            session_runtime::DenizenKind::Scenario,
-        ),
+        &session_runtime::DenizenBinding::new(hex.clone(), session_runtime::DenizenKind::Scenario),
     );
     let _ = app.facets.set(
         member,
@@ -298,6 +332,40 @@ mod tests {
         std::fs::write(&path, "mere.open('mere://other')").unwrap();
         let c = stage_install(&path).unwrap();
         assert_ne!(a.subject, c.subject, "a modified script is a different subject");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_legacy_binding_rebuilds_and_asks_for_a_heal() {
+        // A binding written before the containment ruling names the world in
+        // the facet. The resident still rebuilds (no one is orphaned by an
+        // upgrade), and the member is listed for the adopt-path heal that
+        // moves the pointer onto `Node.nested`.
+        let dir = std::env::temp_dir().join(format!("merecat-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let member = Uuid::from_u128(0xa);
+        let mut store = session_runtime::NodeFacetStore::new();
+        store
+            .set(
+                member,
+                chartulary::FacetId::new(session_runtime::DENIZEN_BINDING),
+                serde_json::json!({
+                    "subject": "aa".repeat(32),
+                    "nested_log": "aa".repeat(32),
+                    "kind": "scenario",
+                }),
+                &chartulary::AcceptAll,
+            )
+            .unwrap();
+
+        let graph = mere::kernel::graph::Graph::new();
+        let denizens = rebuild(&store, &graph, &dir);
+        assert_eq!(denizens.residents.len(), 1, "the legacy resident survives");
+        assert_eq!(
+            denizens.legacy_heals,
+            vec![(member, "aa".repeat(32))],
+            "and is queued for the one-time heal"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

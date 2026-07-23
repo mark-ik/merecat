@@ -542,9 +542,21 @@ impl App {
         session_runtime::retain_present_nodes(&mut self.facets, &present);
         self.canvas
             .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
-        // The denizen runtime derives from the binding facets + nested logs.
+        // The denizen runtime derives from the binding facets (agency) + the
+        // graph's `Node.nested` pointers (structure) + the nested logs.
         self.pending_install = None;
-        self.denizens = crate::denizen::rebuild(&self.facets, &sdir);
+        self.denizens = crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+        // One-time heal for bindings written before the containment ruling:
+        // move the world pointer onto the node (journaled through the spine)
+        // and rewrite the facet without it.
+        for (member, log_id) in std::mem::take(&mut self.denizens.legacy_heals) {
+            let _ = self
+                .canvas
+                .set_node_nested_for(member, Some(mere::kernel::graph::LogId::new(log_id)));
+            if let Some(binding) = session_runtime::read_denizen_binding(&self.facets, member) {
+                session_runtime::write_denizen_binding(&mut self.facets, member, &binding);
+            }
+        }
         // The scene's own view settings ride the `scene.*` container facets:
         // the sizing mode + metric and the physics damping re-open as saved.
         let scene = self
@@ -1977,6 +1989,15 @@ mod tests {
             .expect("the binding facet is durable truth");
         assert_eq!(binding.subject, resident.subject.to_hex());
         assert_eq!(binding.kind, session_runtime::DenizenKind::Scenario);
+        assert!(binding.legacy_nested_log.is_empty(), "the facet is pure agency");
+        let borne = app
+            .canvas
+            .graph()
+            .get_node_key_by_id(member)
+            .and_then(|key| app.canvas.graph().get_node(key))
+            .and_then(|node| node.nested.clone())
+            .expect("the node BEARS its world");
+        assert_eq!(borne.as_str(), resident.subject.to_hex(), "structure on the node");
         assert!(
             resident
                 .nested
@@ -1991,8 +2012,9 @@ mod tests {
             "the nested log persisted at its birth"
         );
 
-        let rebuilt = crate::denizen::rebuild(&app.facets, &app.session_dir());
+        let rebuilt = crate::denizen::rebuild(&app.facets, app.canvas.graph(), &app.session_dir());
         assert_eq!(rebuilt.residents.len(), 1);
+        assert!(rebuilt.legacy_heals.is_empty(), "a fresh install needs no heal");
         assert!(
             servitor::AuthorityProvider::covers(
                 &rebuilt.authority,
