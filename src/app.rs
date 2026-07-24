@@ -2008,11 +2008,11 @@ impl App {
                 axis,
                 after,
             } => {
-                // The app vocabulary's axis maps onto pelt's at the platen
+                // The app vocabulary's axis maps onto Genet's at the platen
                 // call (the one place the tile contract is named).
                 let axis = match axis {
-                    crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
-                    crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
+                    crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
+                    crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
                 };
                 if self
                     .workbench
@@ -2030,8 +2030,8 @@ impl App {
                 after,
             } => {
                 let axis = match axis {
-                    crate::action::WbAxis::Row => pelt_core::tile::SplitAxis::Row,
-                    crate::action::WbAxis::Column => pelt_core::tile::SplitAxis::Column,
+                    crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
+                    crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
                 };
                 if self.workbench.split_out(dragged, axis, after) {
                     self.events.push(AppEvent::WorkbenchSplit);
