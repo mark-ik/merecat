@@ -1,0 +1,51 @@
+# The composite generalizes past the Gloss (design_docs/2026-07-20_gloss_
+# composite_pane.md): composition is a property of a PANE, not of one pane
+# kind. The Overmap renders through the same swatch pane, so it composes the
+# same registry sections off its own leaf, with the same actions and the same
+# live rows. Its palette rows name IT, derived from the pane's own tag.
+# Offline (mere:// urls only); FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+settle 10
+open mere://beta
+settle 40
+
+# A node staged in the recycle bin, so the Removed section has something in it.
+act Delete node
+settle 15
+assert event node-removed
+
+# The Overmap at base: the session swatch fills the pane, nothing composed.
+act Open Overmap pane
+settle 15
+assert pane overmap
+capture 01_overmap_base
+
+# The SAME palette verb, scoped to this pane and named for it.
+act Overmap: add section — Removed
+settle 10
+assert event pane-section-added removed
+capture 02_overmap_composed
+
+# A second section stacks below, in config order.
+act Overmap: add section — Nodes
+settle 10
+assert event pane-section-added nodes
+capture 03_overmap_two_sections
+
+# Reorder is the same leaf edit here as on the Gloss.
+act Overmap: move section up — Nodes
+settle 10
+assert event pane-section-moved nodes
+capture 04_overmap_reordered
+
+# And composed rows are LIVE on this host too: the Removed row recovers the
+# node under its ORIGINAL id, exactly as it does inside the Gloss.
+click-row Recover
+settle 30
+assert event node-recovered
+capture 05_recovered_from_overmap
+
+log overmap composite receipt complete

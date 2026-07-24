@@ -3262,6 +3262,41 @@ mod tests {
         assert!(!fx.iter().any(|e| matches!(e, Effect::SaveSession)));
     }
 
+    /// Composition is a property of a PANE, not of the Gloss: the Overmap
+    /// composes the same sections, through the same renderer, with the same
+    /// leaf config and the same actions. Its palette rows name it, derived from
+    /// the pane's own tag rather than a second table.
+    #[test]
+    fn the_overmap_composes_sections_too() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Overmap));
+        let pane = app.active_pane.expect("the summoned overmap is active");
+
+        // A fresh Overmap composes nothing (its swatch fills the pane).
+        assert_eq!(
+            app.pane_content(pane).and_then(|c| c.composition()),
+            Some(&frisket::PaneComposition::default())
+        );
+        // The palette offers ITS rows, named for IT.
+        assert!(
+            app.session_actions()
+                .iter()
+                .any(|(label, _)| label == "Overmap: add section — Removed"),
+            "the pane-scoped rows name the pane: {:?}",
+            app.session_actions()
+        );
+
+        // The same action composes it, onto ITS OWN leaf.
+        app.update(Action::TogglePaneSection {
+            pane,
+            section: "removed".to_string(),
+        });
+        match app.pane_content(pane) {
+            Some(PaneContent::Overmap(cfg)) => assert_eq!(cfg.sections, vec!["removed"]),
+            other => panic!("expected a composed overmap, got {other:?}"),
+        }
+    }
+
     fn lens_ops_close_removes_the_summoned_pane() {
         let mut app = App::test_stub();
         app.update(Action::SummonPane(PaneKind::Roster));

@@ -157,6 +157,31 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
     recover from it, compose Nodes beside it, move Nodes up, then remove both
     back to the bare minimap.
 
+- **2026-07-23 (the host side GENERALIZES — the third open bit):** composition
+  is now a property of a PANE, not of the Gloss.
+  - `GlossConfig` became **`PaneComposition`**, and `PaneContent::Overmap` grew
+    one. `PaneContent::composition()` / `composition_mut()` are the single place
+    that answers "does this pane compose?", so gaining a host is a variant
+    listed there rather than another match spread through the host.
+  - The Overmap was the honest second host because it already renders through
+    the SAME `SwatchPane`: it cost a `sections::resolve` and a `set_sections` in
+    its render arm, no renderer work at all. That is the swatch-half author's
+    seam paying off twice.
+  - `pane_section_actions` is written against `composition()` rather than a pane
+    kind, and its row prefix is the pane's own tag, title-cased. So the Overmap
+    named itself ("Overmap: add section — Removed") with no second table, and
+    the Gloss's existing labels stayed byte-identical (the older receipt still
+    passes unchanged).
+  - Worth stating because it looks like a contradiction: the Overmap is
+    window-chrome (`follows_active_graph() == false`) while its composed
+    sections read ACTIVE-GRAPH truth. That is consistent. A section gathers from
+    app state each frame; `follows_active_graph` governs whether the host
+    retags the LEAF's `graph_id`, which sections never consult.
+  - Receipt `overmap_composite.scn` headed ok: base swatch, compose Removed,
+    compose Nodes, reorder, then click the composed Removed row to recover the
+    node by its ORIGINAL id from inside the Overmap. 109 unit tests + frisket's
+    17.
+
   **The drag gesture stays deferred, with a reason.** Merecat already has a
   full tab-drag grammar (`WorkbenchStackOnto`, `WorkbenchSplitBeside`,
   `TearOutTile`), but it lives in the WORKBENCH lane and is tile-shaped. A
