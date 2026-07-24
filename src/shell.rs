@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
-use inker::{DocumentSession, SessionClick, SessionRegistry, SessionSpawnRequest};
+use inker::{
+    DocumentSession, SessionClick, SessionRegistry, SessionScrollKey, SessionSpawnRequest,
+};
 use genet_documents::{LocalFetcher, StaticSessionEngine};
 use image::ImageEncoder;
 use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
@@ -88,6 +90,24 @@ fn pointer_button(button: MouseButton) -> Option<PointerButton> {
         MouseButton::Right => Some(PointerButton::Right),
         _ => None,
     }
+}
+
+/// The scroll a focused content session should perform for a key, or `None`
+/// when the key is not a content-scroll key. Space pages down, Shift+Space
+/// pages up (the browser convention); the arrows line-scroll, and Home/End
+/// jump to the ends.
+fn content_scroll_key(key: &WinitKey, shift: bool) -> Option<SessionScrollKey> {
+    Some(match key {
+        WinitKey::Named(WinitNamedKey::ArrowDown) => SessionScrollKey::LineDown,
+        WinitKey::Named(WinitNamedKey::ArrowUp) => SessionScrollKey::LineUp,
+        WinitKey::Named(WinitNamedKey::PageDown) => SessionScrollKey::PageDown,
+        WinitKey::Named(WinitNamedKey::PageUp) => SessionScrollKey::PageUp,
+        WinitKey::Named(WinitNamedKey::Home) => SessionScrollKey::Home,
+        WinitKey::Named(WinitNamedKey::End) => SessionScrollKey::End,
+        WinitKey::Named(WinitNamedKey::Space) if shift => SessionScrollKey::PageUp,
+        WinitKey::Named(WinitNamedKey::Space) => SessionScrollKey::PageDown,
+        _ => return None,
+    })
 }
 
 /// One surface's scene, produced by render's mutable first pass and consumed by
@@ -174,6 +194,13 @@ pub struct Shell {
     /// one surface: the canvas needs paired `pointer_down`/`pointer_up`, and a
     /// content click must not leak its release to the canvas beneath.
     pointer_capture: Option<crate::surface::SurfaceKind>,
+    /// Whether the last scroll key delivered to focused content actually moved
+    /// the page (`Some(true/false)`), or `None` if no content scroll key has
+    /// been delivered. A probe for the scenario runner: it lets a receipt
+    /// assert both that a page scrolled AND that an idempotent end (PageUp at
+    /// the top) is honestly a no-op, so the receipt proves real offset
+    /// semantics rather than a method that always returns true.
+    content_scroll_moved: Option<bool>,
     /// The Roster pane's cambium grid (rung 5 slice D): a retained
     /// `GenetAppRunner` whose state and DOM persist between the frame that draws
     /// it and the click that hits it. `!Send`, like the content sessions, so it
@@ -310,6 +337,7 @@ impl Shell {
             epoch: std::time::Instant::now(),
             pending_fetches: browse::PendingFetches::default(),
             pointer_capture: None,
+            content_scroll_moved: None,
             roster_grid: None,
             gloss_pane: None,
             trail_pane: None,
@@ -739,6 +767,137 @@ impl Shell {
         }
         if self.app.canvas.wheel(dx, dy) {
             self.request_redraw();
+        }
+    }
+
+    /// Deliver an ephemeral key to the FOCUSED content session (the gesture
+    /// law, exactly as the wheel does): scroll keys scroll the page, Escape
+    /// blurs back to the canvas. Returns whether the key was consumed here, so
+    /// the caller skips the Action path. Keys that are NOT ephemeral content
+    /// keys (the durable node/nav chords) return `false` and fall through to
+    /// become Actions. Unlike the wheel this is focus-routed, not
+    /// position-routed: a page reader's keys go to the page they are reading.
+    fn deliver_content_key(&mut self, key: &WinitKey) -> bool {
+        let crate::surface::FocusTarget::Content(node) = self.app.focus else {
+            return false;
+        };
+        // Escape blurs back to the canvas. Focus is ephemeral UI state (the
+        // press path sets it directly too), so this rides on state, not an
+        // Action.
+        if matches!(key, WinitKey::Named(WinitNamedKey::Escape)) {
+            self.app.focus = crate::surface::FocusTarget::Canvas;
+            self.request_redraw();
+            return true;
+        }
+        let Some(scroll) = content_scroll_key(key, self.shift) else {
+            return false;
+        };
+        let moved = self
+            .content_sessions
+            .get_mut(&node)
+            .is_some_and(|session| session.scroll_for_key(scroll));
+        // Record the outcome for the scenario probe, and repaint when the page
+        // actually moved.
+        self.content_scroll_moved = Some(moved);
+        if moved {
+            self.request_redraw();
+        }
+        // Consumed even when the page did not move (already at the end): the
+        // key belonged to the focused page, so the canvas must not also act on
+        // it.
+        true
+    }
+
+    /// The whole pressed-key path, shared by winit and the scenario runner so
+    /// one description drives two runners for keys as well as pointers. Focus
+    /// decides the lane, exactly as it does for the pointer: the omnibar when
+    /// it is open, the focused content when a page holds focus, the canvas
+    /// otherwise. Ephemeral content keys (scroll, blur) are delivered inline
+    /// and consumed; everything else lowers to an Action through the spine.
+    fn on_key(&mut self, key: &WinitKey) {
+        // Content-focused ephemeral keys take priority and never become
+        // Actions (the gesture law). When one is consumed, no Action is
+        // computed — the canvas view hotkeys stay suspended while a page reads.
+        if !self.app.omnibar.open && self.deliver_content_key(key) {
+            return;
+        }
+        let action = if self.app.omnibar.open {
+            // The omnibar has keyboard focus: edit keys route to it; canvas
+            // hotkeys are suspended while it is open.
+            match key {
+                WinitKey::Named(WinitNamedKey::Escape) => Some(Action::OmnibarClose),
+                WinitKey::Named(WinitNamedKey::Enter) => Some(Action::OmnibarCommit),
+                WinitKey::Named(WinitNamedKey::Backspace) => Some(Action::OmnibarBackspace),
+                WinitKey::Named(WinitNamedKey::ArrowUp) => Some(Action::OmnibarMove(-1)),
+                WinitKey::Named(WinitNamedKey::ArrowDown) => Some(Action::OmnibarMove(1)),
+                WinitKey::Named(WinitNamedKey::ArrowLeft) => {
+                    Some(Action::OmnibarCaret(CaretMove::Left))
+                }
+                WinitKey::Named(WinitNamedKey::ArrowRight) => {
+                    Some(Action::OmnibarCaret(CaretMove::Right))
+                }
+                WinitKey::Named(WinitNamedKey::Home) => Some(Action::OmnibarCaret(CaretMove::Home)),
+                WinitKey::Named(WinitNamedKey::End) => Some(Action::OmnibarCaret(CaretMove::End)),
+                WinitKey::Named(WinitNamedKey::Delete) => Some(Action::OmnibarDelete),
+                WinitKey::Named(WinitNamedKey::Space) => Some(Action::OmnibarChar(' ')),
+                WinitKey::Character(s) if !self.ctrl => s.chars().next().map(Action::OmnibarChar),
+                _ => None,
+            }
+        } else if matches!(self.app.focus, crate::surface::FocusTarget::Content(_)) {
+            // A page holds focus. Its scroll keys and Escape were already
+            // consumed above; only the durable node/nav chords still apply
+            // here. The canvas VIEW hotkeys (reseed, isometric, orbit) are
+            // deliberately suspended: you are in the page, so a stray `space`
+            // or `i` must not reshape the graph behind it.
+            match key {
+                WinitKey::Named(WinitNamedKey::Delete) => Some(Action::DeleteFocusedNode),
+                WinitKey::Named(WinitNamedKey::ArrowLeft) if self.alt => Some(Action::NavBack),
+                WinitKey::Named(WinitNamedKey::ArrowRight) if self.alt => Some(Action::NavForward),
+                WinitKey::Character(s) if self.ctrl => match s.as_str() {
+                    "l" => Some(Action::OmnibarOpen { command: false }),
+                    "k" => Some(Action::OmnibarOpen { command: true }),
+                    "r" => Some(Action::Reload),
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else {
+            match key {
+                WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
+                // Delete forgets the focused node (recoverable from the Trail's
+                // Removed section).
+                WinitKey::Named(WinitNamedKey::Delete) => Some(Action::DeleteFocusedNode),
+                // The browser nav chords (the r3-owed row).
+                WinitKey::Named(WinitNamedKey::ArrowLeft) if self.alt => Some(Action::NavBack),
+                WinitKey::Named(WinitNamedKey::ArrowRight) if self.alt => Some(Action::NavForward),
+                WinitKey::Character(s) if self.ctrl => match s.as_str() {
+                    // The summon chords: Ctrl+L address flavor, Ctrl+K command
+                    // flavor (pre-seeded `>`).
+                    "l" => Some(Action::OmnibarOpen { command: false }),
+                    "k" => Some(Action::OmnibarOpen { command: true }),
+                    "r" => Some(Action::Reload),
+                    _ => None,
+                },
+                WinitKey::Character(s) => match s.as_str() {
+                    // Plain-key summons beside the Ctrl chords: `/` (the
+                    // quick-switcher convention) and `>` straight into the
+                    // actions lane. Chord-free, so synthesized-input drivers
+                    // can't lose the modifier race either.
+                    "/" => Some(Action::OmnibarOpen { command: false }),
+                    ">" => Some(Action::OmnibarOpen { command: true }),
+                    "i" => Some(Action::ToggleIsometric),
+                    "q" => Some(Action::OrbitBy(-0.15)),
+                    "e" => Some(Action::OrbitBy(0.15)),
+                    "[" => Some(Action::TiltBy(-0.05)),
+                    "]" => Some(Action::TiltBy(0.05)),
+                    "h" => Some(Action::ToggleHeightByDegree),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(action) = action {
+            self.act(action);
         }
     }
 
@@ -2323,6 +2482,50 @@ mod tests {
         assert!(decode_sprite(&txt_path).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// The content scroll-key mapping: the page-scroll keys map, Space pages
+    /// (down, or up with Shift — the browser convention), and a non-scroll key
+    /// declines so the caller lets it fall through to the Action path.
+    #[test]
+    fn content_scroll_keys_map_page_navigation() {
+        let named = |n| WinitKey::Named(n);
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::PageDown), false),
+            Some(SessionScrollKey::PageDown)
+        );
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::PageUp), false),
+            Some(SessionScrollKey::PageUp)
+        );
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::Home), false),
+            Some(SessionScrollKey::Home)
+        );
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::End), false),
+            Some(SessionScrollKey::End)
+        );
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::ArrowDown), false),
+            Some(SessionScrollKey::LineDown)
+        );
+        // Space pages down; Shift+Space pages up.
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::Space), false),
+            Some(SessionScrollKey::PageDown)
+        );
+        assert_eq!(
+            content_scroll_key(&named(WinitNamedKey::Space), true),
+            Some(SessionScrollKey::PageUp)
+        );
+        // A non-scroll key is not a content-scroll key: it must fall through to
+        // become an Action (e.g. Delete forgets the node).
+        assert_eq!(content_scroll_key(&named(WinitNamedKey::Delete), false), None);
+        assert_eq!(
+            content_scroll_key(&WinitKey::Character("i".into()), false),
+            None
+        );
+    }
 }
 
 /// Compose the frame's already-rasterized layers into an owned `COPY_SRC`
@@ -2620,19 +2823,27 @@ impl Shell {
             }
             Step::Insert(text) => self.act(Action::OmnibarInsert(text.clone())),
             Step::Key(key) => {
-                let action = match key {
-                    EditKey::Enter => Action::OmnibarCommit,
-                    EditKey::Escape => Action::OmnibarClose,
-                    EditKey::Backspace => Action::OmnibarBackspace,
-                    EditKey::Delete => Action::OmnibarDelete,
-                    EditKey::Up => Action::OmnibarMove(-1),
-                    EditKey::Down => Action::OmnibarMove(1),
-                    EditKey::Left => Action::OmnibarCaret(CaretMove::Left),
-                    EditKey::Right => Action::OmnibarCaret(CaretMove::Right),
-                    EditKey::Home => Action::OmnibarCaret(CaretMove::Home),
-                    EditKey::End => Action::OmnibarCaret(CaretMove::End),
+                // Route through the SAME key seam winit uses, so `key` drives
+                // whatever holds focus (the omnibar, a focused page, the
+                // canvas) exactly as a real press would — one description, two
+                // runners, for keys as well as pointers. The former direct
+                // EditKey->omnibar-Action map only ever reached the omnibar.
+                let winit_key = match key {
+                    EditKey::Enter => WinitKey::Named(WinitNamedKey::Enter),
+                    EditKey::Escape => WinitKey::Named(WinitNamedKey::Escape),
+                    EditKey::Backspace => WinitKey::Named(WinitNamedKey::Backspace),
+                    EditKey::Delete => WinitKey::Named(WinitNamedKey::Delete),
+                    EditKey::Up => WinitKey::Named(WinitNamedKey::ArrowUp),
+                    EditKey::Down => WinitKey::Named(WinitNamedKey::ArrowDown),
+                    EditKey::Left => WinitKey::Named(WinitNamedKey::ArrowLeft),
+                    EditKey::Right => WinitKey::Named(WinitNamedKey::ArrowRight),
+                    EditKey::Home => WinitKey::Named(WinitNamedKey::Home),
+                    EditKey::End => WinitKey::Named(WinitNamedKey::End),
+                    EditKey::PageDown => WinitKey::Named(WinitNamedKey::PageDown),
+                    EditKey::PageUp => WinitKey::Named(WinitNamedKey::PageUp),
+                    EditKey::Space => WinitKey::Named(WinitNamedKey::Space),
                 };
-                self.act(action);
+                self.on_key(&winit_key);
             }
             Step::Script(source) => self.run_scenario_script(source),
             Step::Click(x, y) => {
@@ -2669,6 +2880,22 @@ impl Shell {
                     return Err(format!("assert omnibar {state}: it is not"));
                 }
             }
+            Step::AssertScrolled(want_moved) => match self.content_scroll_moved {
+                Some(moved) if moved == *want_moved => {}
+                Some(_) => {
+                    let (want, got) = if *want_moved {
+                        ("moved", "did not")
+                    } else {
+                        ("still", "moved")
+                    };
+                    return Err(format!("assert scrolled {want}: the focused page {got}"));
+                }
+                None => {
+                    return Err(
+                        "assert scrolled: no content scroll key has been delivered".to_string(),
+                    );
+                }
+            },
             Step::AssertText(want) => {
                 let snap = crate::observe::snapshot(&self.app);
                 if snap.omnibar.text != *want {
@@ -3102,83 +3329,7 @@ impl ApplicationHandler for Shell {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    let action = if self.app.omnibar.open {
-                        // The omnibar has keyboard focus: edit keys route to
-                        // it; canvas hotkeys are suspended while it is open.
-                        match &event.logical_key {
-                            WinitKey::Named(WinitNamedKey::Escape) => Some(Action::OmnibarClose),
-                            WinitKey::Named(WinitNamedKey::Enter) => Some(Action::OmnibarCommit),
-                            WinitKey::Named(WinitNamedKey::Backspace) => {
-                                Some(Action::OmnibarBackspace)
-                            }
-                            WinitKey::Named(WinitNamedKey::ArrowUp) => Some(Action::OmnibarMove(-1)),
-                            WinitKey::Named(WinitNamedKey::ArrowDown) => {
-                                Some(Action::OmnibarMove(1))
-                            }
-                            WinitKey::Named(WinitNamedKey::ArrowLeft) => {
-                                Some(Action::OmnibarCaret(CaretMove::Left))
-                            }
-                            WinitKey::Named(WinitNamedKey::ArrowRight) => {
-                                Some(Action::OmnibarCaret(CaretMove::Right))
-                            }
-                            WinitKey::Named(WinitNamedKey::Home) => {
-                                Some(Action::OmnibarCaret(CaretMove::Home))
-                            }
-                            WinitKey::Named(WinitNamedKey::End) => {
-                                Some(Action::OmnibarCaret(CaretMove::End))
-                            }
-                            WinitKey::Named(WinitNamedKey::Delete) => Some(Action::OmnibarDelete),
-                            WinitKey::Named(WinitNamedKey::Space) => Some(Action::OmnibarChar(' ')),
-                            WinitKey::Character(s) if !self.ctrl => {
-                                s.chars().next().map(Action::OmnibarChar)
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        match &event.logical_key {
-                            WinitKey::Named(WinitNamedKey::Space) => Some(Action::ReseedLayout),
-                            // Delete forgets the focused node (recoverable from
-                            // the Trail's Removed section).
-                            WinitKey::Named(WinitNamedKey::Delete) => {
-                                Some(Action::DeleteFocusedNode)
-                            }
-                            // The browser nav chords (the r3-owed row).
-                            WinitKey::Named(WinitNamedKey::ArrowLeft) if self.alt => {
-                                Some(Action::NavBack)
-                            }
-                            WinitKey::Named(WinitNamedKey::ArrowRight) if self.alt => {
-                                Some(Action::NavForward)
-                            }
-                            WinitKey::Character(s) if self.ctrl => match s.as_str() {
-                                // The summon chords: Ctrl+L address flavor,
-                                // Ctrl+K command flavor (pre-seeded `>`).
-                                "l" => Some(Action::OmnibarOpen { command: false }),
-                                "k" => Some(Action::OmnibarOpen { command: true }),
-                                "r" => Some(Action::Reload),
-                                _ => None,
-                            },
-                            WinitKey::Character(s) => match s.as_str() {
-                                // Plain-key summons beside the Ctrl chords:
-                                // `/` (the quick-switcher convention) and `>`
-                                // straight into the actions lane. Chord-free,
-                                // so synthesized-input drivers can't lose the
-                                // modifier race either.
-                                "/" => Some(Action::OmnibarOpen { command: false }),
-                                ">" => Some(Action::OmnibarOpen { command: true }),
-                                "i" => Some(Action::ToggleIsometric),
-                                "q" => Some(Action::OrbitBy(-0.15)),
-                                "e" => Some(Action::OrbitBy(0.15)),
-                                "[" => Some(Action::TiltBy(-0.05)),
-                                "]" => Some(Action::TiltBy(0.05)),
-                                "h" => Some(Action::ToggleHeightByDegree),
-                                _ => None,
-                            },
-                            _ => None,
-                        }
-                    };
-                    if let Some(action) = action {
-                        self.act(action);
-                    }
+                    self.on_key(&event.logical_key);
                 }
             }
             // IME composition. Preedit is ephemeral by the gesture law — it

@@ -1,0 +1,49 @@
+# Content keyboard input: a focused page takes the scroll keys, delivered
+# through the SAME key seam a real press uses (one description, two runners —
+# the scenario's `key` verb now drives whatever holds focus, not just the
+# omnibar). Network-dependent by design, like the other content receipts: the
+# static lane routes http/https only, and the page needs real height to scroll.
+# FRESH profile.
+settle 30
+key escape
+
+# A page with real height, opened and made live.
+open https://www.iana.org/
+settle 50
+act Toggle live content
+settle 50
+assert content-live
+assert surface content
+capture 01_page_top
+
+# Clicking the page focuses it: the keys now belong to the page. The content
+# surface is the right-hand half beside the canvas, and this lands in the
+# whitespace between two sections (a press on a link would navigate instead).
+click-at 700 355
+settle 10
+assert focus content
+
+# The scroll keys reach the focused page.
+key end
+settle 10
+assert scrolled moved
+capture 02_scrolled_to_end
+
+# ...and the offset semantics are REAL: End again at the end is an honest
+# no-op, not a method that always claims it scrolled.
+key end
+settle 5
+assert scrolled still
+
+# Home returns to the top.
+key home
+settle 10
+assert scrolled moved
+capture 03_back_to_top
+
+# Escape blurs back to the canvas.
+key escape
+settle 5
+assert focus canvas
+
+log content keyboard input receipt complete

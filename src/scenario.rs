@@ -159,6 +159,9 @@ pub enum Step {
     Settle(u32),
     Capture(String),
     AssertOmnibar(bool),
+    /// Whether the last content scroll key moved the focused page (`moved`) or
+    /// was an honest no-op at the end (`still`).
+    AssertScrolled(bool),
     AssertText(String),
     AssertFocused(String),
     /// A named surface kind ("canvas" / "content" / "chrome" / "pane") is in the plan.
@@ -199,6 +202,9 @@ pub enum EditKey {
     Right,
     Home,
     End,
+    PageDown,
+    PageUp,
+    Space,
 }
 
 #[derive(Debug)]
@@ -246,9 +252,12 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                 "right" => Step::Key(EditKey::Right),
                 "home" => Step::Key(EditKey::Home),
                 "end" => Step::Key(EditKey::End),
+                "pagedown" => Step::Key(EditKey::PageDown),
+                "pageup" => Step::Key(EditKey::PageUp),
+                "space" => Step::Key(EditKey::Space),
                 _ => {
                     return err(
-                        "key wants enter|escape|backspace|delete|up|down|left|right|home|end",
+                        "key wants enter|escape|backspace|delete|up|down|left|right|home|end|pagedown|pageup|space",
                     );
                 }
             },
@@ -359,6 +368,11 @@ pub fn parse(body: &str) -> Result<Vec<Step>, String> {
                     "pane" if !arg.is_empty() => Step::AssertPane(arg.to_string()),
                     "maximized" => Step::AssertMaximized(true),
                     "not-maximized" => Step::AssertMaximized(false),
+                    "scrolled" => match arg {
+                        "moved" => Step::AssertScrolled(true),
+                        "still" => Step::AssertScrolled(false),
+                        _ => return err("assert scrolled wants moved|still"),
+                    },
                     "row" if !arg.is_empty() => Step::AssertRow(arg.to_string()),
                     "no-row" if !arg.is_empty() => Step::AssertNoRow(arg.to_string()),
                     "tab" if !arg.is_empty() => Step::AssertTab(arg.to_string()),
