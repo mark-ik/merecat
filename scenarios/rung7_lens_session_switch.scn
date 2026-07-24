@@ -1,0 +1,86 @@
+# Two landed capabilities that had never been crossed: multi-session switching
+# (rung 6) and windows-as-pane-hosts (rung 7). A switch tears down ports and
+# hands the recycle bin its Release/Reopen handshake while a LENS holds retained
+# pane runners over the outgoing graph.
+#
+# The contract this pins down, which the code chose but nothing asserted: a
+# window arrangement BELONGS TO ITS SESSION, like a workspace. Switching does
+# not carry your lens across; it closes the outgoing session's windows and
+# reopens the incoming session's own (App::adopt_session loads that session's
+# lens spaces and reopens each through the ordinary OpenWindow effect). So the
+# real question is whether the whole arrangement ROUND-TRIPS, and the bin with
+# it. Offline (mere://); FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+open mere://beta
+wait
+assert nodes >= 2
+assert sessions == 1
+
+# This session's recycle bin gets a record, shown in a Trail pane in the
+# PRIMARY window (summon-beside follows the active pane, so the Trail must be
+# established before anything moves to a lens).
+act Delete node
+wait
+assert event node-removed
+act Open Trail pane
+settle 10
+assert pane trail
+assert row Recover mere://beta
+
+# Now a Roster torn out to a lens: a second window holds a live runner, while
+# the Trail stays behind in the primary.
+act Open Roster pane
+settle 5
+act Tear out pane
+settle 30
+assert windows == 2
+assert lens-pane 0:roster
+assert pane trail
+capture-lens 01_lens_on_first_session
+
+# THE CROSSING: mint a new session while the lens is open. The new session has
+# no arrangement of its own, so its window count is 1 — the outgoing lens is
+# closed, NOT carried across — and its pane tree is its own.
+act New session
+wait
+assert sessions == 2
+assert event session-switched
+assert nodes == 0
+assert windows == 1
+assert no-pane trail
+
+# The bin came with us too: this session's bin is its own, so the first
+# session's deleted node is not offered for recovery here.
+act Open Trail pane
+settle 10
+assert pane trail
+assert no-row Recover mere://beta
+capture 02_new_session_own_bin_and_windows
+
+# Switch BACK through the switcher lane. This is the assertion that matters:
+# the first session's whole arrangement returns — the lens window reopens with
+# its torn-out roster, the primary's Trail is back — and so is its bin.
+omnibar actions
+type switch to session
+settle 5
+assert suggestions >= 1
+key enter
+wait
+settle 30
+assert event session-switched
+assert nodes >= 2
+
+# The arrangement round-tripped, in both windows.
+assert windows == 2
+assert lens-pane 0:roster
+assert pane trail
+capture-lens 03_lens_restored_on_switch_back
+
+# ...and so did the bin: the deleted node is recoverable again, here.
+assert row Recover mere://beta
+capture 04_bin_restored_with_its_session
+
+log rung 7 x rung 6 (arrangement and bin both ride the session) complete

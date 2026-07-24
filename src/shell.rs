@@ -3140,6 +3140,18 @@ impl Shell {
                 self.pending_capture = Some(self.shared_out_dir.join(format!("{name}.png")));
             }
             Step::CaptureLens(name) => {
+                // A lens capture lands on the LENS's own redraw, so it cannot
+                // report success here. What it can do is refuse the impossible
+                // case: with no lens open, the pending path would simply never
+                // be consumed and the receipt would pass having written
+                // nothing. That silent hole is exactly how a `capture-lens`
+                // after a session switch (which closes the outgoing session's
+                // windows) looked green while producing no pixels.
+                if self.lens_windows.is_empty() {
+                    return Err(format!(
+                        "capture-lens '{name}': no lens window is open to capture"
+                    ));
+                }
                 self.pending_lens_capture =
                     Some(self.shared_out_dir.join(format!("{name}.png")));
                 // The lens presents on its own redraw; nudge every window so
