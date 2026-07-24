@@ -345,6 +345,21 @@ daily-driver value, not by meerkat's module sizes.
    the pinned Tile pane composites its live session strip-less in the lens,
    receipt `rung7_tile_tearout.scn` (`drag-tab <a> out`). The fork arm
    (duplicate-view semantics) stays named-not-built with multi-session.
+
+   **A window arrangement belongs to its SESSION** (recorded 2026-07-24,
+   2788321, after a receipt assumed otherwise and was wrong). `windows.json`
+   lives under `sessions/<id>/`, so lens spaces are per-session state, like a
+   workspace: a switch closes the outgoing session's windows and reopens the
+   incoming session's own, because `adopt_session` loads that session's lens
+   spaces and pushes an `OpenWindow` effect per live slot. Switching therefore
+   does NOT carry a torn-out pane across to the session you land in, and that is
+   the intent rather than an oversight. What the receipt pins is the round trip:
+   switch away and the new session has its own arrangement, its own pane tree,
+   and its own recycle bin; switch back and the whole thing returns, lens window
+   and torn-out pane included, byte-identical in the captures either side.
+   Receipt `rung7_lens_session_switch.scn`, which is also the first to drive
+   rung 6 and rung 7 together (the switch's port teardown and the bin's
+   Release/Reopen handshake happening while a lens holds live pane runners).
 8. **The long tail**. Comms and community services (Murm direct exchange +
    Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
    scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a
