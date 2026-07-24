@@ -159,6 +159,8 @@ pub enum AppEvent {
     /// A pane's composed list section was added or removed (the
     /// gloss-composite's add/remove), by provider id.
     PaneSectionToggled { section: String, added: bool },
+    /// A composed section moved in a pane's stack, by provider id.
+    PaneSectionMoved(String),
     /// The recycle bin was emptied on command (athanor's oven), by how many
     /// records were permanently forgotten.
     RecycleBinEmptied(usize),
@@ -225,6 +227,7 @@ impl AppEvent {
                 let verb = if *added { "added" } else { "removed" };
                 format!("pane-section-{verb} {section}")
             }
+            AppEvent::PaneSectionMoved(section) => format!("pane-section-moved {section}"),
             AppEvent::OmnibarOpened => "omnibar-opened".to_string(),
             AppEvent::OmnibarClosed => "omnibar-closed".to_string(),
             AppEvent::OmnibarCommitted(what) => format!("omnibar-committed {what}"),

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use chartulary::{Container, GraphLog, Relation};
 use codicil::{Codicil, LogId};
-use servitor::{Gate, Grant, Mode, PrefixAuthority, Subject};
+use servitor::{Cap, Gate, Grant, GrantTable, Mode, Subject};
 use uuid::Uuid;
 
 use crate::app::App;
@@ -36,10 +36,19 @@ pub const SCENARIO_SOURCE_FACET: &str = "scenario.source";
 /// facet is the pointer, exactly like the world's log id is a pointer.
 pub const COMPONENT_FACET: &str = "component.file";
 
-/// The capability path covering the app's READ face (the observe tier): not
-/// an emission ring — nothing is dispatched by reading — so every resident
-/// gets it, and the rings are what the review actually asks for.
-pub const READ_SCOPE: &str = "app/read";
+/// The capability covering the app's READ face (the observe tier). Not an
+/// emission ring, since nothing is dispatched by reading, so every resident
+/// gets it and the rings are what the review actually asks for.
+pub fn read_cap() -> Cap {
+    Cap::Power("read".to_string())
+}
+
+/// The capability a resident holds over its OWN nested world: a scope, not a
+/// power, because a world is a place with an unbounded interior and prefix
+/// containment is exactly what is wanted there.
+pub fn world_cap() -> Cap {
+    Cap::Scope(servitor::ScopePath::parse(SCENARIO_SCOPE).expect("a valid scope"))
+}
 
 /// The capability path a rung-1 scenario denizen is granted over its own
 /// nested world (`Mode::Write`). The visible review names it.
@@ -122,7 +131,7 @@ pub struct Resident {
 #[derive(Default)]
 pub struct Denizens {
     pub residents: HashMap<Uuid, Resident>,
-    pub authority: PrefixAuthority,
+    pub authority: GrantTable,
     pub gate: Gate,
     /// Residents whose world id came from a LEGACY binding facet
     /// (`nested_log` written before the containment ruling) rather than
@@ -341,12 +350,26 @@ pub fn rebuild(
         };
         let nested = load_nested(session_dir, &log_id)
             .unwrap_or_else(|| GraphLog::with_id(LogId::new(log_id.clone())));
-        // Derive the authority from the projections the gate wrote: node ids
-        // `grant:<path>` under this denizen's subject.
+        // Derive the authority from the projections the gate wrote. The
+        // projection is a LOSSLESS record now (capability + mode + subject in
+        // explicit tags), so the grant is read back exactly rather than
+        // reconstructed with a hardcoded mode.
         for (_, node) in nested.graph().nodes() {
+            if let Some(grant) = servitor::read_projection(node) {
+                denizens.authority = std::mem::take(&mut denizens.authority).with_grant(grant);
+                continue;
+            }
+            // Pre-capability-model projections carried only the path in the
+            // node id. Heal them: an `app/<ring>` path is that ring's power,
+            // anything else is the scope it always was.
             if let Some(path) = node.id.strip_prefix(servitor::GRANT_PREFIX) {
-                denizens.authority = std::mem::take(&mut denizens.authority)
-                    .with_grant(Grant::new(subject, path, Mode::Write));
+                let cap = crate::ring::Ring::from_legacy_path(path)
+                    .and_then(|ring| ring.cap())
+                    .or_else(|| Cap::parse(path).ok());
+                if let Some(cap) = cap {
+                    denizens.authority = std::mem::take(&mut denizens.authority)
+                        .with_grant(Grant::new(subject, cap, Mode::Write));
+                }
             }
         }
         let label = app_facets
@@ -456,15 +479,15 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
     // ring only appears here if the review asked for it.
     let mut nested = GraphLog::with_id(LogId::new(hex.clone()));
     let mut grants = vec![
-        Grant::new(subject, SCENARIO_SCOPE, Mode::Write),
-        Grant::new(subject, READ_SCOPE, Mode::Write),
+        Grant::new(subject, world_cap(), Mode::Write),
+        Grant::new(subject, read_cap(), Mode::Write),
     ];
     grants.extend(
         pending
             .rings
             .iter()
-            .filter_map(|ring| ring.path())
-            .map(|path| Grant::new(subject, path, Mode::Write)),
+            .filter_map(|ring| ring.cap())
+            .map(|cap| Grant::new(subject, cap, Mode::Write)),
     );
     for grant in &grants {
         if let Err(err) = app.denizens.gate.project_grant(&mut nested, grant) {
@@ -561,7 +584,7 @@ mod tests {
         let gate = Gate::new();
         let subject = Subject::new([7u8; 32]);
         let mut nested = GraphLog::with_id(LogId::new("aa".repeat(32)));
-        gate.project_grant(&mut nested, &Grant::new(subject, SCENARIO_SCOPE, Mode::Write))
+        gate.project_grant(&mut nested, &Grant::new(subject, world_cap(), Mode::Write))
             .unwrap();
 
         save_nested(&dir, &"aa".repeat(32), &nested);
@@ -570,7 +593,7 @@ mod tests {
         assert!(
             restored
                 .graph()
-                .key_of(&Gate::projection_id(SCENARIO_SCOPE))
+                .key_of(&Gate::projection_id(&world_cap()))
                 .is_some(),
             "the grant projection survived the round trip"
         );

@@ -8,12 +8,16 @@
 //! denizen's grant at the moment of emission, exactly where the piccolo lane
 //! already denies (B2: capability from the grant, not a feature flag).
 //!
-//! Rings, mapped to grantable paths:
-//! - navigate (`app/navigate`) — moving through content
-//! - panes (`app/panes`) — window / pane / workbench arrangement
-//! - dispatch (`app/dispatch`) — node + view edits, and the omnibar (the
-//!   command surface)
-//! - session (`app/session`) — fork / switch / close / delete / recover
+//! Rings, mapped to grantable capabilities. Each is a servitor
+//! [`Cap::Power`](servitor::Cap): a CLOSED set whose coverage is equality, so
+//! adding a ring can never widen a grant already issued (the capability-model
+//! round, 2026-07-23; as string prefixes, a grant on `app/nav` covered
+//! `app/navigate`).
+//!
+//! - navigate — moving through content
+//! - panes — window / pane / workbench arrangement
+//! - dispatch — node + view edits, and the omnibar (the command surface)
+//! - session — fork / switch / close / delete / recover
 //! - **host-only** — NO grantable path exists. Gate management
 //!   (install / confirm / cancel / run) can never be covered by any
 //!   authority: a component confirming its own grant review would be
@@ -25,7 +29,7 @@
 //! shapes the install review's checkboxes; it never grants silently — the
 //! visible review stays the only place an ask becomes a grant.
 
-use servitor::{Mode, PrefixAuthority, Subject};
+use servitor::{Cap, GrantTable, Mode, Subject};
 
 use crate::action::Action;
 
@@ -40,17 +44,23 @@ pub enum Ring {
 }
 
 impl Ring {
-    /// The grantable capability path this ring checks under (`Mode::Write`),
-    /// or `None` for the host-only ring — the structural floor: no path
+    /// The grantable capability this ring checks (`Mode::Write`), or `None`
+    /// for the host-only ring: the structural floor, where no capability
     /// exists, so no grant can ever cover it.
-    pub fn path(self) -> Option<&'static str> {
-        match self {
-            Ring::Navigate => Some("app/navigate"),
-            Ring::Panes => Some("app/panes"),
-            Ring::Dispatch => Some("app/dispatch"),
-            Ring::Session => Some("app/session"),
-            Ring::HostOnly => None,
-        }
+    pub fn cap(self) -> Option<Cap> {
+        let name = match self {
+            Ring::HostOnly => return None,
+            other => other.name(),
+        };
+        Some(Cap::Power(name.to_string()))
+    }
+
+    /// The ring a pre-capability-model grant path named (`app/navigate`).
+    /// Install wrote scope-shaped paths before 2026-07-23; the adopt path uses
+    /// this to heal an existing session's projections into powers.
+    pub fn from_legacy_path(path: &str) -> Option<Ring> {
+        let name = path.strip_prefix("app/")?;
+        GRANTABLE_RINGS.into_iter().find(|ring| ring.name() == name)
     }
 
     /// The ring's display name (denials name the ring, attributably).
@@ -84,6 +94,7 @@ pub fn ring_of(action: &Action) -> Ring {
         // Composing a pane's list sections edits its LEAF (the layout), so it
         // is arrangement, not a node/view edit.
         | TogglePaneSection { .. }
+        | MovePaneSection { .. }
         | OpenInWorkbench
         | TearOutTile { .. }
         | WorkbenchActivate(_)
@@ -143,18 +154,18 @@ pub fn ring_of(action: &Action) -> Ring {
 /// the authority for the ring's path (write mode — an emission acts).
 /// The `Err` names the ring, so a denial is attributable by capability.
 pub fn emit_allowed(
-    authority: &PrefixAuthority,
+    authority: &GrantTable,
     subject: Subject,
     action: &Action,
 ) -> Result<(), String> {
     let ring = ring_of(action);
-    let Some(path) = ring.path() else {
+    let Some(cap) = ring.cap() else {
         return Err(format!(
-            "{}: gate management is host-only; no grantable path exists",
+            "{}: gate management is host-only; no grantable capability exists",
             ring.name()
         ));
     };
-    if servitor::AuthorityProvider::covers(authority, subject, path, Mode::Write) {
+    if servitor::AuthorityProvider::covers(authority, subject, &cap, Mode::Write) {
         Ok(())
     } else {
         Err(format!("{}: not covered by this denizen's grant", ring.name()))
@@ -169,12 +180,12 @@ pub const GRANTABLE_RINGS: [Ring; 4] = [Ring::Navigate, Ring::Panes, Ring::Dispa
 /// covers — the `caps.granted()` answer a component reads to skip a feature
 /// instead of emitting into a denial. The grant stays authoritative; this is
 /// the guest's read-only window onto it.
-pub fn granted_ring_names(authority: &PrefixAuthority, subject: Subject) -> Vec<String> {
+pub fn granted_ring_names(authority: &GrantTable, subject: Subject) -> Vec<String> {
     GRANTABLE_RINGS
         .iter()
         .filter(|ring| {
-            ring.path().is_some_and(|path| {
-                servitor::AuthorityProvider::covers(authority, subject, path, Mode::Write)
+            ring.cap().is_some_and(|cap| {
+                servitor::AuthorityProvider::covers(authority, subject, &cap, Mode::Write)
             })
         })
         .map(|ring| format!("mere:script/actions#{}", ring.name()))
@@ -287,25 +298,30 @@ mod tests {
         Subject::new([9u8; 32])
     }
 
-    fn full_app_authority() -> PrefixAuthority {
-        // Every grantable app ring, deliberately including a grant WIDER than
-        // any single ring: host-only must resist even this.
-        PrefixAuthority::default().with_grant(Grant::new(subject(), "app/", Mode::Write))
+    fn full_app_authority() -> GrantTable {
+        // Every grantable app ring at once: host-only must resist even this.
+        // (A single "wider than any ring" grant is no longer expressible,
+        // which is the point of powers: there is nothing above them to hold.)
+        let mut table = GrantTable::default();
+        for ring in GRANTABLE_RINGS {
+            table.grant(Grant::new(subject(), ring.cap().unwrap(), Mode::Write));
+        }
+        table
     }
 
     #[test]
     fn every_ring_but_host_only_names_a_grantable_path() {
         for ring in [Ring::Navigate, Ring::Panes, Ring::Dispatch, Ring::Session] {
-            assert!(ring.path().is_some(), "{} must be grantable", ring.name());
+            assert!(ring.cap().is_some(), "{} must be grantable", ring.name());
         }
-        assert_eq!(Ring::HostOnly.path(), None, "the structural floor");
+        assert_eq!(Ring::HostOnly.cap(), None, "the structural floor");
     }
 
     #[test]
     fn a_covered_emission_passes_and_an_uncovered_one_names_its_ring() {
-        let narrow = PrefixAuthority::default().with_grant(Grant::new(
+        let narrow = GrantTable::default().with_grant(Grant::new(
             subject(),
-            "app/navigate",
+            Ring::Navigate.cap().unwrap(),
             Mode::Write,
         ));
         assert!(

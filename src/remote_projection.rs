@@ -23,7 +23,7 @@ use graphshell_protocol::{
 use mere::kernel::graph::NodeKey;
 use sceno::{Arrangement, Score, Spiral};
 use scenotime::{Revision, SceneEpoch, SceneSnapshot};
-use servitor::{Gate, Grant, Mode, PrefixAuthority, Subject};
+use servitor::{Cap, Gate, Grant, GrantTable, Mode, ScopePath, Subject};
 
 use crate::action::Action;
 use crate::app::App;
@@ -31,6 +31,17 @@ use crate::app::App;
 const SESSION: &str = "loopback:merecat:g3";
 const LAYOUT_SCOPE: &str = "projection/layout/";
 const GRAPH_SCOPE: &str = "graph/open/";
+
+/// The endpoint's capabilities as parsed scopes. Both are places in the audit
+/// graph with unbounded interiors, so they are scopes rather than powers
+/// (capability-model round, 2026-07-23).
+fn layout_scope() -> ScopePath {
+    ScopePath::parse(LAYOUT_SCOPE).expect("a valid scope")
+}
+
+fn graph_scope() -> ScopePath {
+    ScopePath::parse(GRAPH_SCOPE).expect("a valid scope")
+}
 const FIT_INTENT: &str = "merecat.fit-view";
 const OPEN_INTENT: &str = "merecat.open-address";
 
@@ -43,7 +54,7 @@ pub struct MerecatEndpoint {
     snapshot: Option<ProjectionSnapshot>,
     resources: BTreeMap<ContentHash, Vec<u8>>,
     gate: Gate,
-    authority: PrefixAuthority,
+    authority: GrantTable,
     audit: GraphLog<Container, Relation>,
     subject: Subject,
 }
@@ -63,16 +74,20 @@ impl MerecatEndpoint {
         let subject = Subject::new(*blake3::hash(session.0.as_bytes()).as_bytes());
         let gate = Gate::new();
         let mut audit = GraphLog::new();
-        gate.project_grant(&mut audit, &Grant::new(subject, LAYOUT_SCOPE, Mode::Write))
-            .map_err(|error| format!("failed to project endpoint grant: {error:?}"))?;
+        gate.project_grant(
+            &mut audit,
+            &Grant::new(subject, Cap::Scope(layout_scope()), Mode::Write),
+        )
+        .map_err(|error| format!("failed to project endpoint grant: {error:?}"))?;
 
         // As in the resident-denizen lane, authority is rebuilt from the
         // gate-authored projection. The table is a read index, not another
-        // source of grants.
-        let mut authority = PrefixAuthority::new();
+        // source of grants, and the projection is lossless so the grant comes
+        // back exactly as written.
+        let mut authority = GrantTable::new();
         for (_, node) in audit.graph().nodes() {
-            if let Some(path) = node.id.strip_prefix(servitor::GRANT_PREFIX) {
-                authority.grant(Grant::new(subject, path, Mode::Write));
+            if let Some(grant) = servitor::read_projection(node) {
+                authority.grant(grant);
             }
         }
 
@@ -222,7 +237,7 @@ impl MerecatEndpoint {
         })
     }
 
-    fn petition(&mut self, scope: &str, node: Container) -> Result<(), servitor::GateError> {
+    fn petition(&mut self, scope: &ScopePath, node: Container) -> Result<(), servitor::GateError> {
         let revision = self.audit.revision();
         self.gate.petition(
             &self.authority,
@@ -380,7 +395,7 @@ impl IntentSink for MerecatEndpoint {
                 }
                 let audit = Container::new(format!("{LAYOUT_SCOPE}fit-{}", self.audit.revision()))
                     .with_title("Fit disclosed Merecat graph");
-                match self.petition(LAYOUT_SCOPE, audit) {
+                match self.petition(&layout_scope(), audit) {
                     Ok(()) => {
                         self.app.update(Action::FitView);
                         Ok(IntentResult::Accepted)
@@ -403,7 +418,7 @@ impl IntentSink for MerecatEndpoint {
                 }
                 let audit = Container::new(format!("{GRAPH_SCOPE}open-{}", self.audit.revision()))
                     .with_title(format!("Open {address}"));
-                match self.petition(GRAPH_SCOPE, audit) {
+                match self.petition(&graph_scope(), audit) {
                     Ok(()) => {
                         if let Ok(mut journal) = self.app.journal.lock() {
                             journal.set_author(self.subject.to_hex());

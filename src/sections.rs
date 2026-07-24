@@ -60,8 +60,17 @@ pub const REMOVED_SECTION: SectionProvider = SectionProvider {
     gather: gather_removed,
 };
 
+/// The graph's nodes, most-recently-visited first — the Roster's bucket, made
+/// composable. This is the design's own example ("a roster bucket beside the
+/// minimap"): the section a pane borrows from a pane it is not.
+pub const NODES_SECTION: SectionProvider = SectionProvider {
+    id: "nodes",
+    title: "Nodes",
+    gather: gather_nodes,
+};
+
 /// Every provider, for id lookup (the config resolves an id to its provider).
-pub const ALL: &[SectionProvider] = &[RECENT_SECTION, REMOVED_SECTION];
+pub const ALL: &[SectionProvider] = &[RECENT_SECTION, REMOVED_SECTION, NODES_SECTION];
 
 /// The provider with this id, if any.
 pub fn by_id(id: &str) -> Option<&'static SectionProvider> {
@@ -86,6 +95,25 @@ fn gather_recent(app: &App) -> Vec<SectionRow> {
             activate: Some(SectionActivate::Open(rv.url)),
         })
         .collect()
+}
+
+fn gather_nodes(app: &App) -> Vec<SectionRow> {
+    let graph = app.canvas.graph();
+    let mut rows: Vec<(std::time::SystemTime, SectionRow)> = graph
+        .nodes()
+        .map(|(key, node)| {
+            let url = node.url().to_string();
+            (
+                node.last_visited,
+                SectionRow {
+                    text: graph.node_display_label(key),
+                    activate: Some(SectionActivate::Open(url)),
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.into_iter().take(8).map(|(_, row)| row).collect()
 }
 
 fn gather_removed(app: &App) -> Vec<SectionRow> {

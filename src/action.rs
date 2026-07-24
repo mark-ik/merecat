@@ -159,6 +159,14 @@ pub enum Action {
         pane: frisket::PaneId,
         section: String,
     },
+    /// Move a composed section earlier (`-1`) or later (`+1`) in a pane's
+    /// stack. Composition ORDER is the config's order, so reordering is the
+    /// same leaf edit; clamped at the ends (no wrap — a stack has a top).
+    MovePaneSection {
+        pane: frisket::PaneId,
+        section: String,
+        delta: i32,
+    },
     /// Open the focused node as a workbench tile (rung 5 slice E): summons the
     /// Workbench pane if absent, opens the tile in platen's model, and spawns
     /// the node's content if it has none.

@@ -564,7 +564,7 @@ impl App {
         let Some(PaneContent::Gloss(cfg)) = self.pane_content(pane) else {
             return Vec::new();
         };
-        crate::sections::ALL
+        let mut rows: Vec<(String, Action)> = crate::sections::ALL
             .iter()
             .map(|p| {
                 let on = cfg.sections.iter().any(|id| id == p.id);
@@ -577,7 +577,38 @@ impl App {
                     },
                 )
             })
-            .collect()
+            .collect();
+        // Reorder rows only where a move would DO something: nothing to
+        // reorder with one section, and no "up" on the first (the palette
+        // should not offer a no-op).
+        if cfg.sections.len() > 1 {
+            for (i, id) in cfg.sections.iter().enumerate() {
+                let Some(p) = crate::sections::by_id(id) else {
+                    continue;
+                };
+                if i > 0 {
+                    rows.push((
+                        format!("Gloss: move section up — {}", p.title),
+                        Action::MovePaneSection {
+                            pane,
+                            section: id.clone(),
+                            delta: -1,
+                        },
+                    ));
+                }
+                if i + 1 < cfg.sections.len() {
+                    rows.push((
+                        format!("Gloss: move section down — {}", p.title),
+                        Action::MovePaneSection {
+                            pane,
+                            section: id.clone(),
+                            delta: 1,
+                        },
+                    ));
+                }
+            }
+        }
+        rows
     }
 
     /// A pane's content by id, in whichever space holds it (primary or a lens).
@@ -1853,6 +1884,39 @@ impl App {
                     None => vec![Effect::Redraw],
                 }
             }
+            Action::MovePaneSection {
+                pane,
+                section,
+                delta,
+            } => {
+                // Order IS the config's order, so a move is the same leaf edit
+                // as add/remove. Clamped at the ends: a stack has a top and a
+                // bottom, and silently wrapping would be a surprise.
+                let Some(space) = self.space_of(pane) else {
+                    return vec![Effect::Redraw];
+                };
+                let Some(layout) = self.space_mut(space) else {
+                    return vec![Effect::Redraw];
+                };
+                let mut moved = false;
+                if let Some(PaneContent::Gloss(cfg)) = layout.content_mut(pane)
+                    && let Some(from) = cfg.sections.iter().position(|s| s == &section)
+                {
+                    let to = (from as i32 + delta).clamp(0, cfg.sections.len() as i32 - 1)
+                        as usize;
+                    if to != from {
+                        let id = cfg.sections.remove(from);
+                        cfg.sections.insert(to, id);
+                        moved = true;
+                    }
+                }
+                if moved {
+                    self.events.push(AppEvent::PaneSectionMoved(section));
+                    vec![Effect::SaveSession, Effect::Redraw]
+                } else {
+                    vec![Effect::Redraw]
+                }
+            }
             // Workbench ops (rung 5 slice E). Platen owns the model and every
             // mutator; these arms lower intents onto it and persist. The
             // Workbench PANE (the frisket leaf) is where the tiling shows;
@@ -2225,7 +2289,7 @@ mod tests {
             resident
                 .nested
                 .graph()
-                .key_of(&servitor::Gate::projection_id(crate::denizen::SCENARIO_SCOPE))
+                .key_of(&servitor::Gate::projection_id(&crate::denizen::world_cap()))
                 .is_some(),
             "the grant projection is in the nested world"
         );
@@ -2242,7 +2306,7 @@ mod tests {
             servitor::AuthorityProvider::covers(
                 &rebuilt.authority,
                 resident.subject,
-                crate::denizen::SCENARIO_SCOPE,
+                &crate::denizen::world_cap(),
                 servitor::Mode::Write
             ),
             "authority derives from the projection, not from a second store"
@@ -2277,7 +2341,7 @@ mod tests {
                 &authority,
                 &mut resident.nested,
                 subject,
-                crate::denizen::SCENARIO_SCOPE,
+                &servitor::ScopePath::parse(crate::denizen::SCENARIO_SCOPE).unwrap(),
                 rev,
                 vec![chartulary::EditSpec::InsertNode(chartulary::Container::new(
                     "scenario/kept-note",
@@ -2293,7 +2357,7 @@ mod tests {
                 &authority,
                 &mut resident.nested,
                 subject,
-                "notes/",
+                &servitor::ScopePath::parse("notes").unwrap(),
                 rev,
                 vec![chartulary::EditSpec::InsertNode(chartulary::Container::new(
                     "notes/sneaky",
@@ -2867,17 +2931,19 @@ mod tests {
             crate::denizen::component_path(&app.session_dir(), &file).is_file(),
             "the component's bytes live beside the worlds"
         );
-        // The grant is exactly the reviewed rings — no blanket `app/`.
-        let covers = |path: &str| {
+        // The grant is exactly the reviewed rings: each ring is its own power,
+        // and there is no capability above them that could grant them wholesale.
+        let covers = |ring: crate::ring::Ring| {
             servitor::AuthorityProvider::covers(
                 &app.denizens.authority,
                 subject,
-                path,
+                &ring.cap().expect("a grantable ring"),
                 servitor::Mode::Write,
             )
         };
-        assert!(covers("app/navigate") && covers("app/panes") && covers("app/dispatch"));
-        assert!(!covers("app/session"), "an unreviewed ring is ungranted");
+        use crate::ring::Ring;
+        assert!(covers(Ring::Navigate) && covers(Ring::Panes) && covers(Ring::Dispatch));
+        assert!(!covers(Ring::Session), "an unreviewed ring is ungranted");
 
         // Run: the guest emits one action per ring. Only the covered ones land.
         let before = app.canvas.graph().node_count();
@@ -3104,6 +3170,76 @@ mod tests {
             section: "removed".to_string(),
         });
         assert!(sections(&app).is_empty(), "toggled back off");
+    }
+
+    /// Composition ORDER is the config's order, so reordering is the same leaf
+    /// edit as add/remove: it moves within the stack, clamps at the ends
+    /// rather than wrapping, and the palette only offers a move that would do
+    /// something.
+    #[test]
+    fn moving_a_composed_section_reorders_that_leaf_and_clamps() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Gloss));
+        let pane = app.active_pane.expect("the summoned gloss is active");
+        let sections = |app: &App| match app.pane_content(pane) {
+            Some(PaneContent::Gloss(cfg)) => cfg.sections.clone(),
+            _ => panic!("the active pane is a Gloss"),
+        };
+        let mv = |app: &mut App, section: &str, delta: i32| {
+            app.update(Action::MovePaneSection {
+                pane,
+                section: section.to_string(),
+                delta,
+            })
+        };
+
+        // With ONE section there is nothing to reorder, so no move row.
+        app.update(Action::TogglePaneSection {
+            pane,
+            section: "removed".to_string(),
+        });
+        assert!(
+            !app.session_actions()
+                .iter()
+                .any(|(label, _)| label.starts_with("Gloss: move section")),
+            "a lone section offers no move"
+        );
+
+        // Compose a second: it stacks BELOW, in config order.
+        app.update(Action::TogglePaneSection {
+            pane,
+            section: "nodes".to_string(),
+        });
+        assert_eq!(sections(&app), vec!["removed", "nodes"]);
+
+        // Moving it up swaps the stack, and persists with the layout.
+        let fx = mv(&mut app, "nodes", -1);
+        assert_eq!(sections(&app), vec!["nodes", "removed"]);
+        assert!(
+            fx.iter().any(|e| matches!(e, Effect::SaveSession)),
+            "a reorder persists like any leaf edit: {fx:?}"
+        );
+
+        // At the top, up is a no-op: clamped, NOT wrapped to the bottom. It
+        // reports no move, so the receipt cannot mistake it for one.
+        let fx = mv(&mut app, "nodes", -1);
+        assert_eq!(sections(&app), vec!["nodes", "removed"], "clamped at the top");
+        assert!(
+            !fx.iter().any(|e| matches!(e, Effect::SaveSession)),
+            "a no-op move saves nothing: {fx:?}"
+        );
+        // And the palette does not offer it.
+        assert!(
+            !app.session_actions()
+                .iter()
+                .any(|(label, _)| label == "Gloss: move section up — Nodes"),
+            "no up-row on the first section"
+        );
+
+        // An id this pane has not composed moves nothing.
+        let fx = mv(&mut app, "recent", 1);
+        assert_eq!(sections(&app), vec!["nodes", "removed"]);
+        assert!(!fx.iter().any(|e| matches!(e, Effect::SaveSession)));
     }
 
     fn lens_ops_close_removes_the_summoned_pane() {

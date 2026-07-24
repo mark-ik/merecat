@@ -17,7 +17,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use app_host::{ActionSink, AppScript, Refusal, Watchdog};
-use servitor::{PrefixAuthority, Subject};
+use servitor::{GrantTable, Subject};
 use wasmtime::StoreLimitsBuilder;
 
 use crate::action::Action;
@@ -34,7 +34,7 @@ const MEMORY_CEILING: usize = 64 * 1024 * 1024;
 /// The ring gate as an [`ActionSink`]: decode the envelope, classify it, ask
 /// the authority, and queue what passes.
 pub struct RingSink {
-    authority: PrefixAuthority,
+    authority: GrantTable,
     subject: Subject,
     /// Emissions accepted for lowering, in emission order.
     pub accepted: Vec<Action>,
@@ -43,7 +43,7 @@ pub struct RingSink {
 }
 
 impl RingSink {
-    pub fn new(authority: PrefixAuthority, subject: Subject) -> Self {
+    pub fn new(authority: GrantTable, subject: Subject) -> Self {
         Self {
             authority,
             subject,
@@ -93,7 +93,7 @@ pub struct ComponentRun {
 /// the ceiling) is contained and reported as an `Err`; the host survives.
 pub fn run(
     path: &Path,
-    authority: &PrefixAuthority,
+    authority: &GrantTable,
     subject: Subject,
     kind: &str,
     payload: &str,
@@ -144,8 +144,11 @@ mod tests {
 
     #[test]
     fn the_sink_queues_granted_emissions_and_refuses_the_rest() {
-        let authority = PrefixAuthority::default()
-            .with_grant(Grant::new(subject(), "app/navigate", Mode::Write));
+        let authority = GrantTable::default().with_grant(Grant::new(
+            subject(),
+            crate::ring::Ring::Navigate.cap().unwrap(),
+            Mode::Write,
+        ));
         let mut sink = RingSink::new(authority, subject());
 
         assert!(sink.emit("open-address", r#"{"url": "https://a.test"}"#).is_ok());

@@ -38,10 +38,27 @@ assert event node-recovered
 assert focused example
 capture 03_recovered_from_gloss
 
-# Composition is a toggle: removing it returns the bare minimap.
+# Compose a SECOND section — the Roster's node bucket, borrowed by the
+# minimap (the design's own "a roster bucket beside the minimap"). Two
+# sections stack in config order.
+act Gloss: add section — Nodes
+settle 10
+assert event pane-section-added nodes
+capture 04_two_sections
+
+# Order is the config's order, so reordering is the same leaf edit. Moving
+# Nodes up puts it above Removed.
+act Gloss: move section up — Nodes
+settle 10
+assert event pane-section-moved nodes
+capture 05_reordered
+
+# Composition is a toggle: removing both returns the bare minimap.
+act Gloss: remove section — Nodes
+settle 5
 act Gloss: remove section — Removed
 settle 10
 assert event pane-section-removed removed
-capture 04_back_to_minimap
+capture 06_back_to_minimap
 
-log gloss composite finished (compose + live rows + toggle off) complete
+log gloss composite open bits (reorder + the roster bucket) complete

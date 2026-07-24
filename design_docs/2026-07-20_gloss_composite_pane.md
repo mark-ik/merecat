@@ -137,3 +137,33 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
   no reorder affordance), and the drag-a-section-header gesture (UI candidate 3,
   which wants draggable section headers first).
 
+- **2026-07-23 (the open bits: reorder + the roster bucket):** two of the three
+  items above.
+  - **Reorder.** `Action::MovePaneSection { pane, section, delta }` moves a
+    section within its pane's stack. Composition order IS the config's order, so
+    a reorder is the same leaf edit as add/remove: same clamped-in-bounds rule,
+    same `SaveSession`, same `Panes` ring. It clamps at the ends rather than
+    wrapping, because a stack has a top and a bottom and a silent wrap would
+    read as a bug. The palette only offers a move that would do something (no
+    rows at all with one section, no "up" on the first), so every offered row
+    changes the pane. A no-op move reports nothing, which keeps the receipt
+    honest: `pane-section-moved` fires only on a real move.
+  - **The Nodes provider.** `NODES_SECTION` gathers the graph's nodes,
+    most-recently-visited first, capped at 8. This is Mark's own example ("a
+    roster bucket beside the minimap"): a section borrowed from a pane the
+    Gloss is not. It cost one `fn(&App) -> Vec<SectionRow>` and one line in
+    `ALL`, which is the registry paying off as designed.
+  - Receipt `rung5_gloss_composite.scn` extended end to end: compose Removed,
+    recover from it, compose Nodes beside it, move Nodes up, then remove both
+    back to the bare minimap.
+
+  **The drag gesture stays deferred, with a reason.** Merecat already has a
+  full tab-drag grammar (`WorkbenchStackOnto`, `WorkbenchSplitBeside`,
+  `TearOutTile`), but it lives in the WORKBENCH lane and is tile-shaped. A
+  section-header drag would either duplicate that machinery inside the swatch
+  pane or wait for it to be generalized into a shared "drag an object between
+  panes" lane. Duplicating it is the mistake the component catalog exists to
+  prevent, so this waits on the generalization rather than growing a second
+  bespoke drag lane. The cheap half (headers as identified, hit-testable
+  objects) is already there in spirit: rows wear `section-row` and the resolver
+  knows it, so a header class is a small step whenever the lane arrives.

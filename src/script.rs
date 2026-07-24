@@ -212,27 +212,33 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
 }
 
 /// Derive a run's capabilities from a denizen's structural caps (participant
-/// gate B2): each script capability class maps to a path under `app/`
-/// (the same paths [`crate::ring`] gates emissions by), and the bit is set
-/// only when the provider covers that path. A denizen granted nothing under `app/`
-/// evaluates read-less and dispatch-less — the denial surfaces in the run.
+/// gate B2): each script capability class maps to the same servitor
+/// capability [`crate::ring`] gates emissions by, and the bit is set only when
+/// the provider covers it. A denizen granted no rings evaluates read-less and
+/// dispatch-less, and the denial surfaces in the run.
+///
+/// One authority, two lane faces: this is the piccolo face, `emit_allowed` is
+/// the wasm one. They must ask the same questions or the "one grant" doctrine
+/// is a claim rather than a property.
 pub(crate) fn capabilities_from_grant(
     authority: &impl servitor::AuthorityProvider,
     subject: servitor::Subject,
 ) -> ScriptCapabilities {
+    use crate::ring::Ring;
     use servitor::Mode;
     let mut bits = 0u8;
-    if authority.covers(subject, "app/read", Mode::Read) {
+    let covers = |cap: &servitor::Cap, mode| authority.covers(subject, cap, mode);
+    if covers(&crate::denizen::read_cap(), Mode::Read) {
         bits |= READ_APP;
     }
-    if authority.covers(subject, "app/dispatch", Mode::Write) {
-        bits |= DISPATCH_ACTION;
-    }
-    if authority.covers(subject, "app/navigate", Mode::Write) {
-        bits |= NAVIGATE;
-    }
-    if authority.covers(subject, "app/panes", Mode::Write) {
-        bits |= CONTROL_PANES;
+    for (ring, bit) in [
+        (Ring::Dispatch, DISPATCH_ACTION),
+        (Ring::Navigate, NAVIGATE),
+        (Ring::Panes, CONTROL_PANES),
+    ] {
+        if ring.cap().is_some_and(|cap| covers(&cap, Mode::Write)) {
+            bits |= bit;
+        }
     }
     ScriptCapabilities(bits)
 }
@@ -303,12 +309,16 @@ mod tests {
     /// the capability system's, by name); a subject granted `app/` runs.
     #[test]
     fn grant_derived_capabilities_deny_the_ungranted() {
-        use servitor::{Grant, Mode, PrefixAuthority, Subject};
+        use servitor::{Cap, Grant, GrantTable, Mode, Subject};
         let app = App::test_stub();
         let subject = Subject::new([9; 32]);
 
         let world_only =
-            PrefixAuthority::new().with_grant(Grant::new(subject, "scenario/", Mode::Write));
+            GrantTable::new().with_grant(Grant::new(
+                subject,
+                Cap::scope("scenario").unwrap(),
+                Mode::Write,
+            ));
         let caps = capabilities_from_grant(&world_only, subject);
         let err = run(&app, "mere.open('mere://x')", caps, 500).unwrap_err();
         assert!(
@@ -316,10 +326,14 @@ mod tests {
             "the ungranted class denies by name: {err}"
         );
 
-        // The bare `app/` prefix models a TOTAL app grant — every ring at
-        // once. No install writes that (install grants one path per reviewed
-        // ring); the test uses it to exercise the fully-granted script.
-        let control = PrefixAuthority::new().with_grant(Grant::new(subject, "app/", Mode::Write));
+        // Every ring at once: the fully-granted script. Since rings became
+        // powers there is nothing above them to hold, so a total grant is
+        // spelled by enumerating them, which is exactly the property that
+        // stops a later ring from widening an earlier grant.
+        let mut control = GrantTable::new();
+        for ring in crate::ring::GRANTABLE_RINGS {
+            control.grant(Grant::new(subject, ring.cap().unwrap(), Mode::Write));
+        }
         let caps = capabilities_from_grant(&control, subject);
         let actions = run(&app, "mere.open('mere://x')", caps, 500).unwrap();
         assert_eq!(actions.len(), 1, "the granted surface runs");
