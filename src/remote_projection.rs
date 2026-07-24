@@ -23,7 +23,10 @@ use graphshell_protocol::{
 use mere::kernel::graph::NodeKey;
 use sceno::{Arrangement, Score, Spiral};
 use scenotime::{Revision, SceneEpoch, SceneSnapshot};
-use servitor::{Cap, Gate, Grant, GrantTable, Mode, ScopePath, Subject};
+use identity::IdentityProvider;
+use identity::delegation::SignedDelegationCertificate;
+use servitor::delegation::{DelegationTable, root_certificate};
+use servitor::{Cap, Gate, Grant, Mode, ScopePath, Subject};
 
 use crate::action::Action;
 use crate::app::App;
@@ -54,7 +57,7 @@ pub struct MerecatEndpoint {
     snapshot: Option<ProjectionSnapshot>,
     resources: BTreeMap<ContentHash, Vec<u8>>,
     gate: Gate,
-    authority: GrantTable,
+    authority: DelegationTable,
     audit: GraphLog<Container, Relation>,
     subject: Subject,
 }
@@ -71,25 +74,59 @@ impl MerecatEndpoint {
 
     pub fn with_card_extent(app: App, card_extent: (f32, f32)) -> Result<Self, String> {
         let session = ProjectionSession(SESSION.into());
-        let subject = Subject::new(*blake3::hash(session.0.as_bytes()).as_bytes());
+        // The endpoint's identity is DERIVED from the profile identity, not
+        // hashed out of its own name. Before the capability-model audit the
+        // subject was `blake3(session name)` — not a key at all, so nothing
+        // could ever prove it was this endpoint — and the endpoint then
+        // granted ITSELF the layout capability. A refusal there stated only
+        // "the endpoint did not grant itself", which is not an authority
+        // statement. Now: a per-session keypair derived from the user's
+        // master key, holding a capability the USER delegated to it.
+        let salt = format!("merecat/projection-endpoint/{}", session.0);
+        let endpoint_key = app
+            .identity
+            .derive_keypair(salt.as_bytes())
+            .map_err(|error| format!("failed to derive the endpoint identity: {error:?}"))?;
+        let subject = Subject::new(endpoint_key.public_key().to_bytes());
         let gate = Gate::new();
         let mut audit = GraphLog::new();
+        let layout = Cap::Scope(layout_scope());
         gate.project_grant(
             &mut audit,
-            &Grant::new(subject, Cap::Scope(layout_scope()), Mode::Write),
+            &Grant::new(subject, layout.clone(), Mode::Write),
         )
         .map_err(|error| format!("failed to project endpoint grant: {error:?}"))?;
 
-        // As in the resident-denizen lane, authority is rebuilt from the
-        // gate-authored projection. The table is a read index, not another
-        // source of grants, and the projection is lossless so the grant comes
-        // back exactly as written.
-        let mut authority = GrantTable::new();
-        for (_, node) in audit.graph().nodes() {
-            if let Some(grant) = servitor::read_projection(node) {
-                authority.grant(grant);
-            }
-        }
+        // The AUTHORITY is a signed delegation from the profile identity: the
+        // user lets this endpoint present layout for this session, and
+        // nothing else. The projection above stays the browsable audit record
+        // of the same fact. Depth 0 — the endpoint may act, never delegate
+        // onward; that bumps to 1 when a remote viewer with its own key needs
+        // a narrower capability from it (the sub-delegation consumer named in
+        // the capability plan's follow-ons).
+        //
+        // One clock read: issuing at a later instant than the table's own
+        // `now` would leave `not_before` in its future and the endpoint
+        // authorized for nothing.
+        let now = crate::denizen::now_ms();
+        let certificate = root_certificate(
+            IdentityProvider::master_public_key(app.identity.as_ref()).to_bytes(),
+            subject,
+            &layout,
+            Mode::Write,
+            format!("projection:{}", session.0).into_bytes(),
+            now,
+            None,
+            0,
+            *blake3::hash(salt.as_bytes()).as_bytes(),
+        );
+        let signed = SignedDelegationCertificate::issue(app.identity.as_ref(), certificate)
+            .map_err(|error| format!("failed to sign the endpoint delegation: {error:?}"))?;
+        let mut authority = DelegationTable::new(
+            IdentityProvider::master_public_key(app.identity.as_ref()).to_bytes(),
+        );
+        authority.adopt(signed);
+        authority.set_now(now);
 
         Ok(Self {
             app,
@@ -627,6 +664,55 @@ pub fn render_g3_receipt() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The endpoint's authority is DELEGATED by the user, not self-issued.
+    /// Before the capability-model audit its subject was `blake3(session
+    /// name)` — not a key — and it granted itself the layout capability, so a
+    /// refusal only said "it did not grant itself". Now the refusal is an
+    /// authority statement: the capability descends from the profile identity
+    /// and is worthless to anyone else.
+    #[test]
+    fn the_endpoint_holds_a_delegation_from_the_profile_identity() {
+        use servitor::AuthorityProvider;
+
+        let app = App::projection_fixture();
+        let user = IdentityProvider::master_public_key(app.identity.as_ref()).to_bytes();
+        let endpoint = MerecatEndpoint::new(app).unwrap();
+        let layout = Cap::Scope(layout_scope());
+
+        assert_eq!(
+            endpoint.authority.root(),
+            user,
+            "the chain roots at the user, not at the endpoint itself"
+        );
+        assert_ne!(
+            endpoint.subject.0,
+            *blake3::hash(SESSION.as_bytes()).as_bytes(),
+            "the subject is a derived KEY, not a hash of its own name"
+        );
+        assert!(
+            endpoint.authority.covers(endpoint.subject, &layout, Mode::Write),
+            "the delegated layout capability covers"
+        );
+        assert!(
+            !endpoint
+                .authority
+                .covers(endpoint.subject, &Cap::Scope(graph_scope()), Mode::Write),
+            "and graph truth was never delegated"
+        );
+
+        // The load-bearing half: the SAME certificates under a different root
+        // authorize nothing. A self-issued grant could not fail this way.
+        let mut foreign = DelegationTable::new([9u8; 32]);
+        for cert in endpoint.authority.certificates() {
+            foreign.adopt(cert.clone());
+        }
+        foreign.set_now(endpoint.authority.now());
+        assert!(
+            !foreign.covers(endpoint.subject, &layout, Mode::Write),
+            "the endpoint's authority is anchored to THIS user's identity"
+        );
+    }
 
     #[test]
     fn live_mere_graph_becomes_cards_and_routed_relations() {
