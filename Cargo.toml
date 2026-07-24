@@ -43,25 +43,25 @@ fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", b
 session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen residency (participant gate B1): the authority gate over a denizen's
 # nested chartulary graph, plus the substrate types the host speaks to it in.
-servitor = { git = "https://github.com/mark-ik/servitor.git", branch = "main" }
-chartulary = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
-codicil = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
+servitor = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+chartulary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+codicil = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen subjects are content-derived: blake3(source) is the 32-byte keyholder.
 blake3 = "1"
 
 # The portable projection score stored beside a Merecat session. The app maps
 # browser graph truth into it; Scenograph itself stays product-free.
-sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
-scenomise = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
-scenotime = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+sceno = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+scenomise = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+scenotime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Graphshell's portable client/endpoint contracts and native receipt view.
 # The committed Git sources are authoritative. The gitignored Cargo config
 # redirects them to a sibling checkout during cross-repository development.
-graphshell = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
-graphshell-client = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
-graphshell-endpoint = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
-graphshell-protocol = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
-graphshell-stdio = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+graphshell-client = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+graphshell-endpoint = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+graphshell-protocol = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
 # split tree — HOME since meerkat's deletion (2026-07-18): a workspace member
 # of this repo, per the 2026-07-14 destination decision (its PaneContent
@@ -79,7 +79,7 @@ chrome = { package = "mere-chrome", git = "https://github.com/mark-ik/mere.git",
 accesskit = "0.24"
 # The actor-kernel runtime: the physics + fetch actors wake this shell's
 # event loop through an `armillary::Wake`.
-armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+armillary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # The recycle bin (design_docs/2026-07-20_recycle_bin_athanor.md): the eidetic
 # deleted-node bin behind an armillary actor. eidetic-fjall persists it at
 # sessions/<id>/bin; pollster drives the store's async ops on the actor thread
@@ -133,8 +133,8 @@ genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "mai
 # gitignored local patch applies, like genet. Rung 3's hand-built ScriptedDom
 # chrome migrates onto this over time; panes that need a grid or a paint leaf
 # adopt it first.
-cambium = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
-sprigging = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
+cambium = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+sprigging = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # The tile CONTRACT (rung 5 slice E): platen's split_beside_axis takes pelt's
 # SplitAxis, so the edge-drop gesture names it. Already in the lock through
 # platen; this names it (the supply plan's one-dep-line precedent).
