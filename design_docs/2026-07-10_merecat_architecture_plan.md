@@ -442,8 +442,20 @@ how a rung-5 receipt came to read as rung-4-completable.
   (`assert surface`, `capture-lens`). **Keys joined 2026-07-24** (c3c31f3): the
   `key` verb routes through the same `on_key` seam winit uses, so one description
   drives whatever holds focus rather than only the omnibar it used to hardcode.
-  Still owed on this row: Piccolo running the grammar, and `settle` is still
-  frame-counting (default 20) though the shell already reads `session.settled()`.
+  The `settle` clause closed 2026-07-24 (9510f32, genet-probe via 890c4e86612):
+  the grammar grew `wait [cap]` beside `settle`, and merecat reports its own
+  quiescence (`Automatable::busy` over in-flight fetches, `Requested` spawns,
+  and unsettled sessions), so a receipt holds for the work rather than guessing
+  at someone else's network. `settle` stays exactly as it was, so nothing had to
+  change at once; converted receipts report what the work really cost, and the
+  first two said the guesses were 8-10x too long (5 frames against `settle 50`,
+  6 and 4 against `settle 40`). Remaining receipts still count frames, which is
+  mechanical to convert as each is next touched.
+  **Still owed on this row**: Piccolo running the scenario grammar. Note the
+  other direction already works — `Step::Script` embeds Lua whose Actions
+  dispatch — so what is missing is Lua AUTHORING scenarios, which duplicates
+  what `.scn` does and has no consumer pulling on it. Worth leaving unbuilt
+  until one appears.
 - (r5) Produce a coherent application snapshot and accessibility tree. **Largely met**;
   the 2026-07-10 text is stale and was re-verified against the code 2026-07-24.
   Three of the four missing members landed: `surfaces`, `focus`, and `windows` are
