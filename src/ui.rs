@@ -142,7 +142,7 @@ impl OmnibarState {
 pub fn recompute_suggestions(
     state: &mut OmnibarState,
     canvas: &Canvas,
-    extra_actions: &[(String, crate::action::Action)],
+    actions: &[(String, crate::action::Action)],
 ) {
     state.suggestions.clear();
 
@@ -156,21 +156,15 @@ pub fn recompute_suggestions(
     let text = state.text.trim();
 
     if let Some(rest) = text.strip_prefix('>') {
-        // The actions lane: the caller's dynamic entries LEAD the static
-        // registry — a pending denizen install's grant review must be the
-        // first thing an opened palette shows (participant gate B1), and the
-        // contextual rows (review, run, session switches) outrank the fixed
-        // verbs generally.
+        // The actions lane FILTERS the catalog it is given, in the order it is
+        // given. The composition (contextual rows leading the static registry)
+        // belongs to `App::available_actions`, so the lane, the snapshot, and
+        // the automation runner all offer and resolve the same list.
         let needle = rest.trim().to_lowercase();
         state.suggestions.extend(
-            extra_actions
+            actions
                 .iter()
                 .cloned()
-                .chain(
-                    crate::action::palette_actions()
-                        .into_iter()
-                        .map(|(label, action)| (label.to_string(), action)),
-                )
                 .filter(|(label, _)| needle.is_empty() || label.to_lowercase().contains(&needle))
                 .map(|(label, action)| Suggestion::Act { label, action }),
         );
@@ -617,15 +611,23 @@ mod tests {
         assert!(matches!(state.suggestions[0], Suggestion::Hint(_)));
     }
 
+    /// The lane FILTERS the catalog it is handed, in the order it is handed
+    /// (the composition itself is `App::available_actions`). A caller passes the
+    /// static registry here; in the app it arrives with the contextual rows
+    /// already leading.
     #[test]
-    fn actions_lane_filters_the_palette_registry() {
+    fn actions_lane_filters_the_catalog_it_is_given() {
         let canvas = Canvas::new();
+        let catalog: Vec<(String, crate::action::Action)> = crate::action::palette_actions()
+            .into_iter()
+            .map(|(label, action)| (label.to_string(), action))
+            .collect();
         let mut state = OmnibarState {
             open: true,
             text: ">re".into(),
             ..Default::default()
         };
-        recompute_suggestions(&mut state, &canvas, &[]);
+        recompute_suggestions(&mut state, &canvas, &catalog);
         assert!(
             state
                 .suggestions
@@ -641,13 +643,10 @@ mod tests {
                 .any(|s| matches!(s, Suggestion::Act { label, .. } if *label == "Save session")),
             "`>re` must filter out non-matching actions"
         );
-        // Bare `>` lists the whole registry.
+        // Bare `>` lists the whole catalog it was given.
         state.text = ">".into();
-        recompute_suggestions(&mut state, &canvas, &[]);
-        assert_eq!(
-            state.suggestions.len(),
-            crate::action::palette_actions().len()
-        );
+        recompute_suggestions(&mut state, &canvas, &catalog);
+        assert_eq!(state.suggestions.len(), catalog.len());
     }
 
     #[test]

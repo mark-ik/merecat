@@ -1,0 +1,35 @@
+# The snapshot's last promised member: available actions. An automation lane
+# asks what the app will DO right now and gets the same list a person sees in
+# the `>` palette, in the same order, resolvable by the same label through
+# `act`. One catalog (App::available_actions), three readers.
+# Offline; FRESH profile.
+settle 30
+key escape
+
+# The static registry is on offer from the start.
+assert snap actions ~ Fit view
+assert snap actions ~ Open Gloss pane
+
+# And a label the snapshot reports is a label `act` can resolve — the
+# round trip that makes the list worth publishing.
+act Fit view
+settle 10
+
+# Contextual rows JOIN the catalog when their context exists, and they LEAD
+# it: summoning a Gloss adds that pane's own composition rows.
+act Open Gloss pane
+settle 15
+assert pane gloss
+assert snap actions ~ Gloss: add section
+
+# The contextual row resolves through the same `act` verb as a static one...
+act Gloss: add section — Removed
+settle 10
+assert event pane-section-added removed
+
+# ...and the catalog tracks the state change: the row is now the REMOVE form,
+# so what the snapshot offers is what the app will actually do next.
+assert snap actions ~ Gloss: remove section — Removed
+capture 01_catalog_with_contextual_rows
+
+log available actions receipt complete

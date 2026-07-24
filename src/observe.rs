@@ -74,6 +74,11 @@ pub struct Snapshot {
     /// Whether the visit history can step back / forward (the nav row).
     pub can_back: bool,
     pub can_forward: bool,
+    /// Every action offered right now, by label, in the palette's own order
+    /// (contextual rows first). The snapshot's last promised member: an
+    /// automation lane asks what it may do, and gets the same list a person
+    /// sees, resolvable by the same label through `Automatable::act`.
+    pub available_actions: Vec<String>,
     /// How many windows are open (rung 7; mirrored from the shell).
     pub windows: usize,
     /// Each live lens window's panes, as "ordinal:tag" strings (rung 7 depth:
@@ -410,6 +415,11 @@ pub fn snapshot(app: &App) -> Snapshot {
         a11y: crate::a11y::a11y_lines(app),
         can_back: app.history.can_back(),
         can_forward: app.history.can_forward(),
+        available_actions: app
+            .available_actions()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect(),
         windows: app.window_count,
         lens_panes: app
             .lenses

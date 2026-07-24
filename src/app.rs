@@ -235,7 +235,7 @@ impl App {
             app.canvas = Canvas::with_sample_graph();
             app.omnibar.open = true;
             app.focus = FocusTarget::Chrome;
-            let actions = app.session_actions();
+            let actions = app.available_actions();
             recompute_suggestions(&mut app.omnibar, &app.canvas, &actions);
         }
         (app, effects)
@@ -560,6 +560,28 @@ impl App {
             )
         }));
         rows.extend(self.pane_section_actions());
+        rows
+    }
+
+    /// **The** action catalog offered right now: the contextual rows LEAD the
+    /// static registry, because a pending denizen install's grant review must be
+    /// the first thing an opened palette shows (participant gate B1) and the
+    /// contextual rows outrank the fixed verbs generally.
+    ///
+    /// One composition, read by everything that offers or resolves an action:
+    /// the omnibar's `>` lane filters it, the observation snapshot reports it,
+    /// and the automation runner resolves a label through it. Composing it in
+    /// more than one place is how the runner and the palette come to disagree
+    /// about what a label means (they did: the runner resolved static-first
+    /// while the palette showed dynamic-first, so a dynamic row that shadowed a
+    /// static label would have acted as the wrong one).
+    pub fn available_actions(&self) -> Vec<(String, Action)> {
+        let mut rows = self.session_actions();
+        rows.extend(
+            crate::action::palette_actions()
+                .into_iter()
+                .map(|(label, action)| (label.to_string(), action)),
+        );
         rows
     }
 
@@ -1110,7 +1132,7 @@ impl App {
                             ..OmnibarState::default()
                         };
                         self.focus = FocusTarget::Chrome;
-                        let actions = self.session_actions();
+                        let actions = self.available_actions();
                         recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                         vec![Effect::Redraw]
                     }
@@ -1278,7 +1300,7 @@ impl App {
                     ..OmnibarState::default()
                 };
                 self.focus = FocusTarget::Chrome;
-                let actions = self.session_actions();
+                let actions = self.available_actions();
                 recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                 self.events.push(AppEvent::OmnibarOpened);
                 vec![Effect::Redraw]
@@ -1631,7 +1653,7 @@ impl App {
                 self.omnibar.cursor = self.omnibar.text.len();
                 self.focus = FocusTarget::Chrome;
                 {
-                    let actions = self.session_actions();
+                    let actions = self.available_actions();
                     recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                 }
                 self.events.push(AppEvent::OmnibarOpened);
@@ -1652,7 +1674,7 @@ impl App {
                 self.omnibar.insert_str(c.encode_utf8(&mut [0u8; 4]));
                 self.omnibar.selected = 0;
                 {
-                    let actions = self.session_actions();
+                    let actions = self.available_actions();
                     recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                 }
                 vec![Effect::Redraw]
@@ -1661,7 +1683,7 @@ impl App {
                 self.omnibar.insert_str(&s);
                 self.omnibar.selected = 0;
                 {
-                    let actions = self.session_actions();
+                    let actions = self.available_actions();
                     recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                 }
                 vec![Effect::Redraw]
@@ -1670,7 +1692,7 @@ impl App {
                 if self.omnibar.backspace() {
                     self.omnibar.selected = 0;
                     {
-                        let actions = self.session_actions();
+                        let actions = self.available_actions();
                         recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                     }
                 }
@@ -1680,7 +1702,7 @@ impl App {
                 if self.omnibar.delete_forward() {
                     self.omnibar.selected = 0;
                     {
-                        let actions = self.session_actions();
+                        let actions = self.available_actions();
                         recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
                     }
                 }
@@ -3190,6 +3212,45 @@ mod tests {
             section: "removed".to_string(),
         });
         assert!(sections(&app).is_empty(), "toggled back off");
+    }
+
+    /// One catalog, offered in one order: the contextual rows LEAD the static
+    /// registry (a pending grant review must be first), and every consumer
+    /// reads this same list — the `>` lane filters it, the snapshot reports it,
+    /// and the automation runner resolves a label through it. Composing it
+    /// twice is how the runner and the palette come to disagree.
+    #[test]
+    fn available_actions_lead_with_the_contextual_rows() {
+        let mut app = App::test_stub();
+        app.update(Action::SummonPane(PaneKind::Gloss));
+        let rows = app.available_actions();
+
+        // The contextual rows (here, the active Gloss's composition rows) come
+        // first; the static registry follows.
+        let first_static = rows
+            .iter()
+            .position(|(label, _)| label == "Fit view")
+            .expect("the static registry is in the catalog");
+        let a_contextual = rows
+            .iter()
+            .position(|(label, _)| label.starts_with("Gloss: add section"))
+            .expect("the active pane's rows are in the catalog");
+        assert!(
+            a_contextual < first_static,
+            "contextual rows lead the static registry: {rows:?}"
+        );
+
+        // The catalog is exactly the two sources, nothing invented or dropped.
+        assert_eq!(
+            rows.len(),
+            app.session_actions().len() + crate::action::palette_actions().len()
+        );
+
+        // And the snapshot reports THAT list, by label and in that order, so an
+        // automation lane sees what a person would.
+        let snap = crate::observe::snapshot(&app);
+        let labels: Vec<String> = rows.into_iter().map(|(label, _)| label).collect();
+        assert_eq!(snap.available_actions, labels);
     }
 
     /// Composition ORDER is the config's order, so reordering is the same leaf

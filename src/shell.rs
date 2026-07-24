@@ -2706,7 +2706,11 @@ impl genet_probe::Automatable for Shell {
             // `assert snap panes ~ roster` without an app-specific verb. This is
             // minimal-shared-and-grow: the app adds the fields its scenarios name.
             .with_field("panes", snap.panes.join(","))
-            .with_field("surfaces", snap.surfaces.join(","));
+            .with_field("surfaces", snap.surfaces.join(","))
+            // What the app will DO right now, by label — the automation half of
+            // a coherent snapshot. `assert snap actions ~ Fit view` asks whether
+            // a verb is on offer before spending a step on it.
+            .with_field("actions", snap.available_actions.join(","));
         // Fold the url in with the caption, so `assert snap focused ~ example.com`
         // can name the navigated address, not only the display caption.
         out.focused = snap.focused.map(|n| format!("{}  {}", n.caption, n.url));
@@ -2722,19 +2726,19 @@ impl genet_probe::Automatable for Shell {
     }
 
     fn act(&mut self, label: &str) -> bool {
-        // Static rows first, then the dynamic rows (denizen review/run,
-        // session switches) — so a scenario can `act` what the palette shows.
-        let action = crate::action::palette_actions()
-            .into_iter()
-            .find(|(l, _)| *l == label)
-            .map(|(_, action)| action)
-            .or_else(|| {
-                self.app
-                    .session_actions()
-                    .into_iter()
-                    .find(|(l, _)| l == label || l.starts_with(label))
-                    .map(|(_, action)| action)
-            });
+        // Resolve against THE catalog the palette offers, in its order, so a
+        // scenario acts on exactly what a person would see and pick. An exact
+        // label wins anywhere before any prefix is considered; ties inside each
+        // pass go to the earlier row, which is the contextual one. (This used to
+        // resolve static-first while the palette showed dynamic-first — the two
+        // could have disagreed about a shadowed label.) The prefix pass keeps
+        // `act Switch to session` working without spelling out the whole row.
+        let rows = self.app.available_actions();
+        let action = rows
+            .iter()
+            .find(|(l, _)| l == label)
+            .or_else(|| rows.iter().find(|(l, _)| l.starts_with(label)))
+            .map(|(_, action)| action.clone());
         match action {
             Some(action) => {
                 Shell::act(self, action);
