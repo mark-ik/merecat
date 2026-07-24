@@ -128,6 +128,15 @@ impl ContentStates {
             .filter(|(_, s)| matches!(s, NodeContent::Live))
             .map(|(id, _)| *id)
     }
+
+    /// Whether any spawn is still in flight (the effect is out, no session
+    /// yet). The automation lane's quiescence read: the gap between the spawn
+    /// effect and the live session must not read as quiet.
+    pub fn any_requested(&self) -> bool {
+        self.states
+            .values()
+            .any(|s| matches!(s, NodeContent::Requested))
+    }
 }
 
 #[cfg(test)]

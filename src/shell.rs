@@ -2748,6 +2748,27 @@ impl genet_probe::Automatable for Shell {
         }
     }
 
+    /// Merecat's quiescence report, driving the `wait` verb. Busy while any of
+    /// the three kinds of work a scenario must not race is outstanding:
+    ///
+    /// - a page or favicon FETCH is in flight (the port has not answered),
+    /// - a content spawn is `Requested` (the effect is out, no session yet),
+    /// - a live session is not `settled()` (script work or layout pending).
+    ///
+    /// Deliberately conservative in both directions. It reports `Some` always
+    /// (merecat DOES report quiescence, even when the honest answer is "idle"),
+    /// and it counts a spawn as busy from the effect rather than from the
+    /// session, so the gap between them cannot read as quiet.
+    fn busy(&mut self) -> Option<bool> {
+        if self.pending_fetches.any_in_flight() {
+            return Some(true);
+        }
+        if self.app.content.any_requested() {
+            return Some(true);
+        }
+        Some(self.content_sessions.values_mut().any(|s| !s.settled()))
+    }
+
     fn press(&mut self, x: f32, y: f32) {
         self.deliver_press(x, y, MouseButton::Left);
     }

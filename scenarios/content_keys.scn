@@ -7,11 +7,13 @@
 settle 30
 key escape
 
-# A page with real height, opened and made live.
+# A page with real height, opened and made live. `wait` holds until merecat
+# reports its own work done (fetch landed, spawn answered, session settled)
+# instead of guessing a frame count at someone else's network.
 open https://www.iana.org/
-settle 50
+wait
 act Toggle live content
-settle 50
+wait
 assert content-live
 assert surface content
 capture 01_page_top

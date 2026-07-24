@@ -49,6 +49,13 @@ impl PendingFetches {
             .push(node);
     }
 
+    /// Whether any page or favicon fetch is still outstanding. The automation
+    /// lane's quiescence read (`wait`): a scenario must not assert against a
+    /// graph whose fetches have not landed.
+    pub fn any_in_flight(&self) -> bool {
+        !self.pages.is_empty() || !self.favicons.is_empty()
+    }
+
     fn take_page(&mut self, url: &str) -> Option<Uuid> {
         take_one(&mut self.pages, url)
     }

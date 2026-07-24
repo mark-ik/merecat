@@ -8,9 +8,9 @@ settle 30
 key escape
 
 open https://www.iana.org/
-settle 40
+wait
 open https://example.com/
-settle 40
+wait
 assert focused example
 
 # Delete example.com: it stages into the recycle bin, absent from the graph.
@@ -33,7 +33,7 @@ capture 02_composed_removed
 # The composed row is live: clicking it recovers the node by its ORIGINAL id
 # (the same identity contract the Trail's Removed row honours).
 click-row Recover example
-settle 40
+wait
 assert event node-recovered
 assert focused example
 capture 03_recovered_from_gloss
