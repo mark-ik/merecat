@@ -373,25 +373,50 @@ pub fn rebuild(
         // The AUTHORITY is the signed certificate chain (C4). Adopt what was
         // persisted; validity is re-verified on every read, never trusted
         // because it was stored.
-        let mut certs = load_certs(session_dir, &subject.to_hex());
-        if certs.is_empty() {
-            // A session installed before delegation carries only the browsable
-            // projections. Re-issue certificates from them under the profile
-            // root: the projection IS the record of what the user reviewed, so
-            // this preserves exactly the reviewed grant rather than re-asking.
+        //
+        // A stored chain must verify under THIS profile's root. It fails in
+        // two known histories — a session installed before delegation (no
+        // certificates at all), and a RE-ROOTED profile (the vault swap
+        // superseding the unsealed stopgap key) — and both heal the same way:
+        // re-issue under the current root from the grant projections, which
+        // ARE the record of what the user reviewed. The reviewed grant is
+        // preserved exactly; nothing is re-asked, nothing widens.
+        let stored = load_certs(session_dir, &subject.to_hex());
+        let verifies = {
+            let mut probe = servitor::delegation::DelegationTable::new(
+                identity::IdentityProvider::master_public_key(provider).to_bytes(),
+            );
+            for cert in &stored {
+                probe.adopt(cert.clone());
+            }
+            stored.iter().any(|cert| probe.verify_chain(cert).is_ok())
+        };
+        let certs = if verifies {
+            stored
+        } else {
             let caps = caps_from_projections(nested.graph().nodes().map(|(_, n)| n), subject);
-            if !caps.is_empty() {
-                certs = issue_install_certificates(provider, subject, &caps, now_ms());
-                if !certs.is_empty() {
+            if caps.is_empty() {
+                stored
+            } else {
+                // Issued at the TABLE's clock, not a fresh read: a fresh
+                // read can land a millisecond after set_now, leaving the
+                // certificate's not_before in the table's future and the
+                // heal dead on arrival.
+                let fresh =
+                    issue_install_certificates(provider, subject, &caps, denizens.authority.now());
+                if fresh.is_empty() {
+                    stored
+                } else {
                     tracing::info!(
                         member = %member,
-                        count = certs.len(),
-                        "healed a pre-delegation install into signed certificates"
+                        count = fresh.len(),
+                        "re-rooted a denizen's delegations under the current profile identity"
                     );
-                    save_certs(session_dir, &subject.to_hex(), &certs);
+                    save_certs(session_dir, &subject.to_hex(), &fresh);
+                    fresh
                 }
             }
-        }
+        };
         for cert in certs {
             denizens.authority.adopt(cert);
         }

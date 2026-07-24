@@ -148,9 +148,11 @@ pub struct App {
     /// The session's denizen runtime: residents, derived authority, the gate.
     pub denizens: crate::denizen::Denizens,
     /// The profile's root identity: whose authority every denizen grant
-    /// descends from (capability-model OQ2). Install signs a delegation with
-    /// it; uninstall revokes that delegation.
-    pub identity: std::sync::Arc<identity::InMemoryProvider>,
+    /// descends from (capability-model OQ2). Vault-sealed when a personae
+    /// backend exists (the SHARED vault, so this is the user's actual
+    /// identity); the loud unsealed fallback otherwise. Install signs a
+    /// delegation with it; uninstall revokes that delegation.
+    pub identity: std::sync::Arc<crate::identity::RootIdentity>,
     /// The attributed edit journal (mere's spine): every graph mutation
     /// captured under its author — `user` for the UI, a denizen's subject hex
     /// during a run. Shared with the capture hook installed at boot.
@@ -193,7 +195,10 @@ impl App {
             Some(id) => (id, false),
             None => (Self::mint_session(&data_root, &mut sessions), true),
         };
-        let identity = crate::identity::load_or_create_root(&data_root);
+        let identity = crate::identity::load_or_create_root(
+            &data_root,
+            &crate::identity::default_vault_dir(),
+        );
         let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
         let mut app = Self {
             canvas: Canvas::new(),
@@ -2114,7 +2119,8 @@ impl App {
     }
 
     fn isolated(data_root: PathBuf) -> Self {
-        let identity = crate::identity::load_or_create_root(&data_root);
+        let identity =
+            crate::identity::load_or_create_root(&data_root, &data_root.join("personae-vault"));
         let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
         Self {
             canvas: Canvas::new(),
@@ -3072,6 +3078,60 @@ mod tests {
             "the component's graph edit is attributed to its subject"
         );
         drop(journal);
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// The re-root heal: when the profile's root identity changes (the vault
+    /// superseding the unsealed stopgap key), stored certificates fail as
+    /// WrongRoot — and the adopt path re-issues from the grant projections
+    /// under the NEW root, preserving exactly the reviewed grant. No denizen
+    /// silently loses authority to a key migration.
+    #[test]
+    fn a_rerooted_profile_reissues_delegations_from_the_reviewed_projections() {
+        use servitor::AuthorityProvider;
+
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-reroot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let subject = app.denizens.residents.values().next().unwrap().subject;
+        let navigate = crate::ring::Ring::Navigate.cap().unwrap();
+        let session_ring = crate::ring::Ring::Session.cap().unwrap();
+
+        // The profile re-roots: a NEW identity (the vault superseding the
+        // stopgap seed). The old certificates on disk name the old root.
+        let new_root = identity::InMemoryProvider::from_seed([77u8; 32]);
+        let rebuilt = crate::denizen::rebuild(
+            &app.facets,
+            app.canvas.graph(),
+            &app.session_dir(),
+            &new_root,
+        );
+        assert_eq!(rebuilt.residents.len(), 1, "the resident survives the migration");
+        assert!(
+            rebuilt.authority.covers(subject, &navigate, servitor::Mode::Write),
+            "the reviewed ring re-rooted under the new identity"
+        );
+        assert!(
+            !rebuilt.authority.covers(subject, &session_ring, servitor::Mode::Write),
+            "and the heal preserves the review exactly: nothing widens"
+        );
+        // Durable: the certificate file was rewritten under the new root, so
+        // the NEXT adopt verifies without healing.
+        let stored = crate::denizen::load_certs(&app.session_dir(), &subject.to_hex());
+        assert!(!stored.is_empty());
+        assert!(
+            stored.iter().all(|signed| {
+                signed.certificate.issuer
+                    == identity::IdentityProvider::master_public_key(&new_root).to_bytes()
+            }),
+            "the stored chain now roots at the new identity"
+        );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }
 
