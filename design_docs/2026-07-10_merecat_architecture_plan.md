@@ -454,9 +454,15 @@ how a rung-5 receipt came to read as rung-4-completable.
   into one `UxTree`, and `observe::snapshot` calls it (`a11y: a11y_lines(app)`).
   It declares itself `A11yCapability::Partial` (structural roles/names, no bounds,
   no per-element focus) rather than implying coverage it lacks, and pushing the
-  `TreeUpdate` to an OS adapter is the named follow-on. **Still genuinely absent**:
-  `available actions` as a snapshot member — the palette knows them, the snapshot
-  does not expose them.
+  `TreeUpdate` to an OS adapter is the named follow-on. The last missing member,
+  `available actions`, **landed 2026-07-24** (04b3feb): `App::available_actions`
+  is now the one composition of the catalog (contextual rows leading the static
+  registry), the snapshot reports it by label in that order, and the probe
+  carries it as `actions`. Finding it turned up a divergence worth recording —
+  the catalog had been composed in three places, and the automation runner
+  resolved static-first while the palette showed dynamic-first, so a contextual
+  row shadowing a static label would have made `act` and the palette mean
+  different things. Receipt `available_actions.scn`. **This row is met.**
 - (r4/r6) Recover from a failed fetch, a failed engine start, and an interrupted save.
   **Met 2026-07-18** for the first two (`rung_recovery.scn` headed RESULT ok: a failed
   fetch leaves a working app with the node present; a failed spawn surfaces
