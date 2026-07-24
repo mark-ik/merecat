@@ -360,6 +360,17 @@ daily-driver value, not by meerkat's module sizes.
    "should read like the ecosystem map: mere, personae, murm, moot, genet"; two of those
    five cannot be written today.
 
+   **REVISED 2026-07-23 by the repo consolidation.** The gate above is now wrong
+   in its premise, not just its detail: promotion to sibling repos was
+   *withdrawn*, so "wait for Phase G to make murm/moot libraries" no longer names
+   a thing that will happen. Mere is the platform and murm/moot stay inside it, so
+   the real gate is narrower — mere's facade re-exporting the comms vocabulary.
+   The founding doc's "reads like the ecosystem map" sentence is superseded the
+   same way: `personae` also lives in mere now, so merecat reaches it (and
+   murm/moot when they surface) THROUGH mere rather than as peers in the manifest.
+   See `project_repo_consolidation` and mere's
+   `2026-07-23_repo_consolidation_plan.md`.
+
 **Meerkat's deletion condition** (the founding doc's done-condition 2 made
 concrete; behavioral receipts, not a subjective trial — 2026-07-10 review
 round): every row below passes, at which point daily-driving merecat is
@@ -376,9 +387,21 @@ how a rung-5 receipt came to read as rung-4-completable.
   content respawn), on Alt+Left/Right and Ctrl+R and the palette. Receipts: the
   spine unit test + `rung3_nav.scn` headed RESULT ok. Redirects were rung-1 fetch
   behavior.
-- (r5) Focus and switch between the graph canvas and documents. **Unmet, and not a
-  rung-4 item**: content sessions receive zero input, and the only focus concept in the
-  codebase is the graph node's. Needs rung-5 slices A and B.
+- (r5) Focus and switch between the graph canvas and documents. **Met 2026-07-24**
+  for every input class the registered lanes can act on. The 2026-07-10 text
+  ("content sessions receive zero input, and the only focus concept is the graph
+  node's") went stale in stages: `FocusTarget::{Canvas,Chrome,Content}` and the
+  surface hit-test landed with rung-5 slices A/B, giving content the pointer and
+  the wheel; the KEYBOARD was the last hole, and closed today (c3c31f3). Focus
+  now decides the key lane exactly as it decides the pointer's: a press on a page
+  focuses it, its scroll keys drive it (ephemeral, the gesture law — Space pages
+  down, Shift+Space up), Escape blurs back to the canvas, and the canvas VIEW
+  hotkeys are suspended while a page reads so a stray `space` cannot reseed the
+  graph behind it. Receipt `content_keys.scn` headed RESULT ok (End lands on the
+  footer, Home restores the top, the canvas untouched through both).
+  **Not claimed**: TYPING into a page. Merecat registers static lanes only, so
+  there is no editable target yet; it needs the scripted lane (a feature flip plus
+  two register calls) and a `DocumentSession` that carries text input.
 - (r5) Open, arrange, and restore panes. Split in two, because "arrange" hides two
   tiers:
   - **Frisket tier** (the low bar, clear it early): summon, divider drag, maximize, close,
@@ -412,13 +435,28 @@ how a rung-5 receipt came to read as rung-4-completable.
 - (r5) Run the same scenario through keyboard input and through automation Actions (one
   description, two runners). Merecat now has the scenario runner plus a
   feature-gated Piccolo control runner that emits Actions, but Piccolo does not
-  yet run the scenario grammar. The grammar also cannot drive panes: no pointer
-  verbs, no element verbs, no surface targeting. `settle` is still frame-counting
-  (default 20) though the shell already reads `session.settled()`.
-- (r5) Produce a coherent application snapshot and accessibility tree. The snapshot
-  landed missing four of its six promised members (no windows, surfaces, focus target, or
-  available actions). The a11y tree does not exist in merecat at all: no accesskit dep,
-  no uxtree dep, no projector call.
+  yet run the scenario grammar. The 2026-07-10 "cannot drive panes" clause is
+  stale: the grammar grew pointer verbs (`click-at`, `drag`, `scroll`,
+  `drop-file`, `drag-tab`), element verbs over genet-probe selectors
+  (`click`, `click-row`, `click-tab`, `click-node`), and surface/lens targeting
+  (`assert surface`, `capture-lens`). **Keys joined 2026-07-24** (c3c31f3): the
+  `key` verb routes through the same `on_key` seam winit uses, so one description
+  drives whatever holds focus rather than only the omnibar it used to hardcode.
+  Still owed on this row: Piccolo running the grammar, and `settle` is still
+  frame-counting (default 20) though the shell already reads `session.settled()`.
+- (r5) Produce a coherent application snapshot and accessibility tree. **Largely met**;
+  the 2026-07-10 text is stale and was re-verified against the code 2026-07-24.
+  Three of the four missing members landed: `surfaces`, `focus`, and `windows` are
+  all `Snapshot` fields, joined since by `a11y`, `can_back`/`can_forward`,
+  `session`/`session_count`, the pane/roster/trail/inspector rows, and the
+  workbench cells. The a11y tree DOES exist: `accesskit` + `uxtree` are direct
+  deps, `src/a11y.rs` stitches chrome + panes + workbench + document outlines
+  into one `UxTree`, and `observe::snapshot` calls it (`a11y: a11y_lines(app)`).
+  It declares itself `A11yCapability::Partial` (structural roles/names, no bounds,
+  no per-element focus) rather than implying coverage it lacks, and pushing the
+  `TreeUpdate` to an OS adapter is the named follow-on. **Still genuinely absent**:
+  `available actions` as a snapshot member — the palette knows them, the snapshot
+  does not expose them.
 - (r4/r6) Recover from a failed fetch, a failed engine start, and an interrupted save.
   **Met 2026-07-18** for the first two (`rung_recovery.scn` headed RESULT ok: a failed
   fetch leaves a working app with the node present; a failed spawn surfaces
