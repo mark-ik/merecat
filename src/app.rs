@@ -42,8 +42,19 @@ fn pane_content(kind: PaneKind) -> PaneContent {
         PaneKind::Steward => PaneContent::Steward,
         PaneKind::Comms => PaneContent::Comms,
         PaneKind::Apparatus => PaneContent::Apparatus,
-        PaneKind::Overmap => PaneContent::Overmap,
+        PaneKind::Overmap => PaneContent::Overmap(Default::default()),
         PaneKind::Workbench => PaneContent::Workbench,
+    }
+}
+
+/// A composable pane's name for its palette rows ("Gloss", "Overmap"): the
+/// pane's own tag, title-cased. Derived rather than tabled, so a pane that
+/// gains a composition names itself.
+fn pane_label(content: &PaneContent) -> String {
+    let mut chars = content.tag().chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 
@@ -552,25 +563,34 @@ impl App {
         rows
     }
 
-    /// The composed-section rows for the ACTIVE pane, when it is a Gloss: one
-    /// add/remove per registered provider. Pane-scoped palette entries are how
-    /// the gloss-composite design chose to expose composition (the right-click
-    /// palette already selects the pane under the pointer), so no new chrome.
-    /// Empty when the active pane is not a composable one.
+    /// The composed-section rows for the ACTIVE pane, when its content composes
+    /// (a Gloss, an Overmap): one add/remove per registered provider, plus the
+    /// reorder rows. Pane-scoped palette entries are how the gloss-composite
+    /// design chose to expose composition (the right-click palette already
+    /// selects the pane under the pointer), so no new chrome. Empty when the
+    /// active pane is not a composable one.
+    ///
+    /// Written against `PaneContent::composition`, not a pane kind, so a pane
+    /// that gains a composition gains this whole UI without touching it. The
+    /// row's prefix is the pane's own tag, so it names itself too.
     fn pane_section_actions(&self) -> Vec<(String, Action)> {
         let Some(pane) = self.active_pane else {
             return Vec::new();
         };
-        let Some(PaneContent::Gloss(cfg)) = self.pane_content(pane) else {
+        let Some(content) = self.pane_content(pane) else {
             return Vec::new();
         };
+        let Some(cfg) = content.composition() else {
+            return Vec::new();
+        };
+        let who = pane_label(content);
         let mut rows: Vec<(String, Action)> = crate::sections::ALL
             .iter()
             .map(|p| {
                 let on = cfg.sections.iter().any(|id| id == p.id);
                 let verb = if on { "remove" } else { "add" };
                 (
-                    format!("Gloss: {verb} section — {}", p.title),
+                    format!("{who}: {verb} section — {}", p.title),
                     Action::TogglePaneSection {
                         pane,
                         section: p.id.to_string(),
@@ -588,7 +608,7 @@ impl App {
                 };
                 if i > 0 {
                     rows.push((
-                        format!("Gloss: move section up — {}", p.title),
+                        format!("{who}: move section up — {}", p.title),
                         Action::MovePaneSection {
                             pane,
                             section: id.clone(),
@@ -598,7 +618,7 @@ impl App {
                 }
                 if i + 1 < cfg.sections.len() {
                     rows.push((
-                        format!("Gloss: move section down — {}", p.title),
+                        format!("{who}: move section down — {}", p.title),
                         Action::MovePaneSection {
                             pane,
                             section: id.clone(),
@@ -1866,7 +1886,7 @@ impl App {
                     return vec![Effect::Redraw];
                 };
                 let mut changed = None;
-                if let Some(PaneContent::Gloss(cfg)) = layout.content_mut(pane) {
+                if let Some(cfg) = layout.content_mut(pane).and_then(|c| c.composition_mut()) {
                     if let Some(pos) = cfg.sections.iter().position(|s| s == &section) {
                         cfg.sections.remove(pos);
                         changed = Some(false);
@@ -1899,7 +1919,7 @@ impl App {
                     return vec![Effect::Redraw];
                 };
                 let mut moved = false;
-                if let Some(PaneContent::Gloss(cfg)) = layout.content_mut(pane)
+                if let Some(cfg) = layout.content_mut(pane).and_then(|c| c.composition_mut())
                     && let Some(from) = cfg.sections.iter().position(|s| s == &section)
                 {
                     let to = (from as i32 + delta).clamp(0, cfg.sections.len() as i32 - 1)

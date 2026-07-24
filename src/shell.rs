@@ -944,7 +944,7 @@ impl Shell {
                                     }
                                 }
                             }
-                            Some(PaneContent::Overmap) => {
+                            Some(PaneContent::Overmap(_)) => {
                                 // A session-node click adopts that session:
                                 // navigating to a container IS the switch
                                 // (overmap v0), through the ordinary spine.
@@ -1061,7 +1061,7 @@ impl Shell {
                 Some(PaneContent::Gloss(_)) => {
                     self.gloss_pane.as_mut().is_some_and(|p| p.hover_leave())
                 }
-                Some(PaneContent::Overmap) => {
+                Some(PaneContent::Overmap(_)) => {
                     self.overmap_pane.as_mut().is_some_and(|p| p.hover_leave())
                 }
                 _ => false,
@@ -1079,7 +1079,7 @@ impl Shell {
                         .gloss_pane
                         .as_mut()
                         .is_some_and(|p| p.hover(hit.local.0, hit.local.1, rw, rh)),
-                    Some(PaneContent::Overmap) => self
+                    Some(PaneContent::Overmap(_)) => self
                         .overmap_pane
                         .as_mut()
                         .is_some_and(|p| p.hover(hit.local.0, hit.local.1, rw, rh)),
@@ -1512,15 +1512,19 @@ impl Shell {
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
-            Some(PaneContent::Overmap) => {
+            Some(PaneContent::Overmap(cfg)) => {
                 // The switcher as a graph view (overmap O1): sessions as
                 // container nodes, fork lineage as edges, on the shared
-                // custom-paint swatch.
+                // custom-paint swatch. It composes sections the same way the
+                // Gloss does, off ITS OWN leaf: one renderer, one config shape,
+                // so the second host cost a resolve and a setter.
+                let providers = crate::sections::resolve(&cfg.sections);
                 let pane = self
                     .overmap_pane
                     .get_or_insert_with(|| {
                         crate::swatch_pane::SwatchPane::new(crate::swatch_pane::OVERMAP_LINEAGE)
                     });
+                pane.set_sections(providers);
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
@@ -2469,7 +2473,7 @@ impl genet_probe::Automatable for Shell {
                         guards.push(("apparatus", rect, pane.dom_ref()));
                     }
                 }
-                Some(PaneContent::Overmap) => {
+                Some(PaneContent::Overmap(_)) => {
                     if let Some(pane) = &self.overmap_pane {
                         guards.push(("overmap", rect, pane.dom_ref()));
                     }

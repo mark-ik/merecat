@@ -11,7 +11,7 @@
 //! swatch consumer is a preset definition away.
 //!
 //! The section-composition half landed on top of this: a pane's composed list
-//! sections come from ITS LEAF's [`frisket::GlossConfig`] (resolved against
+//! sections come from ITS LEAF's [`frisket::PaneComposition`] (resolved against
 //! [`crate::sections`]) via [`SwatchPane::set_sections`], so the swatch is the
 //! preset and the sections are per-pane config. What stays outside the
 //! vocabulary on purpose: the pane's palette (mere's, via [`NodeState`]).
@@ -452,7 +452,7 @@ impl SwatchPane {
     }
 
     /// Set the composed section providers for this pane (the host resolves
-    /// them from the leaf's `GlossConfig` each frame). Cheap: providers are
+    /// them from the leaf's `PaneComposition` each frame). Cheap: providers are
     /// `Copy` descriptors, and the rows themselves are gathered in `sync`.
     pub fn set_sections(&mut self, sections: Vec<crate::sections::SectionProvider>) {
         self.sections = sections;

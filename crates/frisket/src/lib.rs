@@ -84,17 +84,21 @@ pub enum SplitAxis {
     Vertical,
 }
 
-/// A Gloss pane's composition: which named list sections it stacks under its
-/// swatch, by provider id (`"recent"`, `"removed"`). Empty = the swatch fills
-/// the pane (the base minimap). The host resolves each id against its section
-/// registry and ignores ones it does not know, so a config written by a newer
-/// build degrades instead of failing.
+/// A pane's composition: which named list sections it stacks under its own
+/// content, by provider id (`"recent"`, `"removed"`). Empty = the pane's own
+/// content fills it (a Gloss is then the base minimap). The host resolves each
+/// id against its section registry and ignores ones it does not know, so a
+/// config written by a newer build degrades instead of failing.
 ///
 /// This rides the LEAF, so a pane's composition persists with `frame.json`,
 /// moves with the pane on tear-out, and differs per lens window — the
 /// arrangement-state home the gloss-composite design chose.
+///
+/// Deliberately NOT Gloss-specific: composition is a property of a pane, not of
+/// one pane kind. Any content that can render a section column carries one, so
+/// adding a host is a variant gaining this field, not a second mechanism.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GlossConfig {
+pub struct PaneComposition {
     #[serde(default)]
     pub sections: Vec<String>,
 }
@@ -107,11 +111,11 @@ pub enum PaneContent {
     Workbench,
     Orrery,
     /// The graph minimap, plus any composed list sections
-    /// ([`GlossConfig`]). Carries data like [`PaneContent::Tile`]; a
-    /// pre-`GlossConfig` layout (the bare `"Gloss"` string) does not
+    /// ([`PaneComposition`]). Carries data like [`PaneContent::Tile`]; a
+    /// pre-composition layout (the bare `"Gloss"` string) does not
     /// deserialize and the layout falls back to the default, logged —
     /// the deliberate no-legacy-friction cut, pre-release.
-    Gloss(GlossConfig),
+    Gloss(PaneComposition),
     /// The graph's manifest — every primitive (nodes / facets, edges, fields),
     /// examinable. The data-view counterpart to the orrery's space-view (see the
     /// graph-roster + frame-taxonomy design doc).
@@ -135,7 +139,13 @@ pub enum PaneContent {
     /// The session set as a graph — container nodes with fork lineage; the
     /// switcher's graph view (overmap O1). Window-chrome: it is ABOUT the
     /// session set, not any one graph.
-    Overmap,
+    ///
+    /// Composable like the Gloss ([`PaneComposition`]): it renders through the
+    /// same swatch pane, so a section column costs it nothing. Note the pane
+    /// stays window-chrome while a composed section reads active-graph truth
+    /// each frame; that is consistent, because a section gathers from app state
+    /// rather than from this leaf's `graph_id`.
+    Overmap(PaneComposition),
     System,
     /// **Pinned tile** — a single specific node's tile rendered without a
     /// workbench strip. Per the pane-UX brief §3 frametree side-by-side
@@ -162,10 +172,29 @@ impl PaneContent {
             PaneContent::Comms => "comms",
             PaneContent::Alembic => "alembic",
             PaneContent::Apparatus => "apparatus",
-            PaneContent::Overmap => "overmap",
+            PaneContent::Overmap(_) => "overmap",
             PaneContent::System => "system",
             PaneContent::Tile(_) => "tile",
             PaneContent::Custom(s) => s.as_str(),
+        }
+    }
+
+    /// This pane's composed sections, when its content can host them. THE
+    /// place that answers "does this pane compose?", so gaining a host is a
+    /// variant listed here rather than another match spread through the host.
+    pub fn composition(&self) -> Option<&PaneComposition> {
+        match self {
+            PaneContent::Gloss(cfg) | PaneContent::Overmap(cfg) => Some(cfg),
+            _ => None,
+        }
+    }
+
+    /// The same, for editing a leaf's composition in place (add / remove /
+    /// reorder all land here).
+    pub fn composition_mut(&mut self) -> Option<&mut PaneComposition> {
+        match self {
+            PaneContent::Gloss(cfg) | PaneContent::Overmap(cfg) => Some(cfg),
+            _ => None,
         }
     }
 
@@ -192,7 +221,7 @@ impl PaneContent {
             | PaneContent::Comms
             | PaneContent::Alembic
             | PaneContent::Apparatus
-            | PaneContent::Overmap
+            | PaneContent::Overmap(_)
             | PaneContent::System
             | PaneContent::Custom(_) => false,
         }
