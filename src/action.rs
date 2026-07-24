@@ -227,6 +227,11 @@ pub enum Action {
     ConfirmInstallDenizen,
     /// Discard the staged install; nothing was minted.
     CancelInstallDenizen,
+    /// Uninstall a resident denizen: REVOKE the delegations the user granted
+    /// it (cascading to anything it delegated onward) and un-reside it — the
+    /// binding facet goes, the runtime entry goes. Its node and world stay,
+    /// un-resided, so nothing is destroyed by revoking authority.
+    UninstallDenizen { member: uuid::Uuid },
     /// Run a resident denizen's scenario body: piccolo evaluates it under a
     /// step budget, and its emitted Actions lower through this same spine
     /// with mere's GraphJournal scoped to the denizen's author (attribution).

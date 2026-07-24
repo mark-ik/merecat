@@ -22,7 +22,10 @@ use std::path::{Path, PathBuf};
 
 use chartulary::{Container, GraphLog, Relation};
 use codicil::{Codicil, LogId};
-use servitor::{Cap, Gate, Grant, GrantTable, Mode, Subject};
+use identity::IdentityProvider;
+use identity::delegation::SignedDelegationCertificate;
+use servitor::delegation::{DelegationTable, root_certificate};
+use servitor::{Cap, Gate, Grant, Mode, Subject};
 use uuid::Uuid;
 
 use crate::app::App;
@@ -131,7 +134,11 @@ pub struct Resident {
 #[derive(Default)]
 pub struct Denizens {
     pub residents: HashMap<Uuid, Resident>,
-    pub authority: GrantTable,
+    /// Verified delegation chains: what each denizen may do, descending from
+    /// the profile's root identity. Certificates are the AUTHORITY; the grant
+    /// projections in each world are the browsable audit record of the same
+    /// facts (capability-model C4).
+    pub authority: DelegationTable,
     pub gate: Gate,
     /// Residents whose world id came from a LEGACY binding facet
     /// (`nested_log` written before the containment ruling) rather than
@@ -141,6 +148,16 @@ pub struct Denizens {
 }
 
 impl Denizens {
+    /// A runtime whose delegation chains must root at `root` — the profile
+    /// identity's master key. A table rooted anywhere else verifies nothing,
+    /// so this is set at construction, never after certificates arrive.
+    pub fn new(root: [u8; 32]) -> Self {
+        Self {
+            authority: DelegationTable::new(root),
+            ..Self::default()
+        }
+    }
+
     /// Whether any denizen resides in the session.
     pub fn is_empty(&self) -> bool {
         self.residents.is_empty()
@@ -322,8 +339,11 @@ pub fn rebuild(
     app_facets: &session_runtime::NodeFacetStore,
     graph: &mere::kernel::graph::Graph,
     session_dir: &Path,
+    provider: &impl IdentityProvider,
 ) -> Denizens {
-    let mut denizens = Denizens::default();
+    let root = provider.master_public_key().to_bytes();
+    let mut denizens = Denizens::new(root);
+    denizens.authority.set_now(now_ms());
     for (member, binding) in session_runtime::read_denizen_bindings(app_facets) {
         let Ok(raw) = hex_to_bytes(&binding.subject) else {
             tracing::warn!(member = %member, "denizen binding with unparseable subject; skipped");
@@ -350,27 +370,30 @@ pub fn rebuild(
         };
         let nested = load_nested(session_dir, &log_id)
             .unwrap_or_else(|| GraphLog::with_id(LogId::new(log_id.clone())));
-        // Derive the authority from the projections the gate wrote. The
-        // projection is a LOSSLESS record now (capability + mode + subject in
-        // explicit tags), so the grant is read back exactly rather than
-        // reconstructed with a hardcoded mode.
-        for (_, node) in nested.graph().nodes() {
-            if let Some(grant) = servitor::read_projection(node) {
-                denizens.authority = std::mem::take(&mut denizens.authority).with_grant(grant);
-                continue;
-            }
-            // Pre-capability-model projections carried only the path in the
-            // node id. Heal them: an `app/<ring>` path is that ring's power,
-            // anything else is the scope it always was.
-            if let Some(path) = node.id.strip_prefix(servitor::GRANT_PREFIX) {
-                let cap = crate::ring::Ring::from_legacy_path(path)
-                    .and_then(|ring| ring.cap())
-                    .or_else(|| Cap::parse(path).ok());
-                if let Some(cap) = cap {
-                    denizens.authority = std::mem::take(&mut denizens.authority)
-                        .with_grant(Grant::new(subject, cap, Mode::Write));
+        // The AUTHORITY is the signed certificate chain (C4). Adopt what was
+        // persisted; validity is re-verified on every read, never trusted
+        // because it was stored.
+        let mut certs = load_certs(session_dir, &subject.to_hex());
+        if certs.is_empty() {
+            // A session installed before delegation carries only the browsable
+            // projections. Re-issue certificates from them under the profile
+            // root: the projection IS the record of what the user reviewed, so
+            // this preserves exactly the reviewed grant rather than re-asking.
+            let caps = caps_from_projections(nested.graph().nodes().map(|(_, n)| n), subject);
+            if !caps.is_empty() {
+                certs = issue_install_certificates(provider, subject, &caps, now_ms());
+                if !certs.is_empty() {
+                    tracing::info!(
+                        member = %member,
+                        count = certs.len(),
+                        "healed a pre-delegation install into signed certificates"
+                    );
+                    save_certs(session_dir, &subject.to_hex(), &certs);
                 }
             }
+        }
+        for cert in certs {
+            denizens.authority.adopt(cert);
         }
         let label = app_facets
             .get(&member, &chartulary::FacetId::new("scenario.label"))
@@ -398,6 +421,147 @@ fn hex_to_bytes(hex: &str) -> Result<[u8; 32], ()> {
         out[i] = u8::from_str_radix(s, 16).map_err(|_| ())?;
     }
     Ok(out)
+}
+
+/// The capabilities a world's grant projections describe, for healing a
+/// pre-delegation install. Reads the lossless record first; a
+/// pre-capability-model projection (path only, in the node id) maps an
+/// `app/<ring>` path to that ring's power and anything else to the scope it
+/// always was.
+fn caps_from_projections<'a>(
+    nodes: impl Iterator<Item = &'a chartulary::Container>,
+    subject: Subject,
+) -> Vec<(Cap, Mode)> {
+    let mut caps = Vec::new();
+    for node in nodes {
+        if let Some(grant) = servitor::read_projection(node) {
+            if grant.subject == subject {
+                caps.push((grant.cap, grant.mode));
+            }
+            continue;
+        }
+        if let Some(path) = node.id.strip_prefix(servitor::GRANT_PREFIX) {
+            let cap = crate::ring::Ring::from_legacy_path(path)
+                .and_then(|ring| ring.cap())
+                .or_else(|| Cap::parse(path).ok());
+            if let Some(cap) = cap {
+                caps.push((cap, Mode::Write));
+            }
+        }
+    }
+    caps
+}
+
+/// Where a denizen's signed delegation certificates persist:
+/// `sessions/<id>/denizens/<subject>.certs.json`. The certificate is a signed
+/// blob, so it lives beside the world rather than inside the browsable graph;
+/// the grant projection stays the human-readable audit record of the same
+/// grant.
+pub fn certs_path(session_dir: &Path, subject_hex: &str) -> PathBuf {
+    session_dir
+        .join("denizens")
+        .join(format!("{subject_hex}.certs.json"))
+}
+
+/// Persist a denizen's certificates. Best-effort like every sidecar; a failed
+/// save warns, and the denizen loses authority on the next adopt rather than
+/// silently keeping it.
+pub fn save_certs(session_dir: &Path, subject_hex: &str, certs: &[SignedDelegationCertificate]) {
+    let target = certs_path(session_dir, subject_hex);
+    let result = (|| -> std::io::Result<()> {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(certs).map_err(std::io::Error::other)?;
+        std::fs::write(&target, json)
+    })();
+    if let Err(err) = result {
+        tracing::warn!(%err, path = ?target, "failed to persist a denizen's certificates");
+    }
+}
+
+/// Load a denizen's certificates; empty when absent or unreadable.
+pub fn load_certs(session_dir: &Path, subject_hex: &str) -> Vec<SignedDelegationCertificate> {
+    let path = certs_path(session_dir, subject_hex);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&text) {
+        Ok(certs) => certs,
+        Err(err) => {
+            tracing::warn!(%err, path = ?path, "failed to parse a denizen's certificates");
+            Vec::new()
+        }
+    }
+}
+
+/// The governed space a denizen's capabilities name: its own residency. Stable
+/// across a fork (which carries the same subject and world), and unique per
+/// denizen, so one helper's certificate can never be read as another's.
+pub fn residency_resource(subject_hex: &str) -> Vec<u8> {
+    format!("denizen:{subject_hex}").into_bytes()
+}
+
+/// A deterministic per-(denizen, capability) nonce, so re-issuing the same
+/// grant yields the same certificate id rather than an ever-growing pile.
+fn cert_nonce(subject_hex: &str, cap: &Cap) -> [u8; 32] {
+    *blake3::hash(format!("{subject_hex}/{}", cap.to_wire()).as_bytes()).as_bytes()
+}
+
+/// Wall-clock milliseconds. The HOST owns time; servitor and personae both
+/// take it as input.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Issue the root delegation certificates for one denizen: the user's identity
+/// conferring each reviewed capability directly. `depth` is 0, so an installed
+/// helper may act but never sub-delegate.
+pub fn issue_install_certificates(
+    provider: &impl IdentityProvider,
+    subject: Subject,
+    caps: &[(Cap, Mode)],
+    issued_at_ms: u64,
+) -> Vec<SignedDelegationCertificate> {
+    let issuer = provider.master_public_key().to_bytes();
+    let hex = subject.to_hex();
+    let resource = residency_resource(&hex);
+    let mut signed = Vec::new();
+    for (cap, mode) in caps {
+        let certificate = root_certificate(
+            issuer,
+            subject,
+            cap,
+            *mode,
+            resource.clone(),
+            issued_at_ms,
+            None,
+            0,
+            cert_nonce(&hex, cap),
+        );
+        match SignedDelegationCertificate::issue(provider, certificate) {
+            Ok(cert) => signed.push(cert),
+            Err(err) => tracing::warn!(?err, cap = %cap, "failed to sign an install certificate"),
+        }
+    }
+    signed
+}
+
+/// The capabilities an install confers: the denizen's own world, the read
+/// face, and one per REVIEWED ring. No blanket grant — an unnamed ring is an
+/// ungranted ring.
+pub fn install_caps(rings: &[crate::ring::Ring]) -> Vec<(Cap, Mode)> {
+    let mut caps = vec![(world_cap(), Mode::Write), (read_cap(), Mode::Write)];
+    caps.extend(
+        rings
+            .iter()
+            .filter_map(|ring| ring.cap())
+            .map(|cap| (cap, Mode::Write)),
+    );
+    caps
 }
 
 /// Mint the confirmed denizen into the session: the graph node, the binding +
@@ -478,29 +642,25 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
     // `app/` grant — an unnamed ring is an ungranted ring, and the session
     // ring only appears here if the review asked for it.
     let mut nested = GraphLog::with_id(LogId::new(hex.clone()));
-    let mut grants = vec![
-        Grant::new(subject, world_cap(), Mode::Write),
-        Grant::new(subject, read_cap(), Mode::Write),
-    ];
-    grants.extend(
-        pending
-            .rings
-            .iter()
-            .filter_map(|ring| ring.cap())
-            .map(|cap| Grant::new(subject, cap, Mode::Write)),
-    );
-    for grant in &grants {
-        if let Err(err) = app.denizens.gate.project_grant(&mut nested, grant) {
+    let caps = install_caps(&pending.rings);
+    for (cap, mode) in &caps {
+        let grant = Grant::new(subject, cap.clone(), *mode);
+        if let Err(err) = app.denizens.gate.project_grant(&mut nested, &grant) {
             tracing::warn!(?err, "failed to project an install grant");
         }
     }
     save_nested(&app.session_dir(), &hex, &nested);
 
-    let mut authority = std::mem::take(&mut app.denizens.authority);
-    for grant in grants {
-        authority = authority.with_grant(grant);
+    // The AUTHORITY: root delegation certificates signed by the profile
+    // identity (capability-model C4). Install is an attenuating delegation
+    // from the user, so uninstall is revoking it and nothing else.
+    let issued_at = now_ms();
+    let certs = issue_install_certificates(app.identity.as_ref(), subject, &caps, issued_at);
+    save_certs(&app.session_dir(), &hex, &certs);
+    app.denizens.authority.set_now(issued_at);
+    for cert in certs {
+        app.denizens.authority.adopt(cert);
     }
-    app.denizens.authority = authority;
     app.denizens.residents.insert(
         member,
         Resident {
@@ -567,7 +727,8 @@ mod tests {
             .unwrap();
 
         let graph = mere::kernel::graph::Graph::new();
-        let denizens = rebuild(&store, &graph, &dir);
+        let provider = identity::InMemoryProvider::from_seed([5u8; 32]);
+        let denizens = rebuild(&store, &graph, &dir, &provider);
         assert_eq!(denizens.residents.len(), 1, "the legacy resident survives");
         assert_eq!(
             denizens.legacy_heals,

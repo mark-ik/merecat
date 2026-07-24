@@ -14,6 +14,7 @@ mod chrome_view;
 mod component;
 mod content;
 mod denizen;
+mod identity;
 mod inspector_pane;
 mod inspector_view;
 pub mod observe;

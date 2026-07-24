@@ -1,0 +1,32 @@
+# Capability-model C4 receipt: install is a SIGNED delegation from the
+# profile identity, and uninstall revokes it. Install, run (the delegation
+# authorizes it), uninstall (the delegation is revoked and the denizen
+# un-resides), then confirm the Run row is gone — what it was authorized to
+# do stopped being authorized, without destroying its node or world.
+# FRESH profile; requires the piccolo feature.
+settle 30
+key escape
+
+drop-file 200 200 scenarios/fixtures/trail_keeper.lua
+settle 10
+assert event denizen-staged
+
+act Install trail_keeper
+settle 15
+assert event denizen-installed
+capture 01_installed
+
+act Run trail_keeper
+settle 20
+assert event denizen-ran
+assert focused kept/note
+capture 02_ran_under_delegation
+
+act Uninstall trail_keeper
+settle 15
+assert event denizen-uninstalled
+# The node survives revocation: only authority was withdrawn.
+assert nodes >= 2
+capture 03_revoked
+
+log revocation receipt complete

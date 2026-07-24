@@ -29,7 +29,7 @@
 //! shapes the install review's checkboxes; it never grants silently — the
 //! visible review stays the only place an ask becomes a grant.
 
-use servitor::{Cap, GrantTable, Mode, Subject};
+use servitor::{AuthorityProvider, Cap, Mode, Subject};
 
 use crate::action::Action;
 
@@ -145,7 +145,7 @@ pub fn ring_of(action: &Action) -> Ring {
 
         // Gate management: never emittable in effect, whatever the grant.
         InstallDenizen { .. } | ConfirmInstallDenizen | CancelInstallDenizen
-        | RunDenizen { .. } => Ring::HostOnly,
+        | UninstallDenizen { .. } | RunDenizen { .. } => Ring::HostOnly,
     }
 }
 
@@ -154,7 +154,7 @@ pub fn ring_of(action: &Action) -> Ring {
 /// the authority for the ring's path (write mode — an emission acts).
 /// The `Err` names the ring, so a denial is attributable by capability.
 pub fn emit_allowed(
-    authority: &GrantTable,
+    authority: &impl AuthorityProvider,
     subject: Subject,
     action: &Action,
 ) -> Result<(), String> {
@@ -165,7 +165,7 @@ pub fn emit_allowed(
             ring.name()
         ));
     };
-    if servitor::AuthorityProvider::covers(authority, subject, &cap, Mode::Write) {
+    if authority.covers(subject, &cap, Mode::Write) {
         Ok(())
     } else {
         Err(format!("{}: not covered by this denizen's grant", ring.name()))
@@ -180,13 +180,12 @@ pub const GRANTABLE_RINGS: [Ring; 4] = [Ring::Navigate, Ring::Panes, Ring::Dispa
 /// covers — the `caps.granted()` answer a component reads to skip a feature
 /// instead of emitting into a denial. The grant stays authoritative; this is
 /// the guest's read-only window onto it.
-pub fn granted_ring_names(authority: &GrantTable, subject: Subject) -> Vec<String> {
+pub fn granted_ring_names(authority: &impl AuthorityProvider, subject: Subject) -> Vec<String> {
     GRANTABLE_RINGS
         .iter()
         .filter(|ring| {
-            ring.cap().is_some_and(|cap| {
-                servitor::AuthorityProvider::covers(authority, subject, &cap, Mode::Write)
-            })
+            ring.cap()
+                .is_some_and(|cap| authority.covers(subject, &cap, Mode::Write))
         })
         .map(|ring| format!("mere:script/actions#{}", ring.name()))
         .collect()
@@ -292,21 +291,40 @@ pub fn decode_envelope(name: &str, payload: &str) -> Result<Action, EnvelopeErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use servitor::Grant;
+    use identity::{IdentityProvider, InMemoryProvider};
+    use servitor::delegation::DelegationTable;
+
+    fn user() -> InMemoryProvider {
+        InMemoryProvider::from_seed([42u8; 32])
+    }
 
     fn subject() -> Subject {
         Subject::new([9u8; 32])
     }
 
-    fn full_app_authority() -> GrantTable {
+    /// A table holding real root delegations for the named rings, signed by
+    /// the test user. Nothing here fakes authority: an emission passes only if
+    /// a signed chain verifies.
+    fn authority_for(rings: &[Ring]) -> DelegationTable {
+        let user = user();
+        let mut table = DelegationTable::new(user.master_public_key().to_bytes());
+        let caps: Vec<_> = rings
+            .iter()
+            .filter_map(|ring| ring.cap())
+            .map(|cap| (cap, Mode::Write))
+            .collect();
+        for cert in crate::denizen::issue_install_certificates(&user, subject(), &caps, 1_000) {
+            table.adopt(cert);
+        }
+        table.set_now(2_000);
+        table
+    }
+
+    fn full_app_authority() -> DelegationTable {
         // Every grantable app ring at once: host-only must resist even this.
         // (A single "wider than any ring" grant is no longer expressible,
         // which is the point of powers: there is nothing above them to hold.)
-        let mut table = GrantTable::default();
-        for ring in GRANTABLE_RINGS {
-            table.grant(Grant::new(subject(), ring.cap().unwrap(), Mode::Write));
-        }
-        table
+        authority_for(&GRANTABLE_RINGS)
     }
 
     #[test]
@@ -319,11 +337,7 @@ mod tests {
 
     #[test]
     fn a_covered_emission_passes_and_an_uncovered_one_names_its_ring() {
-        let narrow = GrantTable::default().with_grant(Grant::new(
-            subject(),
-            Ring::Navigate.cap().unwrap(),
-            Mode::Write,
-        ));
+        let narrow = authority_for(&[Ring::Navigate]);
         assert!(
             emit_allowed(&narrow, subject(), &Action::OpenAddress("https://a".into())).is_ok()
         );

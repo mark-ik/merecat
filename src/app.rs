@@ -147,6 +147,10 @@ pub struct App {
     pub pending_install: Option<crate::denizen::PendingInstall>,
     /// The session's denizen runtime: residents, derived authority, the gate.
     pub denizens: crate::denizen::Denizens,
+    /// The profile's root identity: whose authority every denizen grant
+    /// descends from (capability-model OQ2). Install signs a delegation with
+    /// it; uninstall revokes that delegation.
+    pub identity: std::sync::Arc<identity::InMemoryProvider>,
     /// The attributed edit journal (mere's spine): every graph mutation
     /// captured under its author — `user` for the UI, a denizen's subject hex
     /// during a run. Shared with the capture hook installed at boot.
@@ -189,6 +193,8 @@ impl App {
             Some(id) => (id, false),
             None => (Self::mint_session(&data_root, &mut sessions), true),
         };
+        let identity = crate::identity::load_or_create_root(&data_root);
+        let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
         let mut app = Self {
             canvas: Canvas::new(),
             omnibar: OmnibarState::default(),
@@ -211,7 +217,8 @@ impl App {
             removed: Vec::new(),
             trash: Vec::new(),
             pending_install: None,
-            denizens: crate::denizen::Denizens::default(),
+            denizens: crate::denizen::Denizens::new(root),
+            identity,
             journal,
             next_pane_id: 1,
             events: Vec::new(),
@@ -539,6 +546,10 @@ impl App {
                 format!("Run {}", resident.label),
                 Action::RunDenizen { member: *member },
             ));
+            rows.push((
+                format!("Uninstall {}", resident.label),
+                Action::UninstallDenizen { member: *member },
+            ));
         }
         rows
     }
@@ -726,7 +737,8 @@ impl App {
         // The denizen runtime derives from the binding facets (agency) + the
         // graph's `Node.nested` pointers (structure) + the nested logs.
         self.pending_install = None;
-        self.denizens = crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+        self.denizens =
+            crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir, self.identity.as_ref());
         // One-time heal for bindings written before the containment ruling:
         // move the world pointer onto the node (journaled through the spine)
         // and rewrite the facet without it.
@@ -1162,6 +1174,28 @@ impl App {
                 self.omnibar = OmnibarState::default();
                 vec![Effect::Redraw]
             }
+            Action::UninstallDenizen { member } => {
+                // Revocation, the mirror of install: the user's delegations to
+                // this denizen are revoked (cascading to anything it delegated
+                // onward), and it stops residing. The node and its world are
+                // untouched — revoking authority destroys nothing.
+                let Some(resident) = self.denizens.residents.remove(&member) else {
+                    return vec![Effect::Redraw];
+                };
+                let revoked = self.denizens.authority.revoke_root_grants(resident.subject);
+                session_runtime::remove_denizen_binding(&mut self.facets, member);
+                let hex = resident.subject.to_hex();
+                // The certificates go with the residency: a later adopt must
+                // not resurrect the authority we just revoked.
+                let path = crate::denizen::certs_path(&self.session_dir(), &hex);
+                if path.is_file() && let Err(err) = std::fs::remove_file(&path) {
+                    tracing::warn!(%err, path = ?path, "failed to remove revoked certificates");
+                }
+                tracing::info!(label = %resident.label, revoked, "denizen uninstalled");
+                self.events
+                    .push(AppEvent::DenizenUninstalled(resident.label.clone()));
+                vec![Effect::SaveSession, Effect::Redraw]
+            }
             Action::RunDenizen { member } => {
                 let Some((subject, label)) = self
                     .denizens
@@ -1381,7 +1415,12 @@ impl App {
                 self.facets.remove_node(&member);
                 if self.denizens.residents.remove(&member).is_some() {
                     let sdir = self.session_dir();
-                    self.denizens = crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+                    self.denizens = crate::denizen::rebuild(
+                        &self.facets,
+                        self.canvas.graph(),
+                        &sdir,
+                        self.identity.as_ref(),
+                    );
                 }
                 self.workbench.close_tile(member);
                 self.events.push(AppEvent::NodeRemoved(record.url.clone()));
@@ -1433,7 +1472,12 @@ impl App {
                         Some(mere::kernel::graph::LogId::new(log_id.clone())),
                     );
                     self.denizens =
-                        crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir);
+                        crate::denizen::rebuild(
+                            &self.facets,
+                            self.canvas.graph(),
+                            &sdir,
+                            self.identity.as_ref(),
+                        );
                 }
                 self.canvas.center_on_selected();
                 self.history.visit(record.url.clone());
@@ -2070,6 +2114,8 @@ impl App {
     }
 
     fn isolated(data_root: PathBuf) -> Self {
+        let identity = crate::identity::load_or_create_root(&data_root);
+        let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
         Self {
             canvas: Canvas::new(),
             omnibar: OmnibarState::default(),
@@ -2092,7 +2138,8 @@ impl App {
             removed: Vec::new(),
             trash: Vec::new(),
             pending_install: None,
-            denizens: crate::denizen::Denizens::default(),
+            denizens: crate::denizen::Denizens::new(root),
+            identity,
             journal: {
                 let (journal, hook) = mere::kernel::graph::journal_capture_hook();
                 mere::kernel::graph::set_captured_delta_hook(Some(hook));
@@ -2341,7 +2388,12 @@ mod tests {
             "the nested log persisted at its birth"
         );
 
-        let rebuilt = crate::denizen::rebuild(&app.facets, app.canvas.graph(), &app.session_dir());
+        let rebuilt = crate::denizen::rebuild(
+            &app.facets,
+            app.canvas.graph(),
+            &app.session_dir(),
+            app.identity.as_ref(),
+        );
         assert_eq!(rebuilt.residents.len(), 1);
         assert!(rebuilt.legacy_heals.is_empty(), "a fresh install needs no heal");
         assert!(
@@ -2595,7 +2647,12 @@ mod tests {
         );
         // The fork rebuilds a full resident from its OWN dir, no legacy heal.
         let fork_facets = session::load_node_facets(&fork_dir).expect("fork facets persisted");
-        let rebuilt = crate::denizen::rebuild(&fork_facets, &fork_graph, &fork_dir);
+        let rebuilt = crate::denizen::rebuild(
+            &fork_facets,
+            &fork_graph,
+            &fork_dir,
+            app.identity.as_ref(),
+        );
         assert_eq!(rebuilt.residents.len(), 1, "the fork's denizen resides");
         assert!(rebuilt.legacy_heals.is_empty());
         assert_eq!(
@@ -3015,6 +3072,80 @@ mod tests {
             "the component's graph edit is attributed to its subject"
         );
         drop(journal);
+        let _ = std::fs::remove_dir_all(&app.data_root);
+    }
+
+    /// Install is a signed delegation from the profile identity, and uninstall
+    /// REVOKES it (capability-model C4). The arc: install grants exactly the
+    /// reviewed rings, uninstall revokes them and un-resides the denizen, and
+    /// what it was authorized to do stops being authorized — without
+    /// destroying its node or its world.
+    #[test]
+    fn install_delegates_from_the_profile_identity_and_uninstall_revokes_it() {
+        use servitor::AuthorityProvider;
+
+        let mut app = App::test_stub();
+        app.data_root =
+            std::env::temp_dir().join(format!("merecat-revoke-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app.data_root);
+        std::fs::create_dir_all(app.session_dir()).unwrap();
+        // The root identity is the profile's, not a constant.
+        let root = identity::IdentityProvider::master_public_key(app.identity.as_ref()).to_bytes();
+        assert_eq!(app.denizens.authority.root(), root, "rooted on the profile identity");
+
+        let pack = app.data_root.join("keeper.lua");
+        std::fs::write(&pack, "mere.open('mere://kept/note')").unwrap();
+        app.update(Action::InstallDenizen { path: pack.display().to_string() });
+        app.update(Action::ConfirmInstallDenizen);
+        let (member, subject) = {
+            let (&m, r) = app.denizens.residents.iter().next().unwrap();
+            (m, r.subject)
+        };
+        let navigate = crate::ring::Ring::Navigate.cap().unwrap();
+        let session_ring = crate::ring::Ring::Session.cap().unwrap();
+        assert!(
+            app.denizens.authority.covers(subject, &navigate, servitor::Mode::Write),
+            "the reviewed ring is authorized by a verified certificate chain"
+        );
+        assert!(
+            !app.denizens.authority.covers(subject, &session_ring, servitor::Mode::Write),
+            "an unreviewed ring was never delegated"
+        );
+        let certs = crate::denizen::certs_path(&app.session_dir(), &subject.to_hex());
+        assert!(certs.is_file(), "the signed delegations persisted");
+
+        // Uninstall: revoke and un-reside.
+        app.update(Action::UninstallDenizen { member });
+        assert!(app.denizens.residents.is_empty(), "no longer resident");
+        assert!(
+            !app.denizens.authority.covers(subject, &navigate, servitor::Mode::Write),
+            "the delegation is revoked, so the ring is no longer authorized"
+        );
+        assert!(
+            session_runtime::read_denizen_binding(&app.facets, member).is_none(),
+            "un-resided: the agency facet is gone"
+        );
+        assert!(!certs.is_file(), "and its certificates cannot resurrect it on adopt");
+        assert!(
+            app.take_events()
+                .iter()
+                .any(|e| matches!(e, AppEvent::DenizenUninstalled(_))),
+            "the uninstall is observable"
+        );
+        // Nothing was destroyed: the node and its borne world remain.
+        assert!(
+            app.canvas.graph().get_node_by_id(member).is_some(),
+            "revoking authority does not delete the node"
+        );
+        assert!(
+            crate::denizen::nested_log_path(&app.session_dir(), &subject.to_hex()).is_file(),
+            "nor its world"
+        );
+        // And the palette no longer offers to run it.
+        assert!(
+            !app.denizen_actions().iter().any(|(label, _)| label.starts_with("Run ")),
+            "the Run row is gone with the residency"
+        );
         let _ = std::fs::remove_dir_all(&app.data_root);
     }
 

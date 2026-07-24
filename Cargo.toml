@@ -44,6 +44,10 @@ session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main"
 # Denizen residency (participant gate B1): the authority gate over a denizen's
 # nested chartulary graph, plus the substrate types the host speaks to it in.
 servitor = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# The profile's root identity: install is a delegation SIGNED by the user's
+# personae master key (capability-model OQ2). The sealed vault implements the
+# same IdentityProvider trait, so it swaps in without touching consumers.
+identity = { package = "personae", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 chartulary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 codicil = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen subjects are content-derived: blake3(source) is the 32-byte keyholder.

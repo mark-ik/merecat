@@ -152,6 +152,8 @@ pub enum AppEvent {
     DenizenInstalled(String),
     /// A resident denizen ran its body, by label.
     DenizenRan(String),
+    /// A denizen was uninstalled: its delegations revoked, its residency gone.
+    DenizenUninstalled(String),
     /// A denizen install or run was refused, with the reason.
     DenizenRefused(String),
     /// A session's display name was set, by its new label.
@@ -222,6 +224,7 @@ impl AppEvent {
             AppEvent::DenizenStaged(label) => format!("denizen-staged {label}"),
             AppEvent::DenizenInstalled(label) => format!("denizen-installed {label}"),
             AppEvent::DenizenRan(label) => format!("denizen-ran {label}"),
+            AppEvent::DenizenUninstalled(label) => format!("denizen-uninstalled {label}"),
             AppEvent::DenizenRefused(reason) => format!("denizen-refused {reason}"),
             AppEvent::SessionRenamed(label) => format!("session-renamed {label}"),
             AppEvent::NodeRemoved(url) => format!("node-removed {url}"),

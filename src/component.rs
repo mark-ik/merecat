@@ -17,7 +17,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use app_host::{ActionSink, AppScript, Refusal, Watchdog};
-use servitor::{GrantTable, Subject};
+use servitor::delegation::DelegationTable;
+use servitor::Subject;
 use wasmtime::StoreLimitsBuilder;
 
 use crate::action::Action;
@@ -34,7 +35,7 @@ const MEMORY_CEILING: usize = 64 * 1024 * 1024;
 /// The ring gate as an [`ActionSink`]: decode the envelope, classify it, ask
 /// the authority, and queue what passes.
 pub struct RingSink {
-    authority: GrantTable,
+    authority: DelegationTable,
     subject: Subject,
     /// Emissions accepted for lowering, in emission order.
     pub accepted: Vec<Action>,
@@ -43,7 +44,7 @@ pub struct RingSink {
 }
 
 impl RingSink {
-    pub fn new(authority: GrantTable, subject: Subject) -> Self {
+    pub fn new(authority: DelegationTable, subject: Subject) -> Self {
         Self {
             authority,
             subject,
@@ -93,7 +94,7 @@ pub struct ComponentRun {
 /// the ceiling) is contained and reported as an `Err`; the host survives.
 pub fn run(
     path: &Path,
-    authority: &GrantTable,
+    authority: &DelegationTable,
     subject: Subject,
     kind: &str,
     payload: &str,
@@ -136,7 +137,8 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use servitor::{Grant, Mode};
+    use identity::{IdentityProvider, InMemoryProvider};
+    use servitor::Mode;
 
     fn subject() -> Subject {
         Subject::new([3u8; 32])
@@ -144,11 +146,14 @@ mod tests {
 
     #[test]
     fn the_sink_queues_granted_emissions_and_refuses_the_rest() {
-        let authority = GrantTable::default().with_grant(Grant::new(
-            subject(),
-            crate::ring::Ring::Navigate.cap().unwrap(),
-            Mode::Write,
-        ));
+        // A real signed root delegation for the navigate ring only.
+        let user = InMemoryProvider::from_seed([8u8; 32]);
+        let mut authority = DelegationTable::new(user.master_public_key().to_bytes());
+        let caps = vec![(crate::ring::Ring::Navigate.cap().unwrap(), Mode::Write)];
+        for cert in crate::denizen::issue_install_certificates(&user, subject(), &caps, 1_000) {
+            authority.adopt(cert);
+        }
+        authority.set_now(2_000);
         let mut sink = RingSink::new(authority, subject());
 
         assert!(sink.emit("open-address", r#"{"url": "https://a.test"}"#).is_ok());
