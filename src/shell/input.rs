@@ -12,9 +12,9 @@ use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use frisket::PaneContent;
 use genet_probe::AutomatableExt as _;
 use inker::{SessionClick, SessionScrollKey};
-use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
+use mere::canvas::PointerButton;
 
-use crate::action::{Action, CaretMove, PaneKind};
+use crate::action::{Action, CaretMove};
 use crate::surface::Rect;
 
 use super::{Shell, decode_sprite};
@@ -901,4 +901,5 @@ mod tests {
             content_scroll_key(&WinitKey::Character("i".into()), false),
             None
         );
+    }
 }

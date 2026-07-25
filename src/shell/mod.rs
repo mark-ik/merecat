@@ -13,11 +13,11 @@ use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
 use inker::{
-    DocumentSession, SessionClick, SessionRegistry, SessionScrollKey, SessionSpawnRequest,
+    DocumentSession, SessionClick, SessionRegistry, SessionSpawnRequest,
 };
 use genet_documents::{LocalFetcher, StaticSessionEngine};
 use image::ImageEncoder;
-use mere::canvas::{PointerButton, WHEEL_PAN_SCALE};
+use mere::canvas::WHEEL_PAN_SCALE;
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, NetrenderOptions};
 use genet_winit_host::SurfaceHost;
@@ -30,8 +30,7 @@ use winit::window::{Window, WindowId};
 
 use frisket::PaneContent;
 
-use crate::action::{Action, CaretMove, Effect, Update};
-use genet_probe::AutomatableExt as _;
+use crate::action::{Action, Effect, Update};
 use crate::app::App;
 use crate::surface::{Rect, SurfaceKind};
 use crate::{browse, session};

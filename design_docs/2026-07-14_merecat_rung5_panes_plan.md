@@ -573,3 +573,35 @@ Neither is a dependency; both landed after the ladder was written.
    Genet's own audit names Cambium as first consumer and says it "does not claim to be Merecat's
    production theme". Watch, do not plan against it; the swap would be confined to `ui.rs`'s layout
    and paint call.
+
+---
+
+## Destination update, 2026-07-24: frisket goes to genet, and its tree retires
+
+Ruled with Mark. The `frisket` crate this plan relocated here on 2026-07-18 is
+not the family's last word on panes; it is one of four spellings of the same
+idea. The others: genet's `genet-host-api::tile` contract, Cambium's split and
+tab furniture, and the renderer sitting unreachable in `ports/pelt`. Those
+resolve to **one module in Cambium, named frisket** — a module, not a new crate
+and nothing newly published; the name travels there and this crate retires into
+it.
+
+What that means for merecat, when the pass happens:
+
+- **The tree does not travel.** Frisket's binary `Split { axis, ratio, first,
+  second }` with one content per leaf and no tabs loses to tile's n-ary
+  branches with fractional shares and tab-stacks, which is the more capable
+  model and the one with a renderer.
+- **The graph binding becomes content, not structure.** `PaneContent` plus the
+  leaf's `graph_id` move behind the shared contract's open content lane. The
+  multi-graph-window rule stays merecat's, expressed in its own content type
+  rather than in a tree that genet would have to carry a `GraphId` for.
+- **The hand-rolled pane views go too** (`src/pane.rs`, `src/cambium_pane.rs`),
+  replaced by `cambium::frisket`. That is the duplication this pays off, and it
+  costs merecat no new dependency: it already consumes Cambium.
+
+Direction and the two remaining open decisions (the content tail, reconciling
+the two rect derivations) are recorded in genet's
+[frisket pane component doc](../../genet/docs/2026-07-24_frisket_pane_component_direction.md).
+It is consumer-paid work: it lands when merecat retargets its panes or isometry
+wants tiling, not before.
