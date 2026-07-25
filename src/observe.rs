@@ -291,10 +291,10 @@ pub fn snapshot(app: &App) -> Snapshot {
         .iter_leaves()
         .map(|(_, content, _)| {
             match content {
-                frisket::PaneContent::Orrery => "canvas".to_string(),
+                crate::panes::PaneContent::Orrery => "canvas".to_string(),
                 // A pinned Tile pane with a live session composites as a
                 // content surface at the pane's rect (the plan's mapping).
-                frisket::PaneContent::Tile(m)
+                crate::panes::PaneContent::Tile(m)
                     if matches!(app.content.get(*m), Some(NodeContent::Live)) =>
                 {
                     "content".to_string()
@@ -304,7 +304,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         })
         .collect();
     // A split tree has seams: one divider surface per split node.
-    if matches!(app.frisket.root, frisket::PaneNode::Split { .. }) && app.maximized.is_none() {
+    if matches!(app.frisket.root, crate::panes::PaneNode::Split { .. }) && app.maximized.is_none() {
         surfaces.push("divider".to_string());
     }
     // Content surfaces, honestly: a live tile composites where its workbench
@@ -315,11 +315,11 @@ pub fn snapshot(app: &App) -> Snapshot {
     let wb_in_primary = app
         .frisket
         .iter_leaves()
-        .any(|(_, c, _)| matches!(c, frisket::PaneContent::Workbench));
+        .any(|(_, c, _)| matches!(c, crate::panes::PaneContent::Workbench));
     let wb_in_lens = app.lenses.iter().flatten().any(|space| {
         space
             .iter_leaves()
-            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Workbench))
+            .any(|(_, c, _)| matches!(c, crate::panes::PaneContent::Workbench))
     });
     let live = |m: uuid::Uuid| matches!(app.content.get(m), Some(NodeContent::Live));
     let tiled: Vec<uuid::Uuid> = {
@@ -337,7 +337,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         .iter_leaves()
         .chain(app.lenses.iter().flatten().flat_map(|s| s.iter_leaves()))
         .filter_map(|(_, c, _)| match c {
-            frisket::PaneContent::Tile(m) => Some(*m),
+            crate::panes::PaneContent::Tile(m) => Some(*m),
             _ => None,
         })
         .collect();
@@ -383,7 +383,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         trail_rows: app
             .frisket
             .iter_leaves()
-            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Trail))
+            .any(|(_, c, _)| matches!(c, crate::panes::PaneContent::Trail))
             .then(|| {
                 crate::trail_view::trail_rows(app)
                     .into_iter()
@@ -394,7 +394,7 @@ pub fn snapshot(app: &App) -> Snapshot {
         roster_rows: app
             .frisket
             .iter_leaves()
-            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Roster))
+            .any(|(_, c, _)| matches!(c, crate::panes::PaneContent::Roster))
             .then(|| {
                 crate::roster_view::roster_rows(app)
                     .into_iter()
@@ -405,13 +405,13 @@ pub fn snapshot(app: &App) -> Snapshot {
         inspector_rows: app
             .frisket
             .iter_leaves()
-            .any(|(_, c, _)| matches!(c, frisket::PaneContent::Inspector))
+            .any(|(_, c, _)| matches!(c, crate::panes::PaneContent::Inspector))
             .then(|| crate::inspector_view::inspector_lines(app))
             .unwrap_or_default(),
         roster_tab: crate::cambium_pane::tab_label(app.roster_tab),
         split_ratio: match &app.frisket.root {
-            frisket::PaneNode::Split { ratio, .. } => Some(*ratio),
-            frisket::PaneNode::Leaf { .. } => None,
+            crate::panes::PaneNode::Split { ratio, .. } => Some(*ratio),
+            crate::panes::PaneNode::Leaf { .. } => None,
         },
         workbench_cells: workbench_cells(app),
         workbench_fractions: app.workbench.weights(),

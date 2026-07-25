@@ -4,7 +4,7 @@
 //! path-derived AccessKit ids (uxtree's scheme, so subtree ids stay disjoint
 //! by construction).
 //!
-//! Supply, all pre-existing and previously unused: `frisket::project_frisket_with`
+//! Supply, all pre-existing and previously unused: `crate::panes::project_frisket_with`
 //! (the pane tree, with a per-leaf content hook), `mere::workbench::project_workbench`
 //! (the tiling), and `uxtree::stitch`. The document subtree is built here from
 //! the [`StructureFacts`] outline the content port mirrors at spawn (the
@@ -21,7 +21,7 @@
 //! deletion-matrix bar.
 
 use accesskit::{Node, Role};
-use frisket::PaneContent;
+use crate::panes::PaneContent;
 use uxtree::{UxTree, node_id_for_path, stitch};
 
 use crate::app::App;
@@ -45,7 +45,7 @@ pub fn project_app(app: &App) -> UxTree {
         .map(|(_, n)| project_live_document(app, n.id, n.url()))
         .collect();
     let mut docs = Some(docs);
-    let panes = frisket::project_frisket_with(&app.frisket, |content, _id| match content {
+    let panes = crate::panes::project_frisket_with(&app.frisket, |content, _id| match content {
         PaneContent::Workbench => Some(mere::workbench::project_workbench(&app.workbench)),
         PaneContent::Orrery => {
             // The canvas leaf carries the graph summary plus the live

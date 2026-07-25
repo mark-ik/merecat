@@ -58,7 +58,7 @@ pub enum Suggestion {
 pub enum OmnibarMode {
     #[default]
     Address,
-    RenameSession(frisket::SessionId),
+    RenameSession(crate::panes::SessionId),
 }
 
 /// The omnibar's state, owned by [`crate::app::App`].

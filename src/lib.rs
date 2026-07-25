@@ -20,6 +20,8 @@ mod inspector_view;
 pub mod observe;
 mod overmap;
 mod pane;
+/// Merecat's own pane model (was the `frisket` crate; folded in 2026-07-25).
+pub mod panes;
 mod recycle;
 pub mod remote_projection;
 mod ring;

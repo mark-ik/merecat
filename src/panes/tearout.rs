@@ -11,7 +11,7 @@
 //! This module ships only the payload. Execution lives in
 //! `host::tearout`.
 
-use crate::PaneId;
+use crate::panes::PaneId;
 
 /// Payload carried by a tile-strip drag gesture. Identifies the
 /// donor pane + the tile index so the drop handler can fire a

@@ -576,32 +576,33 @@ Neither is a dependency; both landed after the ladder was written.
 
 ---
 
-## Destination update, 2026-07-24: frisket goes to genet, and its tree retires
+## Destination update, 2026-07-25: the name goes to Cambium, the tree stays here
 
-Ruled with Mark. The `frisket` crate this plan relocated here on 2026-07-18 is
-not the family's last word on panes; it is one of four spellings of the same
-idea. The others: genet's `genet-host-api::tile` contract, Cambium's split and
-tab furniture, and the renderer sitting unreachable in `ports/pelt`. Those
-resolve to **one module in Cambium, named frisket** — a module, not a new crate
-and nothing newly published; the name travels there and this crate retires into
-it.
+Superseding the 2026-07-24 draft of this section, which said merecat's pane tree
+would retire onto the shared frame's. Reading merecat's own code says otherwise,
+and the correction is the useful part.
 
-What that means for merecat, when the pass happens:
+**Merecat does not render a pane frame; it composites surfaces.**
+`shell::surface_plan` walks this tree into one surface per pane plus divider
+bands, which is how a live WebView, the Orrery's GPU canvas, and a
+cambium-rendered pane share a window. `src/pane.rs` is that geometry, and it has
+consumed `cambium::Split`'s state math — not its view — since 2026-07-17. The
+shared idea was therefore already shared; what remained were two *presentation
+strategies*, both legitimate: `cambium::frisket` renders one DOM with content
+holes (Pelt's way), and merecat places surfaces.
 
-- **The tree does not travel.** Frisket's binary `Split { axis, ratio, first,
-  second }` with one content per leaf and no tabs loses to tile's n-ary
-  branches with fractional shares and tab-stacks, which is the more capable
-  model and the one with a renderer.
-- **The graph binding becomes content, not structure.** `PaneContent` plus the
-  leaf's `graph_id` move behind the shared contract's open content lane. The
-  multi-graph-window rule stays merecat's, expressed in its own content type
-  rather than in a tree that genet would have to carry a `GraphId` for.
-- **The hand-rolled pane views go too** (`src/pane.rs`, `src/cambium_pane.rs`),
-  replaced by `cambium::frisket`. That is the duplication this pays off, and it
-  costs merecat no new dependency: it already consumes Cambium.
+So: **the tree stays, as merecat's own pane authority** (the analog of forme in
+mere), and the two tree shapes are a recorded deliberate divergence rather than
+debt. Converging merecat's binary-split-with-ratio onto the contract's
+n-ary-with-tab-stacks costs ~473 references and buys nothing until merecat wants
+tabs or wants its panes inside one DOM.
 
-Direction and the two remaining open decisions (the content tail, reconciling
-the two rect derivations) are recorded in genet's
+**What landed 2026-07-25:** the `frisket` crate folded into `src/panes`. One
+consumer wants no package identity, and the name went to `cambium::frisket` — a
+crate and a module of the same name in one graph is a trap. 13 call-site files
+rebased to `crate::panes::`, the workspace member and path dep dropped, `serde`
+and `incipit` moved onto merecat's manifest. The pane model, its layout ops, the
+`frame.json` store, the tearout lane, and the uxtree projection are unchanged.
+
+Direction and the publish order are in genet's
 [frisket pane component doc](../../genet/docs/2026-07-24_frisket_pane_component_direction.md).
-It is consumer-paid work: it lands when merecat retargets its panes or isometry
-wants tiling, not before.

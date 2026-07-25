@@ -7,10 +7,10 @@
 
 use std::path::{Path, PathBuf};
 
-use frisket::{FrisketLayout, SessionId};
+use crate::panes::{FrisketLayout, SessionId};
 // The frame-sidecar store is frisket's own since meerkat's deletion (it moved
 // out of session-runtime with the pane model).
-use frisket::store as frisket_store;
+use crate::panes::store as frisket_store;
 use mere::kernel::graph::Graph;
 use sceno::Score;
 use session_runtime::{GraphSessionManifest, ManifestStore, session_graph_store};
@@ -176,7 +176,7 @@ pub fn migrate_flat_layout(data_root: &Path, store: &mut ManifestStore) -> Optio
             }
         }
     }
-    let mut manifest = GraphSessionManifest::new(id, frisket::GraphId::nil());
+    let mut manifest = GraphSessionManifest::new(id, crate::panes::GraphId::nil());
     manifest.storage_path = Some(dir);
     store.insert(manifest);
     if let Err(err) = store.flush_dirty() {
@@ -309,11 +309,11 @@ pub fn save_workbench(data_root: &Path, workbench: &mere::platen::Workbench) {
 pub fn heal_nil_graph_ids(sessions: &mut ManifestStore) -> usize {
     let nil: Vec<SessionId> = sessions
         .iter()
-        .filter(|(_, m)| m.root_graph_id == frisket::GraphId::nil())
+        .filter(|(_, m)| m.root_graph_id == crate::panes::GraphId::nil())
         .map(|(id, _)| id)
         .collect();
     for id in &nil {
-        sessions.update(*id, |m| m.root_graph_id = frisket::GraphId::new());
+        sessions.update(*id, |m| m.root_graph_id = crate::panes::GraphId::new());
     }
     if !nil.is_empty() {
         if let Err(err) = sessions.flush_dirty() {
@@ -423,10 +423,10 @@ mod tests {
         let mut store = ManifestStore::with_root(sessions_root(&root));
         let a = SessionId::new();
         let b = SessionId::new();
-        let mut ma = GraphSessionManifest::new(a, frisket::GraphId::nil());
+        let mut ma = GraphSessionManifest::new(a, crate::panes::GraphId::nil());
         // `b` is newer (created after), so the fallback picks it.
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let mb = GraphSessionManifest::new(b, frisket::GraphId::nil());
+        let mb = GraphSessionManifest::new(b, crate::panes::GraphId::nil());
         ma.touch();
         store.insert(ma);
         store.insert(mb);

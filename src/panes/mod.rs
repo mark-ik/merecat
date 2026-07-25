@@ -1,13 +1,25 @@
-//! # frisket
+//! Merecat's pane model: a savable tree of resizable panes, projected into a
+//! uxtree subtree.
 //!
-//! The pane model: a savable tree of resizable panes, projected into a uxtree
-//! subtree. On a hand press the *frisket* is the hinged frame whose cut-out
-//! apertures decide what prints where; this is the same frame, over a window.
+//! **Was the `frisket` crate; folded in here 2026-07-25.** Two reasons. It had
+//! exactly one consumer, so it wanted no package identity: a crate buys
+//! compile-enforced boundaries and costs version drift, patch tables, and a name
+//! to defend, while a module costs nothing. And the name went to
+//! `cambium::frisket`, the family's shared pane *frame*, so keeping it on a
+//! merecat crate would have collided with a component merecat consumes.
 //!
-//! Renamed from `frame` (2026-07-14), which was overloaded three ways in this
-//! family (a rendered frame, a `TileFrame`, a window's pane arrangement) and which
-//! also fused in the workspace id vocabulary. The ids now live in [`incipit`];
-//! this crate is the panes alone.
+//! What is here is deliberately NOT that frame. Merecat places **one composited
+//! surface per pane** (`shell::surface_plan`), which is how a live WebView, the
+//! Orrery's GPU canvas, and a cambium-rendered pane coexist in one window; the
+//! cambium frame renders one DOM with content holes instead. The two share what
+//! is genuinely one idea, the split geometry (`cambium::Split`'s state math,
+//! adopted 2026-07-17), and diverge on presentation on purpose. This tree is
+//! merecat's own pane authority, the analog of forme in mere.
+//!
+//! Its history before that: renamed from `frame` (2026-07-14), which was
+//! overloaded three ways in this family (a rendered frame, a `TileFrame`, a
+//! window's pane arrangement) and which also fused in the workspace id
+//! vocabulary. The ids live in `incipit`.
 //!
 //! The tiers, which nest rather than compete:
 //!
@@ -20,10 +32,6 @@
 //! ([`FrisketLayout::summon_leaf`], `reparent_leaf`, `close_leaf`, …);
 //! [`projection`] holds [`project_frisket`] + [`project_frisket_with`].
 //!
-//! [`incipit`]: https://docs.rs/incipit
-//! [`platen`]: https://docs.rs/platen
-
-#![doc(html_root_url = "https://docs.rs/frisket/0.0.1")]
 
 use serde::{Deserialize, Serialize};
 

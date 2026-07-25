@@ -270,14 +270,14 @@ pub fn decode_envelope(name: &str, payload: &str) -> Result<Action, EnvelopeErro
         "fork-focused-node" => Action::ForkFocusedNode,
         "new-session" => Action::NewSession,
         "switch-session" => {
-            Action::SwitchSession(frisket::SessionId::from_uuid(id(payload, "id")?))
+            Action::SwitchSession(crate::panes::SessionId::from_uuid(id(payload, "id")?))
         }
         "close-session" => Action::CloseSession,
         "delete-focused-node" => Action::DeleteFocusedNode,
         "recover-deleted-node" => Action::RecoverDeletedNode(member(payload)?),
         "empty-recycle-bin" => Action::EmptyRecycleBin,
         "recover-session" => {
-            Action::RecoverSession(frisket::SessionId::from_uuid(id(payload, "id")?))
+            Action::RecoverSession(crate::panes::SessionId::from_uuid(id(payload, "id")?))
         }
         // host-only (decodable so the DENIAL is exact and attributable)
         "install-denizen" => Action::InstallDenizen { path: string(payload, "path")? },

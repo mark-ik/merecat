@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use mere::canvas::Canvas;
 
-use frisket::{FrisketLayout, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
+use crate::panes::{FrisketLayout, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
 
 use crate::action::{Action, Effect, PaneKind, SpaceRef, Update};
 use crate::content::ContentStates;
@@ -29,7 +29,7 @@ pub fn focused_caption(canvas: &Canvas) -> Option<String> {
     }
 }
 
-/// The `frisket::PaneContent` a summonable `PaneKind` maps to. The mapping
+/// The `crate::panes::PaneContent` a summonable `PaneKind` maps to. The mapping
 /// lives here (not in `action`) so the vocabulary module stays free of the
 /// pane-model crate. Slice C summons these as placeholders; slice D gives each
 /// its real content.
@@ -73,7 +73,7 @@ pub struct App {
     /// on-disk layout under `sessions/`.
     pub sessions: session_runtime::ManifestStore,
     /// The live session — the one whose directory every save/load targets.
-    pub session_id: frisket::SessionId,
+    pub session_id: crate::panes::SessionId,
     /// Per-node content lifecycle (rung 4). Data only: the live session
     /// handles live in the shell's content port, keyed by the same ids.
     pub content: ContentStates,
@@ -258,8 +258,8 @@ impl App {
     fn mint_session(
         data_root: &std::path::Path,
         sessions: &mut session_runtime::ManifestStore,
-    ) -> frisket::SessionId {
-        let id = frisket::SessionId::new();
+    ) -> crate::panes::SessionId {
+        let id = crate::panes::SessionId::new();
         // A REAL GraphId from birth: the root graph is the session's container
         // node (the one-node model), so its id keys the scene.* facets and is
         // the session's identity in the overmap. (Pre-overmap sessions minted
@@ -282,7 +282,7 @@ impl App {
     /// removed-sessions cache (overmap O3). The shell calls this AFTER
     /// releasing the bin store (open files block the rename on Windows) and
     /// BEFORE adopting the next session. Returns whether the trash move ran.
-    pub fn apply_trash(&mut self, closing: frisket::SessionId) -> bool {
+    pub fn apply_trash(&mut self, closing: crate::panes::SessionId) -> bool {
         match self.sessions.move_to_trash(closing) {
             Ok(true) => {
                 self.trash = self.sessions.list_trash();
@@ -440,7 +440,7 @@ impl App {
 
         // Mint the fork's session: manifest with the parent back-reference,
         // then its on-disk state, so the switch below adopts a real session.
-        let fork_id = frisket::SessionId::new();
+        let fork_id = crate::panes::SessionId::new();
         let mut manifest = session_runtime::GraphSessionManifest::new(fork_id, fork_graph_id);
         manifest.storage_path = Some(session::session_dir(&self.data_root, fork_id));
         manifest.parent_session = Some(self.session_id);
@@ -477,7 +477,7 @@ impl App {
 
     /// A session's display label: the manifest's name when set, else the
     /// id's first 8 hex chars.
-    pub fn session_label(&self, id: frisket::SessionId) -> String {
+    pub fn session_label(&self, id: crate::panes::SessionId) -> String {
         self.sessions
             .get(id)
             .and_then(|m| m.display_name.clone())
@@ -684,7 +684,7 @@ impl App {
     /// history and the focus restore, and returns the adoption's effects
     /// (content respawns + lens-window reopens). Session-scoped view state
     /// (omnibar, active pane, maximize) resets.
-    pub fn adopt_session(&mut self, id: frisket::SessionId) -> Vec<Effect> {
+    pub fn adopt_session(&mut self, id: crate::panes::SessionId) -> Vec<Effect> {
         self.session_id = id;
         session::record_current_session(&self.data_root, id);
         if self.sessions.update(id, |m| m.touch()) {
@@ -907,7 +907,7 @@ impl App {
         self.next_pane_id += 1;
         let ordinal = self.lenses.len();
         self.lenses.push(Some(FrisketLayout {
-            id: frisket::FrisketId::new(format!("lens-{ordinal}")),
+            id: crate::panes::FrisketId::new(format!("lens-{ordinal}")),
             label: format!("lens {ordinal}"),
             root: PaneNode::Leaf {
                 pane_id,
@@ -2127,7 +2127,7 @@ impl App {
             omnibar: OmnibarState::default(),
             data_root,
             sessions: session_runtime::ManifestStore::new(),
-            session_id: frisket::SessionId::new(),
+            session_id: crate::panes::SessionId::new(),
             content: ContentStates::default(),
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
@@ -2274,7 +2274,7 @@ mod tests {
         app.sessions
             .insert(session_runtime::GraphSessionManifest::new(
                 app.session_id,
-                frisket::GraphId::from_uuid(container),
+                crate::panes::GraphId::from_uuid(container),
             ));
         let sdir = app.session_dir();
         std::fs::create_dir_all(&sdir).unwrap();
@@ -2521,7 +2521,7 @@ mod tests {
         app.sessions
             .insert(session_runtime::GraphSessionManifest::new(
                 app.session_id,
-                frisket::GraphId::from_uuid(donor_container),
+                crate::panes::GraphId::from_uuid(donor_container),
             ));
         std::fs::create_dir_all(app.session_dir()).unwrap();
 
@@ -2567,7 +2567,7 @@ mod tests {
         );
         assert_ne!(
             fork_manifest.root_graph_id,
-            frisket::GraphId::from_uuid(donor_container),
+            crate::panes::GraphId::from_uuid(donor_container),
             "the fork minted its own real GraphId"
         );
 
@@ -2682,17 +2682,17 @@ mod tests {
         // have a home), the second is current.
         app.sessions =
             session_runtime::ManifestStore::with_root(session::sessions_root(&app.data_root));
-        let keeper = frisket::SessionId::new();
+        let keeper = crate::panes::SessionId::new();
         let mut keeper_m = session_runtime::GraphSessionManifest::new(
             keeper,
-            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xa)),
+            crate::panes::GraphId::from_uuid(uuid::Uuid::from_u128(0xa)),
         );
         keeper_m.display_name = Some("keeper".to_string());
         app.sessions.insert(keeper_m);
-        let closing_id = frisket::SessionId::new();
+        let closing_id = crate::panes::SessionId::new();
         let mut closing_m = session_runtime::GraphSessionManifest::new(
             closing_id,
-            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
+            crate::panes::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
         );
         closing_m.display_name = Some("expedition".to_string());
         app.sessions.insert(closing_m);
@@ -2727,7 +2727,7 @@ mod tests {
         let recovered = app.sessions.get(closing_id).expect("re-listed");
         assert_eq!(
             recovered.root_graph_id,
-            frisket::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
+            crate::panes::GraphId::from_uuid(uuid::Uuid::from_u128(0xb)),
             "identity intact"
         );
         assert!(
@@ -3527,7 +3527,7 @@ mod tests {
         // A fresh Overmap composes nothing (its swatch fills the pane).
         assert_eq!(
             app.pane_content(pane).and_then(|c| c.composition()),
-            Some(&frisket::PaneComposition::default())
+            Some(&crate::panes::PaneComposition::default())
         );
         // The palette offers ITS rows, named for IT.
         assert!(

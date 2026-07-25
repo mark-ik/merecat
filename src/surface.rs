@@ -14,7 +14,7 @@
 //! computes; the geometry itself is testable headless, which is the whole point
 //! of separating it from `shell.rs`.
 
-use frisket::PaneId;
+use crate::panes::PaneId;
 use uuid::Uuid;
 
 /// A rectangle in physical window pixels. `x`/`y` are the top-left corner.

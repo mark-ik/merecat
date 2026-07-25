@@ -9,7 +9,7 @@
 use winit::event::MouseButton;
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 
-use frisket::PaneContent;
+use crate::panes::PaneContent;
 use genet_probe::AutomatableExt as _;
 use inker::{SessionClick, SessionScrollKey};
 use mere::canvas::PointerButton;
@@ -337,7 +337,7 @@ impl Shell {
                                             // trashed session and switch (O3).
                                             if let Ok(id) = id.parse::<uuid::Uuid>() {
                                                 self.act(Action::RecoverSession(
-                                                    frisket::SessionId::from_uuid(id),
+                                                    crate::panes::SessionId::from_uuid(id),
                                                 ));
                                             }
                                         }

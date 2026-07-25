@@ -145,7 +145,7 @@ pub enum Action {
     /// tree the path walks (a lens's seam drags reweight the LENS's split).
     SetSplitRatio {
         space: SpaceRef,
-        path: Vec<frisket::SplitChoice>,
+        path: Vec<crate::panes::SplitChoice>,
         ratio: f32,
     },
     /// Toggle maximize on the active pane (a host view state; frisket has no
@@ -156,14 +156,14 @@ pub enum Action {
     /// The choice rides the pane's frisket leaf, so it persists with
     /// `frame.json` and moves with the pane on tear-out.
     TogglePaneSection {
-        pane: frisket::PaneId,
+        pane: crate::panes::PaneId,
         section: String,
     },
     /// Move a composed section earlier (`-1`) or later (`+1`) in a pane's
     /// stack. Composition ORDER is the config's order, so reordering is the
     /// same leaf edit; clamped at the ends (no wrap — a stack has a top).
     MovePaneSection {
-        pane: frisket::PaneId,
+        pane: crate::panes::PaneId,
         section: String,
         delta: i32,
     },
@@ -191,7 +191,7 @@ pub enum Action {
     NewSession,
     /// Switch to an existing session by id. The switcher lane (omnibar `>`)
     /// offers one of these per other session, labelled.
-    SwitchSession(frisket::SessionId),
+    SwitchSession(crate::panes::SessionId),
     /// Close the current session: trash its directory + manifest, then switch
     /// to the most-recent remaining session (minting one if it was the last).
     CloseSession,
@@ -201,7 +201,7 @@ pub enum Action {
     /// Set a session's display name (the rename mode's commit). An empty name
     /// clears it back to the derived/uuid label.
     RenameSession {
-        id: frisket::SessionId,
+        id: crate::panes::SessionId,
         name: String,
     },
     /// Remove the focused node from the graph ("forget this page"): its record
@@ -240,7 +240,7 @@ pub enum Action {
     /// (overmap O3; a Trail Removed-sessions-row click). The whole session
     /// directory moved to `.trash/` intact at close, so restore is
     /// same-identity by construction.
-    RecoverSession(frisket::SessionId),
+    RecoverSession(crate::panes::SessionId),
     /// Make `member`'s tab the active (visible) one in its workbench cell.
     WorkbenchActivate(uuid::Uuid),
     /// Close the focused node's workbench tile (its cell collapses when
@@ -277,7 +277,7 @@ pub enum Action {
 }
 
 /// A summonable pane kind. A small Copy vocabulary the app maps to
-/// `frisket::PaneContent`, so this module stays free of the pane-model crate
+/// `crate::panes::PaneContent`, so this module stays free of the pane-model crate
 /// (like the port-agnostic boundary above). Slice C summons placeholders; slice
 /// D gives each real content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -413,7 +413,7 @@ pub enum Effect {
     /// Switch the live session (port work: the shell saves the departing
     /// session, tears down its live ports — content sessions, lens windows —
     /// then has the app adopt `id` and runs the adoption's own effects).
-    SwitchSession { id: frisket::SessionId },
+    SwitchSession { id: crate::panes::SessionId },
     /// Stage a removed node's record into the recycle bin (the bin port's
     /// actor persists it in the session's eidetic store and answers with the
     /// refreshed list).
@@ -426,7 +426,7 @@ pub enum Effect {
     /// whole directory to the manifest trash via `App::apply_trash`, and
     /// adopts `next` WITHOUT the departing save (a trashed session must not
     /// be resurrected as a zombie directory by a post-trash save).
-    TrashSession { closing: frisket::SessionId, next: frisket::SessionId },
+    TrashSession { closing: crate::panes::SessionId, next: crate::panes::SessionId },
     /// The projection is stale; present another frame.
     Redraw,
 }

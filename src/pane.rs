@@ -17,7 +17,7 @@
 //! Workbench's platen tiling), and each seam becomes a divider surface that
 //! takes the drag.
 
-use frisket::{FrisketLayout, PaneContent, PaneId, PaneNode, SplitAxis, SplitChoice};
+use crate::panes::{FrisketLayout, PaneContent, PaneId, PaneNode, SplitAxis, SplitChoice};
 
 use crate::surface::Rect;
 
@@ -159,13 +159,13 @@ fn walk(node: &PaneNode, area: Rect, path: &mut Vec<SplitChoice>, out: &mut Pane
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frisket::{InsertSide, PaneContent};
+    use crate::panes::{InsertSide, PaneContent};
 
     fn leaf(id: u64, content: PaneContent) -> PaneNode {
         PaneNode::Leaf {
             pane_id: PaneId(id),
             content,
-            graph_id: frisket::GraphId::nil(),
+            graph_id: crate::panes::GraphId::nil(),
         }
     }
 
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn a_single_leaf_takes_the_whole_area() {
         let layout = FrisketLayout {
-            id: frisket::FrisketId::new("t"),
+            id: crate::panes::FrisketId::new("t"),
             label: "t".into(),
             root: leaf(1, PaneContent::Orrery),
         };
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn a_horizontal_split_halves_the_width_by_ratio() {
         let mut layout = FrisketLayout {
-            id: frisket::FrisketId::new("t"),
+            id: crate::panes::FrisketId::new("t"),
             label: "t".into(),
             root: leaf(1, PaneContent::Orrery),
         };
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn a_divider_ratio_moves_the_seam() {
         let mut layout = FrisketLayout {
-            id: frisket::FrisketId::new("t"),
+            id: crate::panes::FrisketId::new("t"),
             label: "t".into(),
             root: leaf(1, PaneContent::Orrery),
         };
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn maximize_gives_one_pane_the_whole_area() {
         let mut layout = FrisketLayout {
-            id: frisket::FrisketId::new("t"),
+            id: crate::panes::FrisketId::new("t"),
             label: "t".into(),
             root: leaf(1, PaneContent::Orrery),
         };
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn a_vertical_split_halves_the_height() {
         let mut layout = FrisketLayout {
-            id: frisket::FrisketId::new("t"),
+            id: crate::panes::FrisketId::new("t"),
             label: "t".into(),
             root: leaf(1, PaneContent::Orrery),
         };

@@ -1,8 +1,8 @@
-//! Operations on [`super::FrisketLayout`] — split, summon, reparent,
+//! Operations on [`super::FrisketLayout`] â€” split, summon, reparent,
 //! close, iterate. Split out of `lib.rs` to keep the parent module
 //! under the workspace's 600-LOC ceiling.
 
-use crate::{
+use crate::panes::{
     FrisketLayout, GraphId, InsertSide, PaneContent, PaneId, PaneNode, SplitAxis, SplitChoice,
     SplitPath,
 };
@@ -100,7 +100,7 @@ impl FrisketLayout {
 
     /// Move the leaf at `source_path` to be adjacent to the leaf
     /// at `target_path`, on the indicated `side`. Preserves the
-    /// source leaf's content + `pane_id` + `graph_id` — only its
+    /// source leaf's content + `pane_id` + `graph_id` â€” only its
     /// position in the tree changes, so per-pane state (camera,
     /// tiles, lineage tree) survives the move.
     ///
@@ -108,7 +108,7 @@ impl FrisketLayout {
     /// - When either path doesn't resolve to a leaf.
     /// - When `source_path == target_path` (no-op move).
     /// - When the target leaf is a descendant of the source's
-    ///   parent in a way that would orphan nodes — currently
+    ///   parent in a way that would orphan nodes â€” currently
     ///   approximated by refusing moves where the source has only
     ///   one sibling (collapsing the split would leave nothing
     ///   adjacent to drop onto). Conservative; can be refined.
@@ -167,7 +167,7 @@ impl FrisketLayout {
         // Re-find the target by pane_id (its path may have shifted
         // because of the close-collapse).
         let Some(new_target_path) = path_for_pane_id(&self.root, target_pane) else {
-            // Target vanished (shouldn't happen — source and
+            // Target vanished (shouldn't happen â€” source and
             // target were distinct leaves). Bail; tree is now
             // inconsistent (source lost). Best-effort recovery is
             // out of scope for v0.
@@ -179,7 +179,7 @@ impl FrisketLayout {
     }
 
     /// Close (remove) the leaf at `path`. Walks to the parent split,
-    /// promotes the sibling leaf in its place — so the surrounding
+    /// promotes the sibling leaf in its place â€” so the surrounding
     /// layout collapses naturally. Returns `true` if a leaf was
     /// removed; `false` if the path didn't resolve to a leaf or if
     /// the target is the root (a frame must have at least one leaf).
@@ -252,7 +252,7 @@ impl FrisketLayout {
     /// leaves untouched. The pane-as-unit switch: a session switch re-points the
     /// panes that were showing the outgoing graph, not every graph-bound leaf, so
     /// a pane pinned to a different graph survives the switch. (Window composition
-    /// — pane-as-unit; supersedes [`retag_graph_bound`] on the switch path, which
+    /// â€” pane-as-unit; supersedes [`retag_graph_bound`] on the switch path, which
     /// stays for the initial all-leaves binding at restore.)
     pub fn retag_graph_bound_from(&mut self, from: GraphId, to: GraphId) {
         fn walk(node: &mut PaneNode, from: GraphId, to: GraphId) {
@@ -278,7 +278,7 @@ impl FrisketLayout {
     /// `fallback`, leaving leaves pinned to a *valid* graph untouched. The restore
     /// path: a layout reloaded with a second graph-pane keeps that pane pinned (its
     /// graph is real), while genuinely stale leaves snap to the active graph. (MG5;
-    /// Window composition — pane-as-unit restore.)
+    /// Window composition â€” pane-as-unit restore.)
     pub fn retag_graph_bound_invalid(
         &mut self,
         valid: &std::collections::HashSet<GraphId>,
@@ -311,14 +311,14 @@ impl FrisketLayout {
     /// spatial panes on one graph can't hold independent cameras yet, so a duplicate
     /// renders blank; this is the guardrail that stops them forming or accumulating
     /// across restores. Window-chrome leaves and distinct-graph panes are untouched.
-    /// (Window composition — pane-as-unit; one Orrery pane per graph.)
+    /// (Window composition â€” pane-as-unit; one Orrery pane per graph.)
     pub fn dedupe_graph_panes(&mut self) {
         let mut seen: std::collections::HashSet<GraphId> = std::collections::HashSet::new();
         dedup_node(&mut self.root, &mut seen);
     }
 
     /// Mutable access to one pane's content, by id. The seam a host needs to
-    /// edit a leaf's OWN config in place — a Gloss pane's composed sections
+    /// edit a leaf's OWN config in place â€” a Gloss pane's composed sections
     /// ride its [`PaneContent::Gloss`], so toggling one is a leaf edit, which
     /// is what makes the choice persist with the layout and travel with the
     /// pane on tear-out. `None` when no leaf carries that id.
@@ -386,7 +386,7 @@ fn dedup_node(node: &mut PaneNode, seen: &mut std::collections::HashSet<GraphId>
             let drop_first = dedup_node(first, seen);
             let drop_second = dedup_node(second, seen);
             match (drop_first, drop_second) {
-                // Both children are duplicate leaves → this split collapses too.
+                // Both children are duplicate leaves â†’ this split collapses too.
                 (true, true) => true,
                 (true, false) => {
                     let keeper = std::mem::replace(second.as_mut(), dedup_placeholder());
@@ -405,7 +405,7 @@ fn dedup_node(node: &mut PaneNode, seen: &mut std::collections::HashSet<GraphId>
 }
 
 /// A throwaway leaf used as the `mem::replace` stand-in while promoting a split's
-/// survivor over a dropped duplicate (never observed — the node is overwritten).
+/// survivor over a dropped duplicate (never observed â€” the node is overwritten).
 fn dedup_placeholder() -> PaneNode {
     PaneNode::Leaf {
         pane_id: PaneId(0),
@@ -414,7 +414,7 @@ fn dedup_placeholder() -> PaneNode {
     }
 }
 
-/// Read-only walker — sibling of [`walk_mut`].
+/// Read-only walker â€” sibling of [`walk_mut`].
 fn walk<'a>(node: &'a PaneNode, path: &[SplitChoice]) -> Option<&'a PaneNode> {
     let mut current = node;
     for step in path {

@@ -5,7 +5,7 @@
 use accesskit::{Node, Role};
 use uxtree::{UxTree, node_id_for_path};
 
-use crate::{FrisketLayout, PaneContent, PaneId, PaneNode};
+use crate::panes::{FrisketLayout, PaneContent, PaneId, PaneNode};
 
 /// Project a [`FrisketLayout`] into a uxtree subtree describing the
 /// pane structure.
@@ -14,7 +14,7 @@ use crate::{FrisketLayout, PaneContent, PaneId, PaneNode};
 /// their description. Leaves become `Role::Group` nodes labeled by
 /// their `PaneContent` tag. The leaf nodes are addressable by stable
 /// id (derived from their `PaneId`); the host can use those ids to
-/// stitch each leaf's content subtree (workbench / orrery / …) under
+/// stitch each leaf's content subtree (workbench / orrery / â€¦) under
 /// the corresponding leaf node, or render content separately while
 /// keeping uxtree structurally aware of the layout.
 pub fn project_frisket(layout: &FrisketLayout) -> UxTree {
@@ -29,7 +29,7 @@ pub fn project_frisket(layout: &FrisketLayout) -> UxTree {
 ///
 /// Use this when the host wants the frame's leaf nodes to actually
 /// carry their content's a11y / automation tree (workbench in pane 1,
-/// orrery in pane 2, …) rather than tracking parallel subtrees.
+/// orrery in pane 2, â€¦) rather than tracking parallel subtrees.
 pub fn project_frisket_with<F>(layout: &FrisketLayout, mut content_for: F) -> UxTree
 where
     F: FnMut(&PaneContent, PaneId) -> Option<UxTree>,

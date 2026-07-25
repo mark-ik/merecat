@@ -24,7 +24,7 @@ use mere::kernel::graph::{
 use session_runtime::ManifestStore;
 use std::collections::HashMap;
 
-use frisket::SessionId;
+use crate::panes::SessionId;
 
 /// The url scheme an overmap node carries: `mere://session/<uuid>`.
 const SESSION_URL_PREFIX: &str = "mere://session/";
@@ -114,7 +114,7 @@ pub fn overmap_graph(sessions: &ManifestStore) -> Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frisket::GraphId;
+    use crate::panes::GraphId;
     use session_runtime::GraphSessionManifest;
 
     fn store_with(sessions: Vec<GraphSessionManifest>) -> ManifestStore {

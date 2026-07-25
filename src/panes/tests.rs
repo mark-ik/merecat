@@ -4,7 +4,7 @@
 use accesskit::{Node, Role};
 use uxtree::{UxTree, node_id_for_path};
 
-use crate::*;
+use crate::panes::*;
 
 fn fixture_three_pane_frame() -> FrisketLayout {
     // Layout:
@@ -175,11 +175,11 @@ fn reparent_leaf_moves_leaf_without_losing_pane_id() {
 
     // After: apparatus should be present somewhere in the tree.
     let apparatus_after =
-        crate::layout::path_for_pane_id(&layout.root, PaneId(3)).expect("apparatus still present");
+        crate::panes::layout::path_for_pane_id(&layout.root, PaneId(3)).expect("apparatus still present");
     let workbench_after =
-        crate::layout::path_for_pane_id(&layout.root, PaneId(1)).expect("workbench still present");
+        crate::panes::layout::path_for_pane_id(&layout.root, PaneId(1)).expect("workbench still present");
     let orrery_after =
-        crate::layout::path_for_pane_id(&layout.root, PaneId(2)).expect("orrery still present");
+        crate::panes::layout::path_for_pane_id(&layout.root, PaneId(2)).expect("orrery still present");
     // All three leaves present, no duplication.
     let leaves: Vec<_> = layout.iter_leaves().collect();
     assert_eq!(leaves.len(), 3);

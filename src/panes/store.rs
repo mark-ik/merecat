@@ -1,4 +1,4 @@
-//! Pane-layout sidecar: the pane split tree ([`crate::FrisketLayout`])
+//! Pane-layout sidecar: the pane split tree ([`crate::panes::FrisketLayout`])
 //! persisted beside `graph.json`, so a window's pane arrangement (which panes
 //! are open, their split ratios) survives a restart.
 //!
@@ -20,7 +20,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::FrisketLayout;
+use crate::panes::FrisketLayout;
 
 /// Filename for the pane layout's sidecar (beside `graph.json`).
 ///
@@ -102,7 +102,7 @@ pub fn load_lens_spaces(session_dir: &Path) -> io::Result<Option<Vec<Option<Fris
 
 #[cfg(test)]
 mod tests {
-    use crate::{FrisketId, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
+    use crate::panes::{FrisketId, GraphId, InsertSide, PaneContent, PaneId, PaneNode};
 
     use super::*;
 

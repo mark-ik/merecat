@@ -28,7 +28,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 
-use frisket::PaneContent;
+use crate::panes::PaneContent;
 
 use crate::action::{Action, Effect, Update};
 use crate::app::App;
@@ -200,7 +200,7 @@ pub struct Shell {
     overmap_pane: Option<crate::swatch_pane::SwatchPane>,
     /// Which pane the pointer is hovering (pane pointer-move routing): lets a
     /// move off a pane deliver its Leave so hover emphasis clears.
-    hovered_pane: Option<frisket::PaneId>,
+    hovered_pane: Option<crate::panes::PaneId>,
     /// The chrome, as a cambium view over a FOREST of window-roots (one
     /// shared document, one projection per window): retained + diffed, row
     /// clicks live, lens windows carry the caption chip. Replaces the
@@ -653,7 +653,7 @@ impl Shell {
     }
 
     /// A pane's `PaneContent`, looked up from the frisket tree by id.
-    fn pane_content(&self, id: frisket::PaneId) -> Option<PaneContent> {
+    fn pane_content(&self, id: crate::panes::PaneId) -> Option<PaneContent> {
         self.app
             .frisket
             .iter_leaves()
@@ -662,7 +662,7 @@ impl Shell {
     }
 
     /// A pane's display label, looked up from the frisket tree by id.
-    fn pane_label(&self, id: frisket::PaneId) -> String {
+    fn pane_label(&self, id: crate::panes::PaneId) -> String {
         self.pane_content(id)
             .map(|content| pane_display_label(&content))
             .unwrap_or_default()
@@ -711,7 +711,7 @@ impl Shell {
                             crate::trail_pane::TrailPaneAction::RecoverSession(id) => {
                                 if let Ok(id) = id.parse::<uuid::Uuid>() {
                                     out.push(Action::RecoverSession(
-                                        frisket::SessionId::from_uuid(id),
+                                        crate::panes::SessionId::from_uuid(id),
                                     ));
                                 }
                             }
@@ -1137,7 +1137,7 @@ impl Shell {
     }
 
     /// A pane's `PaneContent` in a LENS window's space.
-    fn lens_pane_content(&self, ordinal: usize, id: frisket::PaneId) -> Option<PaneContent> {
+    fn lens_pane_content(&self, ordinal: usize, id: crate::panes::PaneId) -> Option<PaneContent> {
         self.app
             .lenses
             .get(ordinal)

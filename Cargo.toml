@@ -1,8 +1,4 @@
-# Root package + workspace: `crates/frisket` joined at meerkat's deletion
-# (2026-07-18) — a same-repo path member, so the committed manifest still
-# carries no cross-repo local paths.
 [workspace]
-members = ["crates/frisket"]
 
 [package]
 name = "merecat"
@@ -66,18 +62,16 @@ graphshell-client = { git = "https://github.com/mark-ik/mere.git", branch = "mai
 graphshell-endpoint = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 graphshell-protocol = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-# The pane model (rung 5 slice C): FrisketLayout, PaneContent, the PaneNode
-# split tree — HOME since meerkat's deletion (2026-07-18): a workspace member
-# of this repo, per the 2026-07-14 destination decision (its PaneContent
-# names merecat's panes). Carries the frame.json store as `frisket::store`.
-frisket = { path = "crates/frisket" }
+# The pane model (rung 5 slice C) is no longer a dependency at all: it folded
+# into `src/panes` on 2026-07-25. One consumer wants no package, and the name
+# `frisket` went to `cambium::frisket`, the shared pane frame this app consumes.
 # The a11y/automation tree vocabulary (rung 5 slice F): UxTree + stitch +
 # stable path-derived ids. Not facade-re-exported by mere (a named facade
-# gap), so a direct git dep like frisket.
+# gap), so a direct git dep.
 uxtree = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Navigation vocabulary (the r3-owed Back/Forward/Reload): chrome's History
 # is the cursor over visited addresses. Not facade-re-exported; direct dep
-# like frisket and uxtree.
+# like uxtree.
 chrome = { package = "mere-chrome", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # AccessKit node vocabulary for the projection (matches mere's 0.24 pin).
 accesskit = "0.24"
@@ -153,6 +147,11 @@ base64 = "0.22"
 wgpu = { version = "29", default-features = false, features = ["std", "wgsl"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The pane model (src/panes) persists its layout, and `incipit` supplies the
+# workspace ids its leaves carry. Both arrived with the folded frisket crate,
+# which had carried them itself.
+serde = { version = "1", features = ["derive"] }
+incipit = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 serde_json = "1"
 
 [features]
