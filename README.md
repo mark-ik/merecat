@@ -1,7 +1,5 @@
 # turnstone
 
-The cat that lives on the mere.
-
 Turnstone is a graph-workspace browser: an infinite canvas of nodes, panes, and
 web surfaces over a semantically related content graph. It is the reference
 host for [mere](https://github.com/mark-ik/mere), the library that composes
