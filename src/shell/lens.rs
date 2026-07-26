@@ -198,26 +198,19 @@ impl Shell {
             let (rw, rh) = (rect.w.round().max(1.0) as u32, rect.h.round().max(1.0) as u32);
             let (scene, clear) = match surface.kind {
                 crate::surface::SurfaceKind::Canvas => {
-                    // RESIZE BEFORE INSTALLING, and restore the size before
-                    // restoring the camera. `Canvas::resize` re-centres by
-                    // shifting `camera.offset` half the size delta, and a
-                    // `Viewport` carries the camera WITHOUT the view size — so
-                    // installing a camera and then resizing shifts that camera
-                    // by the delta between two windows' rects. Read back and
-                    // stored, it drifts a little every lens frame, in opposite
-                    // directions for the two windows, until both graphs walk
-                    // off-screen. Ordered this way each shift lands on a camera
-                    // that is overwritten on the next line, so it is discarded.
+                    // Install this lens's camera, frame, stash it back, restore
+                    // the primary's. A `Viewport` carries the view size it was
+                    // framed for, so installing one sets the size WITH the
+                    // camera and no `resize` is involved — `resize` re-centres,
+                    // which is right for a window that actually changed size and
+                    // wrong for a camera we are only borrowing (it drifted both
+                    // windows off-screen, mere-canvas pins the invariant).
                     let saved = self.app.canvas.viewport();
-                    self.app.canvas.resize(rw, rh);
                     self.app.canvas.set_viewport(new_viewport);
                     self.app.drive_layout_strategy(rw, rh);
                     let (scene, anim) = self.app.canvas.frame(rw, rh);
                     animating |= anim;
                     new_viewport = self.app.canvas.viewport();
-                    self.app
-                        .canvas
-                        .resize(self.width.max(1), self.height.max(1));
                     self.app.canvas.set_viewport(saved);
                     (scene, wgpu::Color::WHITE)
                 }
@@ -491,10 +484,8 @@ impl Shell {
         let Some(lens) = self.lens_windows.get_mut(&id) else {
             return;
         };
-        // Same ordering rule as the render path: resize first, so the
-        // re-centring shift lands on the camera we are about to replace.
+        // The lens camera, with the size it was framed for (see render_lens).
         let saved = self.app.canvas.viewport();
-        self.app.canvas.resize(lens.width, lens.height);
         self.app.canvas.set_viewport(lens.viewport);
         let mut redraw = false;
         match event {
@@ -529,9 +520,6 @@ impl Shell {
         // Stash the lens camera back and restore the primary's.
         let lens = self.lens_windows.get_mut(&id).expect("lens still present");
         lens.viewport = self.app.canvas.viewport();
-        self.app
-            .canvas
-            .resize(self.width.max(1), self.height.max(1));
         self.app.canvas.set_viewport(saved);
         if redraw {
             lens.window.request_redraw();
