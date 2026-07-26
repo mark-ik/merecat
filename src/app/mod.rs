@@ -568,42 +568,7 @@ impl App {
                 self.canvas.visit(&url);
                 vec![Effect::Redraw]
             }
-            Action::Reload => {
-                let Some(target) = self
-                    .canvas
-                    .focused_member()
-                    .zip(self.canvas.focused_url().map(str::to_string))
-                else {
-                    return vec![Effect::Redraw];
-                };
-                let (node, url) = target;
-                self.events.push(AppEvent::Reloaded(url.clone()));
-                let mut effects = Vec::new();
-                if fetch::is_fetchable(&url) {
-                    effects.push(Effect::FetchPage {
-                        node,
-                        url: url.clone(),
-                    });
-                }
-                // A live (or in-flight) session respawns fresh; a node
-                // without content stays without (reload is not a spawn).
-                if matches!(
-                    self.content.get(node),
-                    Some(
-                        crate::content::NodeContent::Live | crate::content::NodeContent::Requested
-                    )
-                ) {
-                    self.content.note_requested(node);
-                    self.events.push(AppEvent::ContentState {
-                        node,
-                        state: "requested".to_string(),
-                    });
-                    effects.push(Effect::CloseContent { node });
-                    effects.push(Effect::SpawnContent { node, url });
-                }
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::Reload => self.reload_focused(),
             Action::ReseedLayout => {
                 if self.canvas.reseed() {
                     self.events.push(AppEvent::LayoutReseeded);
@@ -673,32 +638,7 @@ impl App {
                 vec![Effect::SwitchSession { id }]
             }
             // ---- Denizen residency (participant gate B1) ----
-            Action::InstallDenizen { path } => {
-                match crate::denizen::stage_install(std::path::Path::new(&path)) {
-                    Ok(pending) => {
-                        self.events
-                            .push(AppEvent::DenizenStaged(pending.label.clone()));
-                        self.pending_install = Some(pending);
-                        // Surface the review: the palette opens on the actions
-                        // lane, whose top rows are the Confirm (carrying the
-                        // ASK) and Cancel.
-                        self.omnibar = OmnibarState {
-                            open: true,
-                            text: ">".to_string(),
-                            ..OmnibarState::default()
-                        };
-                        self.focus = FocusTarget::Chrome;
-                        let actions = self.available_actions();
-                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                        vec![Effect::Redraw]
-                    }
-                    Err(err) => {
-                        tracing::warn!(%err, %path, "denizen install refused at staging");
-                        self.events.push(AppEvent::DenizenRefused(err));
-                        vec![Effect::Redraw]
-                    }
-                }
-            }
+            Action::InstallDenizen { path } => self.install_denizen(path),
             Action::ConfirmInstallDenizen => {
                 let Some(pending) = self.pending_install.take() else {
                     return vec![Effect::Redraw];
@@ -718,118 +658,8 @@ impl App {
                 self.omnibar = OmnibarState::default();
                 vec![Effect::Redraw]
             }
-            Action::UninstallDenizen { member } => {
-                // Revocation, the mirror of install: the user's delegations to
-                // this denizen are revoked (cascading to anything it delegated
-                // onward), and it stops residing. The node and its world are
-                // untouched — revoking authority destroys nothing.
-                let Some(resident) = self.denizens.residents.remove(&member) else {
-                    return vec![Effect::Redraw];
-                };
-                let revoked = self.denizens.authority.revoke_root_grants(resident.subject);
-                session_runtime::remove_denizen_binding(&mut self.facets, member);
-                let hex = resident.subject.to_hex();
-                // The certificates go with the residency: a later adopt must
-                // not resurrect the authority we just revoked.
-                let path = crate::denizen::certs_path(&self.session_dir(), &hex);
-                if path.is_file() && let Err(err) = std::fs::remove_file(&path) {
-                    tracing::warn!(%err, path = ?path, "failed to remove revoked certificates");
-                }
-                tracing::info!(label = %resident.label, revoked, "denizen uninstalled");
-                self.events
-                    .push(AppEvent::DenizenUninstalled(resident.label.clone()));
-                vec![Effect::SaveSession, Effect::Redraw]
-            }
-            Action::RunDenizen { member } => {
-                let Some((subject, label)) = self
-                    .denizens
-                    .residents
-                    .get(&member)
-                    .map(|r| (r.subject, r.label.clone()))
-                else {
-                    return vec![Effect::Redraw];
-                };
-                let facet = |id: &str| {
-                    self.facets
-                        .get(&member, &chartulary::FacetId::new(id))
-                        .and_then(|v| v.as_str().map(str::to_string))
-                };
-                // Which lane runs this resident is a property of what it IS
-                // (a script's source facet, or a component's file pointer),
-                // never of what it may DO — that is the grant's business.
-                let component_file = facet(crate::denizen::COMPONENT_FACET);
-                let source = facet(crate::denizen::SCENARIO_SOURCE_FACET);
-                if let Some(file) = component_file {
-                    // The wasm lane: emissions are ring-gated inside the run,
-                    // and what comes back is already authorized.
-                    #[cfg(not(feature = "wasm"))]
-                    {
-                        let _ = file;
-                        tracing::warn!(%label, "component run refused: built without the wasm feature");
-                        self.events.push(AppEvent::DenizenRefused(
-                            "this build carries no component runtime".to_string(),
-                        ));
-                        return vec![Effect::Redraw];
-                    }
-                    #[cfg(feature = "wasm")]
-                    {
-                        let path = crate::denizen::component_path(&self.session_dir(), &file);
-                        let run = match crate::component::run(
-                            &path,
-                            &self.denizens.authority,
-                            subject,
-                            "run",
-                            "",
-                        ) {
-                            Ok(run) => run,
-                            Err(err) => {
-                                tracing::warn!(%err, %label, "component run failed");
-                                self.events.push(AppEvent::DenizenRefused(err));
-                                return vec![Effect::Redraw];
-                            }
-                        };
-                        for line in &run.logs {
-                            tracing::info!(%label, "{line}");
-                        }
-                        for refusal in &run.refusals {
-                            tracing::info!(%label, "component emission refused: {refusal}");
-                        }
-                        return self.lower_denizen_actions(subject, label, run.actions);
-                    }
-                }
-                let Some(source) = source else {
-                    return vec![Effect::Redraw];
-                };
-                // Evaluate the body (read-only against app truth; mutation
-                // only ever leaves as typed Actions). The runnable lane is the
-                // piccolo feature; a runtime-free build refuses honestly.
-                #[cfg(not(feature = "piccolo"))]
-                let actions: Vec<Action> = {
-                    let _ = (&source, &subject);
-                    tracing::warn!(%label, "denizen run refused: built without the piccolo feature");
-                    self.events.push(AppEvent::DenizenRefused(
-                        "this build carries no script runtime".to_string(),
-                    ));
-                    return vec![Effect::Redraw];
-                };
-                #[cfg(feature = "piccolo")]
-                let actions = match crate::script::run(
-                    self,
-                    &source,
-                    // B2: what this run may do derives from the denizen's
-                    // grant (the participant node), never a blanket flag.
-                    crate::script::capabilities_from_grant(&self.denizens.authority, subject),
-                    crate::denizen::RUN_BUDGET,
-                ) {
-                    Ok(actions) => actions,
-                    Err(err) => {
-                        tracing::warn!(%err, %label, "denizen run failed");
-                        self.events.push(AppEvent::DenizenRefused(err));
-                        return vec![Effect::Redraw];
-                    }
-                };
-                self.lower_denizen_actions(subject, label, actions)
-            }
+            Action::UninstallDenizen { member } => self.uninstall_denizen(member),
+            Action::RunDenizen { member } => self.run_denizen(member),
             Action::RecoverSession(id) => {
                 // Overmap O3 recovery: the trashed directory moves back whole
                 // (graph + facets + bin), the manifest re-lists, and the
@@ -895,147 +725,8 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
-            Action::DeleteFocusedNode => {
-                // Build the bin record off the LIVING node (identity, url,
-                // title, tags — everything recovery restores), then drop the
-                // node and reap what hung off it: the live content session
-                // and any workbench tile. The record stages through the bin
-                // port (Effect::RecordDeleted); the actor answers with the
-                // refreshed list, so `removed` mirrors the store, never a
-                // hand-kept copy.
-                let record = self.canvas.focused_member().and_then(|m| {
-                    let graph = self.canvas.graph();
-                    let (key, node) = graph.get_node_by_id(m)?;
-                    let title = node.title.trim();
-                    // The node's whole character rides the tombstone: its
-                    // borne world (by id) and its facet bundle, so recovery
-                    // restores residency/arrangement/web state, not just
-                    // identity.
-                    let facets = self.facets.facets_of(&m).map(|f| {
-                        serde_json::Value::Object(
-                            f.iter()
-                                .map(|(id, value)| (id.as_str().to_string(), value.clone()))
-                                .collect(),
-                        )
-                    });
-                    Some(crate::action::RemovedRecord {
-                        node_id: node.id,
-                        url: node.url().to_string(),
-                        title: (!title.is_empty() && title != node.url())
-                            .then(|| title.to_string()),
-                        tags: graph
-                            .node_tags(key)
-                            .map(|t| t.iter().cloned().collect())
-                            .unwrap_or_default(),
-                        deleted_at_ms: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0),
-                        nested: node.nested.as_ref().map(|log| log.as_str().to_string()),
-                        facets,
-                    })
-                });
-                let Some(record) = record else {
-                    return vec![Effect::Redraw];
-                };
-                // Archive-never-orphan: the world's file moves to the archive
-                // slot BEFORE the bearing node leaves; a failed archive
-                // aborts the delete (the node stays, nothing is lost).
-                if let Some(log_id) = &record.nested
-                    && let Err(err) = crate::denizen::archive_world(&self.session_dir(), log_id)
-                {
-                    tracing::warn!(%err, log_id, "world archive failed; delete aborted");
-                    return vec![Effect::Redraw];
-                }
-                let Some(member) = self.canvas.remove_focused() else {
-                    // The node did not leave after all: put the world back.
-                    if let Some(log_id) = &record.nested {
-                        let _ = crate::denizen::unarchive_world(&self.session_dir(), log_id);
-                    }
-                    return vec![Effect::Redraw];
-                };
-                // The record is the archive now: the live facets go, and a
-                // denizen's runtime entry goes with its node.
-                self.facets.remove_node(&member);
-                if self.denizens.residents.remove(&member).is_some() {
-                    let sdir = self.session_dir();
-                    self.denizens = crate::denizen::rebuild(
-                        &self.facets,
-                        self.canvas.graph(),
-                        &sdir,
-                        self.identity.as_ref(),
-                    );
-                }
-                self.workbench.close_tile(member);
-                self.events.push(AppEvent::NodeRemoved(record.url.clone()));
-                vec![
-                    Effect::RecordDeleted { record },
-                    Effect::CloseContent { node: member },
-                    Effect::SaveSession,
-                    Effect::Redraw,
-                ]
-            }
-            Action::RecoverDeletedNode(id) => {
-                // Recover from the bin mirror BY IDENTITY: the node re-mints
-                // under its ORIGINAL id with its recorded title/tags (the
-                // canvas guards idempotency), gets selected + centered, joins
-                // the visit history, and refetches. The bin record stays in
-                // the store (append-only until athanor's pass); the Trail's
-                // Removed section derives it away because the node is present
-                // again.
-                let Some(record) = self.removed.iter().find(|r| r.node_id == id).cloned() else {
-                    return vec![Effect::Redraw];
-                };
-                let member = self.canvas.recover_node(
-                    record.node_id,
-                    &record.url,
-                    record.title.as_deref(),
-                    &record.tags,
-                );
-                // Restore the node's character from the tombstone: the facet
-                // bundle whole, then the borne world (file back to the live
-                // slot, pointer re-borne through the spine), then the denizen
-                // runtime so a recovered resident resides again.
-                if let Some(serde_json::Value::Object(map)) = &record.facets {
-                    for (facet_id, value) in map {
-                        let _ = self.facets.set(
-                            member,
-                            chartulary::FacetId::new(facet_id.as_str()),
-                            value.clone(),
-                            &chartulary::AcceptAll,
-                        );
-                    }
-                }
-                if let Some(log_id) = &record.nested {
-                    let sdir = self.session_dir();
-                    if let Err(err) = crate::denizen::unarchive_world(&sdir, log_id) {
-                        tracing::warn!(%err, log_id, "world unarchive failed; recovering empty");
-                    }
-                    let _ = self.canvas.set_node_nested_for(
-                        member,
-                        Some(mere::kernel::graph::LogId::new(log_id.clone())),
-                    );
-                    self.denizens =
-                        crate::denizen::rebuild(
-                            &self.facets,
-                            self.canvas.graph(),
-                            &sdir,
-                            self.identity.as_ref(),
-                        );
-                }
-                self.canvas.center_on_selected();
-                self.history.visit(record.url.clone());
-                self.events
-                    .push(AppEvent::NodeRecovered(record.url.clone()));
-                let mut effects = vec![Effect::SaveSession, Effect::Redraw];
-                if fetch::is_fetchable(&record.url) {
-                    effects.push(Effect::FetchPage {
-                        node: member,
-                        url: record.url.clone(),
-                    });
-                }
-                effects
-            }
+            Action::DeleteFocusedNode => self.delete_focused_node(),
+            Action::RecoverDeletedNode(id) => self.recover_deleted_node(id),
             Action::EmptyRecycleBin => {
                 // Athanor's oven, on command: the bin actor clears its store
                 // and answers with the empty list (which refreshes the mirror).
@@ -1059,89 +750,12 @@ impl App {
             // windows is a property of the RUNNER staying put while the leaf
             // changes trees, which is exactly what the forest dom exists to
             // buy the one-shared-DOM shape.
-            Action::TearOutActivePane => {
-                let Some(active) = self.active_pane else {
-                    return vec![Effect::Redraw];
-                };
-                // The pane leaves whichever window's tree holds it (a lens
-                // pane tears out onward, not just primary panes out).
-                let Some(source) = self.space_of(active) else {
-                    return vec![Effect::Redraw];
-                };
-                // Read the leaf wholesale (id + content + graph binding), then
-                // remove it from its source tree.
-                let Some(layout) = self.space_mut(source) else {
-                    return vec![Effect::Redraw];
-                };
-                let Some((pane_id, content, graph_id)) = layout
-                    .iter_leaves()
-                    .find(|(id, _, _)| *id == active)
-                    .map(|(id, c, g)| (id, c.clone(), g))
-                else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(path) = crate::pane::path_of(layout, active) else {
-                    return vec![Effect::Redraw];
-                };
-                if !layout.close_leaf(&path) {
-                    return vec![Effect::Redraw];
-                }
-                if self.maximized == Some(active) {
-                    self.maximized = None;
-                }
-                let mut effects = self.land_leaf_in_lens(
-                    PaneNode::Leaf {
-                        pane_id,
-                        content: content.clone(),
-                        graph_id,
-                    },
-                    Some(source),
-                );
-                // The moved pane STAYS active: it kept living (same runner,
-                // same id), so pane-anchored ops now follow it to its new
-                // window — summon-beside lands there, the divider op reweights
-                // there (the lens-frisket-ops receipt's hinge).
-                self.active_pane = Some(pane_id);
-                self.events
-                    .push(AppEvent::PaneTornOut(content.tag().to_string()));
-                // The move is durable structure in TWO trees; persist it (the
-                // lens-window sidecar is what makes the window survive a
-                // restart).
-                effects.push(Effect::SaveSession);
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::TearOutActivePane => self.tear_out_active_pane(),
             // The trichotomy's BRANCH arm, gesture-first: a workbench tab
             // dragged out of the pane. The tile leaves platen's tiling and
             // becomes a pinned Tile pane in a lens window; its live session
             // (if any) composites there as the pane's content surface.
-            Action::TearOutTile { member } => {
-                if !self.workbench.close_tile(member) {
-                    return vec![Effect::Redraw];
-                }
-                let pane_id = PaneId(self.next_pane_id);
-                self.next_pane_id += 1;
-                let mut effects = self.land_leaf_in_lens(
-                    PaneNode::Leaf {
-                        pane_id,
-                        content: PaneContent::Tile(member),
-                        graph_id: GraphId::nil(),
-                    },
-                    None,
-                );
-                self.active_pane = Some(pane_id);
-                let label = self
-                    .canvas
-                    .graph()
-                    .nodes()
-                    .find(|(_, n)| n.id == member)
-                    .map(|(_, n)| n.url().to_string())
-                    .unwrap_or_default();
-                self.events.push(AppEvent::TileTornOut(label));
-                effects.push(Effect::SaveSession);
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::TearOutTile { member } => self.tear_out_tile(member),
             // The trichotomy's FORK arm: snapshot the component into a fresh
             // session and switch to it (G4-R R2; the shell saves the donor on
             // the way out, as every switch does).
@@ -1150,39 +764,7 @@ impl App {
                 Some(member) => self.fork_session_from(member),
                 None => Vec::new(),
             },
-            Action::SetViewerOverride { member, viewer } => {
-                self.browser.entry(member).viewer_override = viewer.clone();
-                self.events.push(AppEvent::ViewerChanged {
-                    node: member,
-                    viewer: viewer.clone().unwrap_or_else(|| "auto".to_string()),
-                });
-                let mut effects = Vec::new();
-                // Live (or in-flight) content respawns through the now-pinned
-                // route, so the setting is seen applying (the Reload shape).
-                if matches!(
-                    self.content.get(member),
-                    Some(
-                        crate::content::NodeContent::Live | crate::content::NodeContent::Requested
-                    )
-                ) && let Some(url) = self
-                    .canvas
-                    .graph()
-                    .nodes()
-                    .find(|(_, n)| n.id == member)
-                    .map(|(_, n)| n.url().to_string())
-                {
-                    self.content.note_requested(member);
-                    self.events.push(AppEvent::ContentState {
-                        node: member,
-                        state: "requested".to_string(),
-                    });
-                    effects.push(Effect::CloseContent { node: member });
-                    effects.push(Effect::SpawnContent { node: member, url });
-                }
-                effects.push(Effect::SaveSession);
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::SetViewerOverride { member, viewer } => self.set_viewer_override(member, viewer),
             Action::SetNodeSprite {
                 member,
                 data_uri,
@@ -1198,36 +780,7 @@ impl App {
                 self.events.push(AppEvent::NodeSpriteSet(member));
                 vec![Effect::SaveSession, Effect::Redraw]
             }
-            Action::ToggleNodeContent => {
-                // The flip targets the focused node; no focus, no-op (the
-                // caption chip tells the user what would flip).
-                // Resolve the node by MEMBER, not by URL round-trip: two
-                // nodes may share a URL (the sample graph + an open), and
-                // get_node_by_url picks arbitrarily between them.
-                let Some(target) = self
-                    .canvas
-                    .focused_member()
-                    .zip(self.canvas.focused_url().map(str::to_string))
-                else {
-                    return Vec::new();
-                };
-                let (node, url) = target;
-                if self.content.flip_spawns(node) {
-                    self.content.note_requested(node);
-                    self.events.push(AppEvent::ContentState {
-                        node,
-                        state: "requested".to_string(),
-                    });
-                    vec![Effect::SpawnContent { node, url }, Effect::Redraw]
-                } else {
-                    self.content.note_closed(node);
-                    self.events.push(AppEvent::ContentState {
-                        node,
-                        state: "closed".to_string(),
-                    });
-                    vec![Effect::CloseContent { node }, Effect::Redraw]
-                }
-            }
+            Action::ToggleNodeContent => self.toggle_node_content(),
             Action::OmnibarOpen { command } => {
                 self.omnibar = OmnibarState {
                     open: true,
@@ -1319,134 +872,12 @@ impl App {
                 self.omnibar.selected = index;
                 return self.update(Action::OmnibarCommit);
             }
-            Action::OmnibarCommit => {
-                // Rename mode captures the whole line as the new name and
-                // commits it, bypassing the find/go/actions lanes.
-                if let crate::ui::OmnibarMode::RenameSession(id) = self.omnibar.mode {
-                    let name = self.omnibar.text.clone();
-                    self.omnibar = OmnibarState::default();
-                    if self.focus == FocusTarget::Chrome {
-                        self.focus = FocusTarget::Canvas;
-                    }
-                    let mut fx = self.update(Action::RenameSession { id, name });
-                    fx.push(Effect::Redraw);
-                    return fx;
-                }
-                // Commit always ends with the omnibar closed, so chrome hands
-                // focus back to the canvas. (A committed OpenAddress may later
-                // spawn content; routing focus onto it is slice B.)
-                if self.focus == FocusTarget::Chrome {
-                    self.focus = FocusTarget::Canvas;
-                }
-                let committed = self.omnibar.selection().cloned().or_else(|| {
-                    normalize_address(self.omnibar.text.trim()).map(|url| Suggestion::Go { url })
-                });
-                if let Some(s) = committed.as_ref() {
-                    self.events
-                        .push(AppEvent::OmnibarCommitted(crate::observe::suggestion_line(
-                            s,
-                        )));
-                }
-                let mut effects = match committed {
-                    Some(Suggestion::Node { url, .. }) => {
-                        // Find lane: select the existing node; never refetch.
-                        self.canvas.select_by_url(&url);
-                        vec![Effect::Redraw]
-                    }
-                    Some(Suggestion::Go { url }) => {
-                        self.omnibar = OmnibarState::default();
-                        return {
-                            let mut fx = self.update(Action::OpenAddress(url));
-                            fx.push(Effect::Redraw);
-                            fx
-                        };
-                    }
-                    Some(Suggestion::Act { action, .. }) => {
-                        // The actions lane: the committed registry entry is
-                        // an ordinary Action; lower it through the same
-                        // spine everything else uses.
-                        self.omnibar = OmnibarState::default();
-                        return {
-                            let mut fx = self.update(action);
-                            fx.push(Effect::Redraw);
-                            fx
-                        };
-                    }
-                    Some(Suggestion::Hint(_)) | None => vec![Effect::Redraw],
-                };
-                self.omnibar = OmnibarState::default();
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::OmnibarCommit => self.commit_omnibar(),
             // Pane tree ops (rung 5 slice C). Each mutates the frisket layout and
             // persists it (SaveSession writes frame.json), so the arrangement
             // survives a restart. Maximize is view state, not persisted.
-            Action::SummonPane(kind) => {
-                let content = pane_content(kind);
-                let id = PaneId(self.next_pane_id);
-                // Anchor on the active pane IN ITS OWN SPACE (a pane torn out
-                // to a lens summons its neighbors there — the window as pane
-                // host), else the primary Orrery (graph) leaf — meerkat's
-                // fixed Right-split off the graph pane, generalized.
-                let (space, anchor) = match self
-                    .active_pane
-                    .and_then(|a| self.space_of(a).map(|s| (s, a)))
-                {
-                    Some((s, a)) => (s, Some(a)),
-                    None => (
-                        SpaceRef::Primary,
-                        self.frisket
-                            .iter_leaves()
-                            .find(|(_, c, _)| matches!(c, PaneContent::Orrery))
-                            .map(|(id, _, _)| id),
-                    ),
-                };
-                let Some(layout) = self.space_mut(space) else {
-                    return vec![Effect::Redraw];
-                };
-                let anchor_path = anchor
-                    .and_then(|a| crate::pane::path_of(layout, a))
-                    .unwrap_or_default();
-                let new_leaf = PaneNode::Leaf {
-                    pane_id: id,
-                    content,
-                    graph_id: GraphId::nil(),
-                };
-                if layout.summon_leaf(&anchor_path, InsertSide::Right, new_leaf) {
-                    self.next_pane_id += 1;
-                    self.active_pane = Some(id);
-                    self.events.push(AppEvent::PaneSummoned(kind.label()));
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
-            Action::CloseActivePane => {
-                // The canvas (no active pane) has nothing to close. The op
-                // lands in whichever window's tree holds the pane.
-                let Some((active, space)) = self
-                    .active_pane
-                    .and_then(|a| self.space_of(a).map(|s| (a, s)))
-                else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(layout) = self.space_mut(space) else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(path) = crate::pane::path_of(layout, active) else {
-                    return vec![Effect::Redraw];
-                };
-                if layout.close_leaf(&path) {
-                    if self.maximized == Some(active) {
-                        self.maximized = None;
-                    }
-                    self.active_pane = None;
-                    self.events.push(AppEvent::PaneClosed);
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
+            Action::SummonPane(kind) => self.summon_pane(kind),
+            Action::CloseActivePane => self.close_active_pane(),
             Action::SetSplitRatio { space, path, ratio } => {
                 if let Some(layout) = self.space_mut(space) {
                     layout.set_split_ratio(&path, ratio);
@@ -1485,107 +916,18 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
-            Action::TogglePaneSection { pane, section } => {
-                // Mutate the pane's OWN leaf, in whichever space holds it, so
-                // the composition persists with frame.json and travels with a
-                // tear-out. Unknown pane / non-composable content: honest no-op.
-                let Some(space) = self.space_of(pane) else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(layout) = self.space_mut(space) else {
-                    return vec![Effect::Redraw];
-                };
-                let mut changed = None;
-                if let Some(cfg) = layout.content_mut(pane).and_then(|c| c.composition_mut()) {
-                    if let Some(pos) = cfg.sections.iter().position(|s| s == &section) {
-                        cfg.sections.remove(pos);
-                        changed = Some(false);
-                    } else {
-                        cfg.sections.push(section.clone());
-                        changed = Some(true);
-                    }
-                }
-                match changed {
-                    Some(added) => {
-                        self.events
-                            .push(AppEvent::PaneSectionToggled { section, added });
-                        vec![Effect::SaveSession, Effect::Redraw]
-                    }
-                    None => vec![Effect::Redraw],
-                }
-            }
+            Action::TogglePaneSection { pane, section } => self.toggle_pane_section(pane, section),
             Action::MovePaneSection {
                 pane,
                 section,
                 delta,
-            } => {
-                // Order IS the config's order, so a move is the same leaf edit
-                // as add/remove. Clamped at the ends: a stack has a top and a
-                // bottom, and silently wrapping would be a surprise.
-                let Some(space) = self.space_of(pane) else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(layout) = self.space_mut(space) else {
-                    return vec![Effect::Redraw];
-                };
-                let mut moved = false;
-                if let Some(cfg) = layout.content_mut(pane).and_then(|c| c.composition_mut())
-                    && let Some(from) = cfg.sections.iter().position(|s| s == &section)
-                {
-                    let to = (from as i32 + delta).clamp(0, cfg.sections.len() as i32 - 1)
-                        as usize;
-                    if to != from {
-                        let id = cfg.sections.remove(from);
-                        cfg.sections.insert(to, id);
-                        moved = true;
-                    }
-                }
-                if moved {
-                    self.events.push(AppEvent::PaneSectionMoved(section));
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
+            } => self.move_pane_section(pane, section, delta),
             // Workbench ops (rung 5 slice E). Platen owns the model and every
             // mutator; these arms lower intents onto it and persist. The
             // Workbench PANE (the frisket leaf) is where the tiling shows;
             // opening a tile summons it if absent, through the same summon
             // path as a palette summon (one spine, no side door).
-            Action::OpenInWorkbench => {
-                let Some(target) = self
-                    .canvas
-                    .focused_member()
-                    .zip(self.canvas.focused_url().map(str::to_string))
-                else {
-                    return Vec::new();
-                };
-                let (member, url) = target;
-                self.workbench.ensure_tiled();
-                self.workbench.open_tile(member);
-                self.events.push(AppEvent::WorkbenchTileOpened(url.clone()));
-                let mut effects = Vec::new();
-                let has_pane = self
-                    .frisket
-                    .iter_leaves()
-                    .any(|(_, c, _)| matches!(c, PaneContent::Workbench));
-                if !has_pane {
-                    effects.extend(self.update(Action::SummonPane(PaneKind::Workbench)));
-                }
-                // A tile wants live content; spawn it unless it already has
-                // some (live or in flight). Failure surfaces as ever.
-                if self.content.flip_spawns(member) {
-                    self.content.note_requested(member);
-                    self.events.push(AppEvent::ContentState {
-                        node: member,
-                        state: "requested".to_string(),
-                    });
-                    effects.push(Effect::SpawnContent { node: member, url });
-                }
-                effects.push(Effect::SaveSession);
-                effects.push(Effect::Redraw);
-                effects
-            }
+            Action::OpenInWorkbench => self.open_in_workbench(),
             Action::WorkbenchActivate(member) => {
                 if self.workbench.activate(member) {
                     vec![Effect::SaveSession, Effect::Redraw]
@@ -1792,6 +1134,9 @@ impl App {
     }
 }
 
+mod denizen_arms;
+mod node_arms;
+mod pane_arms;
 mod session_lifecycle;
 
 #[cfg(test)]
