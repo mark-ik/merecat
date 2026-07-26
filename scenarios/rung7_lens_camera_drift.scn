@@ -1,0 +1,40 @@
+# A lens must not steal the primary's camera, or its own.
+#
+# The trap this guards (fixed 2026-07-26): `Viewport` carries the camera
+# WITHOUT the view size, and `Canvas::resize` re-centres by shifting
+# camera.offset half the size delta. So installing a lens camera and THEN
+# resizing to the lens rect shifts that camera by the delta between two
+# windows' rects; read back and stored, it drifted every lens frame, in
+# opposite directions for the two windows, until both graphs walked
+# off-screen. Focus the lens, which redraws continuously, and the nodes
+# vanish from both.
+#
+# `assert visible` is the whole point: it fails the moment every node is
+# off-screen, which is exactly what drift produces. Offline; FRESH profile.
+settle 30
+key escape
+
+open mere://alpha
+open mere://beta
+wait
+assert nodes >= 2
+assert visible
+capture 01_primary_before_lens
+
+# Open a lens and let it render a long run of frames. Pre-fix, this is where
+# the two cameras walked apart.
+act New window
+settle 60
+assert windows == 2
+assert visible
+capture 02_primary_keeps_its_camera
+
+# The lens draws the SAME graph through its own camera, not an empty canvas.
+capture-lens 03_lens_draws_the_graph
+
+# Still framed after another long run.
+settle 40
+assert visible
+capture 04_primary_still_framed
+
+log lens camera drift guard complete
