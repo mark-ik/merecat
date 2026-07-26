@@ -1,4 +1,4 @@
-//! The persistence port: where merecat's data lives and how sessions
+//! The persistence port: where turnstone's data lives and how sessions
 //! save/load. Multi-session since rung 6's second half: each session owns
 //! `sessions/<id>/` (graph.json, frame.json, workbench.json,
 //! browser_nodes.json, windows.json, manifest.json); the manifest set is
@@ -15,17 +15,17 @@ use mere::kernel::graph::Graph;
 use sceno::Score;
 use session_runtime::{GraphSessionManifest, ManifestStore, session_graph_store};
 
-/// The per-user data root (`<data_dir>/merecat`). A `MERECAT_ROOT` override
+/// The per-user data root (`<data_dir>/turnstone`). A `TURNSTONE_ROOT` override
 /// points the whole root at a scratch profile, so a headed-verification run
 /// (or any throwaway session) isolates from the real per-user data dir (the
 /// meerkat `MERE_ROOT` convention).
-pub fn default_merecat_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("MERECAT_ROOT") {
+pub fn default_turnstone_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("TURNSTONE_ROOT") {
         return PathBuf::from(root);
     }
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("merecat")
+        .join("turnstone")
 }
 
 /// The sessions directory under the data root: one subdirectory per session,
@@ -378,7 +378,7 @@ mod tests {
 
     fn temp_root(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "merecat-session-test-{label}-{}",
+            "turnstone-session-test-{label}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

@@ -1,5 +1,5 @@
 # Rung 5 slice C receipt, run 2 of 2: restart-restore. Run on the SAME profile as
-# rung5_panes.scn (do NOT wipe MERECAT_ROOT between the two). At boot merecat
+# rung5_panes.scn (do NOT wipe TURNSTONE_ROOT between the two). At boot turnstone
 # loads frame.json through the session port, so the Roster pane summoned in run 1
 # is back in the tree without any action here. This is the done-condition's
 # "restart and the arrangement comes back off frame.json".

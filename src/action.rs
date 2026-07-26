@@ -1,4 +1,4 @@
-//! The one vocabulary: everything that acts on merecat lowers to an
+//! The one vocabulary: everything that acts on turnstone lowers to an
 //! [`Action`]; everything slow or platform-shaped leaves [`crate::app`] as an
 //! [`Effect`] the shell runs through a port; services answer with an
 //! [`Update`] drained on wake. Settings, automation, scenarios, scripting,

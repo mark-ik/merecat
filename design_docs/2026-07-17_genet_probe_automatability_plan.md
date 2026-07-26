@@ -1,14 +1,14 @@
 # genet-probe: shared automatability for the genet apps
 
 **Status:** design spike (no code yet). **Crate home:** genet (engine layer),
-consumed by every genet app. **Lineage:** grows out of merecat's self-drive
+consumed by every genet app. **Lineage:** grows out of turnstone's self-drive
 harness + observation stream; sibling to
-[`2026-07-15_merecat_surfaces_in_cambium.md`](2026-07-15_merecat_surfaces_in_cambium.md).
+[`2026-07-15_turnstone_surfaces_in_cambium.md`](2026-07-15_turnstone_surfaces_in_cambium.md).
 **Working name:** `genet-probe` (naming is Mark's call — see Open questions).
 
 ## Why
 
-The question this answers: across the genet apps (merecat, isometry, woodshed,
+The question this answers: across the genet apps (turnstone, isometry, woodshed,
 hocket), do we meet the baseline for **diagnostics, accessibility, and
 instrumentality** that makes an app automatable — testable, but also legible and
 drivable by scripts and models — and what would closing the gap require?
@@ -22,22 +22,22 @@ The survey (2026-07-17, against the actual repos) found a lopsided answer:
   [`a11y.rs`](../../genet/components/genet-layout/a11y.rs)'s DOM -> accesskit
   `TreeUpdate` projection. "Click the element labelled X" and "what does the
   a11y tree say" are **already answerable for any cambium app** — that is the
-  whole reason merecat's scripting is ask-the-layout, not pixel-poking.
+  whole reason turnstone's scripting is ask-the-layout, not pixel-poking.
 - **The patterns are proven once and shared zero times.** The typed observation
   stream (`AppEvent` + `assert event`), the loud-and-attributable divergence
-  events, and the self-drive harness (`MERECAT_SCENARIO`, ~20 verbs, `RESULT
-  ok/fail` sentinel) all live in [merecat/src/scenario.rs](../src/scenario.rs)
+  events, and the self-drive harness (`TURNSTONE_SCENARIO`, ~20 verbs, `RESULT
+  ok/fail` sentinel) all live in [turnstone/src/scenario.rs](../src/scenario.rs)
   and [observe.rs](../src/observe.rs) — app-local, ~80% generic, portable
   nowhere. isometry and woodshed have no harness at all; hocket's `-headless`
   binary is a hardcoded audio demo, not a scriptable driver.
 
 So the move is not to build harness+diagnostics into four apps four times. It is
 to **extract the generic 80% into a shared genet crate** that every cambium app
-adopts through a small trait, with merecat as the first consumer and validator.
+adopts through a small trait, with turnstone as the first consumer and validator.
 
 ### The per-axis picture
 
-| Axis | merecat | isometry | woodshed | hocket |
+| Axis | turnstone | isometry | woodshed | hocket |
 | --- | --- | --- | --- | --- |
 | Semantic DOM / ARIA (cambium, shared) | yes | yes | yes | yes |
 | accesskit tree (genet-layout, shared) | yes | yes | yes | yes |
@@ -57,14 +57,14 @@ app-specific routing crosses into the trait.
 - The scenario-file parser and the verb dispatch loop.
 - Semantic resolution: "the element with `role=tab` whose text contains `Links`"
   or "the `.list-row` containing `example.com`" -> a window-space point, via
-  `absolute_rect` over the app's surfaces. This is exactly merecat's
+  `absolute_rect` over the app's surfaces. This is exactly turnstone's
   `tab_center` / `row_center` / `node_center`, generalized off the specific
   panes.
 - DOM asserts: `assert role <role> <label>`, `assert text <substr>`,
   `assert visible <selector>`.
 - The `RESULT ok/fail` sentinel, the log, capture acknowledgment.
 - The divergence convention: `interaction-missed` / `affordance-unavailable`
-  emitted when a resolution finds nothing (merecat landed this 07-17; the crate
+  emitted when a resolution finds nothing (turnstone landed this 07-17; the crate
   makes it every app's).
 
 **App-specific (the trait `Automatable`, the small surface an app implements):**
@@ -72,7 +72,7 @@ app-specific routing crosses into the trait.
 ```rust
 /// One retained cambium surface the driver can search and hit-test: its DOM,
 /// where it sits in the window, and the sheet it lays out under. An app with
-/// several retained runners (merecat: chrome + roster grid + gloss + trail)
+/// several retained runners (turnstone: chrome + roster grid + gloss + trail)
 /// returns one entry each; the driver resolves a selector across all of them.
 pub struct ProbeSurface<'a> {
     pub name: &'static str,        // "roster", "chrome", ...
@@ -84,7 +84,7 @@ pub struct ProbeSurface<'a> {
 pub trait Automatable {
     /// The hit-testable surfaces, this frame. The driver lays each out and
     /// resolves selectors against all of them — so "click-row X" needs no
-    /// per-pane method, unlike merecat today.
+    /// per-pane method, unlike turnstone today.
     fn surfaces(&self) -> Vec<ProbeSurface<'_>>;
 
     /// Typed observation for asserts the DOM cannot express: focus, the pane
@@ -95,7 +95,7 @@ pub trait Automatable {
     /// (`assert event` matches substrings). The app's existing event stream.
     fn drain_events(&mut self) -> Vec<String>;
 
-    /// Run one app-named command — the `act <label>` verb (merecat's palette
+    /// Run one app-named command — the `act <label>` verb (turnstone's palette
     /// actions). `false` if no such command, so the driver fails loudly.
     fn act(&mut self, label: &str) -> bool;
 
@@ -113,14 +113,14 @@ label, a string map of named counts/flags) and grows by need; app-only asserts
 can also go through `drain_events` rather than bloating the snapshot.
 
 Note the payoff hiding in `surfaces()`: because the driver resolves a selector
-across *all* retained DOMs uniformly, the extraction **simplifies** merecat —
+across *all* retained DOMs uniformly, the extraction **simplifies** turnstone —
 `tab_center`, `row_center`, `node_center`, `click_pane_row`, `click_pane_tab`,
 `click_pane_node` collapse into one generic resolver. The app stops owning
 per-widget geometry lookups; it just lists its surfaces.
 
 ## The verb vocabulary (shared)
 
-Carried over from merecat, made selector-driven so they are app-agnostic:
+Carried over from turnstone, made selector-driven so they are app-agnostic:
 
 - `act <label>` — run an app command.
 - `click <role|.class> <text>` — resolve across surfaces, press+release at the
@@ -134,7 +134,7 @@ Carried over from merecat, made selector-driven so they are app-agnostic:
 
 A miss on any `click`/resolve emits `interaction-missed <selector>` into the
 event stream (not just stderr), so a receipt that drives a miss fails instead of
-green-lighting it — the property merecat just proved with `rung5_divergence.scn`.
+green-lighting it — the property turnstone just proved with `rung5_divergence.scn`.
 
 ## The accessibility follow-on (separate, smaller)
 
@@ -150,9 +150,9 @@ here so it is not mistaken for something `genet-probe` covers.
 
 ## Sequencing
 
-1. **Extract, with merecat as the reference.** Lift the generic 80% of
-   `scenario.rs` into `genet-probe`; leave merecat's `Automatable` impl behind
-   (its surfaces, snapshot, event drain, act, pointer routing). merecat's
+1. **Extract, with turnstone as the reference.** Lift the generic 80% of
+   `scenario.rs` into `genet-probe`; leave turnstone's `Automatable` impl behind
+   (its surfaces, snapshot, event drain, act, pointer routing). turnstone's
    existing scenarios must pass unchanged — that is the extraction's receipt.
    The per-pane geometry methods collapse into the shared resolver.
 2. **Second consumer proves it is really generic.** Adopt in one more app —
@@ -169,24 +169,24 @@ here so it is not mistaken for something `genet-probe` covers.
 - **Name.** `genet-probe` is a working handle (probe = observe + drive). Plain
   infra name by the plain-vocabulary rule; Mark's call. Alternatives:
   `genet-drive`, `genet-harness`, `genet-legible`.
-- **Doc home.** This plan sits in merecat's design_docs (reference consumer,
+- **Doc home.** This plan sits in turnstone's design_docs (reference consumer,
   established flat convention, lineage with the surfaces doc). If genet grows
   its own `design_docs/`, the crate's technical-architecture doc goes there and
-  this stays the merecat-side driver record. Cross-linked either way.
+  this stays the turnstone-side driver record. Cross-linked either way.
 - **Snapshot shape.** Start minimal-shared and grow, or define a fuller common
   `ProbeSnapshot` up front? Lean minimal — the event stream absorbs most
   app-specific asserts, and a bloated shared snapshot is a coupling smell.
-- **Scope of `act`.** merecat's `act` runs palette actions. Is "run a named
+- **Scope of `act`.** turnstone's `act` runs palette actions. Is "run a named
   command" the right universal verb, or should the driver reach app intents more
   structurally? Palette-label is stringly-typed but matches how a human or model
   would name the action, which is the automatability goal.
 
 ## Finding: a widget is only genet-probe-resolvable if its identity is in the DOM
 
-Wiring merecat's first verb surfaced the sharp edge of the whole idea. The
+Wiring turnstone's first verb surfaced the sharp edge of the whole idea. The
 resolver can only find what the **semantic DOM** carries — a selectable class
 (or role) plus the target text reachable as the element's own text or its
-`aria-label`. Against merecat's four widget shapes:
+`aria-label`. Against turnstone's four widget shapes:
 
 - **Tab strip** — resolvable. `.tab` with the label as direct child text. Wired.
 - **Sectioned list (Trail)** — resolvable. `.list-row` with direct child text.
@@ -199,15 +199,15 @@ resolver can only find what the **semantic DOM** carries — a selectable class
   rather than in empty space past short left-aligned text. This is the widget
   lesson in miniature: **a genet-probe target must be a block-level element with
   a class and reachable text** — inline text is neither hit-testable-by-centre
-  nor box-resolvable. The fix was merecat-side (the cell content is merecat's
+  nor box-resolvable. The fix was turnstone-side (the cell content is turnstone's
   closure, not cambium's), so no cambium change was needed.
 - **graph-canvas node (Gloss)** — resolvable after a cambium change (done). The
   scenario targets a node by **url**, and two nodes can share a display label
   (two pages both titled "Example Domain"), so the label is not enough. The fix
   is the general one: `GraphCanvasNode.key: Option<String>`, emitted as
   `data-key` on the node button, plus `Selector::with_attr` in genet-probe to
-  select on it. merecat sets `key = url`. This is the first case that needed a
-  cambium touch (the others were merecat-side), and it is the same lesson
+  select on it. turnstone sets `key = url`. This is the first case that needed a
+  cambium touch (the others were turnstone-side), and it is the same lesson
   again — a target is findable only through identity the DOM carries — now
   extended from "class + text" to "a stable key attribute" for the
   ambiguous-label case.
@@ -222,16 +222,16 @@ each of those two widgets wants regardless.
 ## Progress
 
 - 2026-07-17 — Spike written. Prior same-session groundwork that makes this
-  cheap: merecat's divergence events landed (`94d685a`), and the four catalog
+  cheap: turnstone's divergence events landed (`94d685a`), and the four catalog
   components this crate's verbs resolve against (tab strip, split, sectioned
   list, the graph-canvas leaf) are all in cambium with ARIA semantics.
 - 2026-07-17 — **Slice 1: resolver founded** in genet (`genet-probe`,
   `ProbeSurface` + `Selector` + `resolve` + `text_present`, 5 tests, MIT/Apache).
-  Proven to resolve within merecat's dependency graph via the local patch (genet
+  Proven to resolve within turnstone's dependency graph via the local patch (genet
   main is 12 commits ahead of origin with foreign work, so `genet-probe` is NOT
-  yet on origin/main — a clean merecat checkout needs it pushed there; deferred,
+  yet on origin/main — a clean turnstone checkout needs it pushed there; deferred,
   not forced with foreign commits in the way).
-- 2026-07-17 — **Slice 2: merecat drives click-tab AND click-row through
+- 2026-07-17 — **Slice 2: turnstone drives click-tab AND click-row through
   genet-probe.** `tab_center` (Roster) and `row_center` (Trail) collapsed to
   3-line `resolve` delegations; `click-row` resolves a Trail `.list-row` and a
   grid `.roster-cell` through one path, and — resolving off the DOM rather than
@@ -246,14 +246,14 @@ each of those two widgets wants regardless.
   where its label is not unique. `GlossPane::node_center`'s projection-plus-leaf
   math collapsed to the same `resolve` delegation (the node button is a real
   positioned element; `absolute_rect` already knows where it is). The gloss
-  scenario is RESULT ok. **Merecat's three interaction verbs — click-tab,
+  scenario is RESULT ok. **Turnstone's three interaction verbs — click-tab,
   click-row, click-node — are now one shared path over one substrate.**
 
-- 2026-07-18 — **Slice 4: the `Automatable` trait, and merecat implements it.**
+- 2026-07-18 — **Slice 4: the `Automatable` trait, and turnstone implements it.**
   Crate-side first (genet `5844cede`): the trait plus `AutomatableExt`'s provided
   `resolve` / `click`, so an app that supplies the small surface gets the driving
   verbs for free. Then the real consumer immediately **corrected the abstract
-  shape**: merecat's pane DOMs are `Rc<RefCell<ScriptedDom>>`, so
+  shape**: turnstone's pane DOMs are `Rc<RefCell<ScriptedDom>>`, so
   `surfaces() -> Vec<ProbeSurface>` could not compile (the `Ref` guards would
   drop), and it became a **visitor**, `with_surfaces(&self, f)`, where the guards
   live for the callback. This is the plan's "add the trait as consumers pull it"
@@ -264,7 +264,7 @@ each of those two widgets wants regardless.
   green through the trait.
 
 - 2026-07-18 — **Slice 5: the shared scenario driver** (genet `382dd17`). The
-  parser + verb loop lifted off merecat into genet-probe: `Scenario::parse` reads
+  parser + verb loop lifted off turnstone into genet-probe: `Scenario::parse` reads
   a generic grammar, `Scenario::tick(app)` drives an [`Automatable`] app one step
   per frame (the app keeps its winit pump), and the two things the loop cannot do
   itself sit behind a `Driveable` trait — `capture` (a screenshot) and `app_step`
@@ -272,20 +272,20 @@ each of those two widgets wants regardless.
   verbs are shared: `act`, `click` by selector, `settle`, `assert text` / `event`
   / `snap`, `log`, `capture`. A `click` miss attributes itself into the event
   stream as `interaction-missed <selector>` — the divergence rule, generalized
-  off merecat into the loop. 11 crate-side tests over a mock `Driveable`.
+  off turnstone into the loop. 11 crate-side tests over a mock `Driveable`.
 
 ## The two flags — RESOLVED 2026-07-18
 
-Both flags (the grammar convergence and the merecat migration) turned out to be
+Both flags (the grammar convergence and the turnstone migration) turned out to be
 **one question**, because the sibling's Piccolo runner (`401d21f`) is not a rival
-loop — it is a `script` *step* inside merecat's own grammar. So there were only
-ever two loops to reconcile: merecat's `scenario.rs` and `genet_probe::Scenario`.
+loop — it is a `script` *step* inside turnstone's own grammar. So there were only
+ever two loops to reconcile: turnstone's `scenario.rs` and `genet_probe::Scenario`.
 The resolution: **prove they are one loop by driving the real Shell with the
-shared driver**, rather than rip out merecat's mature, receipt-critical,
+shared driver**, rather than rip out turnstone's mature, receipt-critical,
 actively-developed harness mid-flight.
 
-Landed (merecat, this session): `Shell` implements `genet_probe::Driveable`
-(`capture` + `app_step`), a `MERECAT_SHARED_SCENARIO` activation runs
+Landed (turnstone, this session): `Shell` implements `genet_probe::Driveable`
+(`capture` + `app_step`), a `TURNSTONE_SHARED_SCENARIO` activation runs
 `genet_probe::Scenario` against the real Shell in the winit pump (additive — it
 does not touch `scenario.rs`, so no collision with the Piccolo work), and
 `snapshot()` grew `panes` / `surfaces` fields so a generic scenario can assert app
@@ -306,5 +306,5 @@ Remaining (a de-risked mechanical follow-on, now that the seam is proven):
   runner, since `script` is theirs; the path is validated, so this is moving
   handlers, not designing.
 - **Second consumer (isometry)** — the driver now has a proven real consumer
-  (merecat); isometry is the proof it is *generic*: a fresh app implementing
+  (turnstone); isometry is the proof it is *generic*: a fresh app implementing
   `Driveable`, driven by a scenario with zero new harness code.

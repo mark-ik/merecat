@@ -95,7 +95,7 @@ impl Shell {
                 // ContentFailed; a Requested node never silently spins.
                 Effect::SpawnContent { node, url } => {
                     let request = inker::EngineRouteRequest {
-                        workspace_id: inker::WorkspaceRouteId::new("merecat"),
+                        workspace_id: inker::WorkspaceRouteId::new("turnstone"),
                         view: None,
                         node: None,
                         address: url.clone(),

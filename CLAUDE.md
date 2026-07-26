@@ -1,4 +1,4 @@
-# CLAUDE.md — Merecat Repository
+# CLAUDE.md — Turnstone Repository
 
 This file currently covers workspace tooling only. See `README.md` and
 `design_docs/` for project context.

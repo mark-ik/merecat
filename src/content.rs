@@ -3,7 +3,7 @@
 //! engine registrations, per-node document lifecycle, the verso-tile flip,
 //! content frames, and input routing — where the registry itself is
 //! genet/inker's, never a hand-wired lane ladder (the session-engines plan,
-//! genet docs 2026-07-10, phase 4 names merecat as its consumer).
+//! genet docs 2026-07-10, phase 4 names turnstone as its consumer).
 //!
 //! What lives HERE is the lifecycle state machine and nothing else. Live
 //! document sessions are retained, non-`Send` handles, so the shell's

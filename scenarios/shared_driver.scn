@@ -1,7 +1,7 @@
-# The SHARED genet-probe scenario driver, driving the real merecat Shell through
-# its Automatable/Driveable impl — proof that merecat and the shared driver are
+# The SHARED genet-probe scenario driver, driving the real turnstone Shell through
+# its Automatable/Driveable impl — proof that turnstone and the shared driver are
 # one loop, not two. Generic verbs only (act / click by selector / assert snap /
-# assert text / assert event / capture); merecat's app-specific verbs are the
+# assert text / assert event / capture); turnstone's app-specific verbs are the
 # coordinated follow-on behind Driveable::app_step. FRESH profile; no network.
 settle 30
 # `key escape` is an app-specific verb: the generic grammar does not know it, so

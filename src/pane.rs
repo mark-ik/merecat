@@ -11,7 +11,7 @@
 //! frisket's own; this only reads.
 //!
 //! The split GEOMETRY is cambium's (`Split::slots` / `divider_rect`) — the
-//! catalog's split component, pulled 2026-07-17. merecat composites surfaces,
+//! catalog's split component, pulled 2026-07-17. turnstone composites surfaces,
 //! so it consumes the component's state math rather than its view (the math is
 //! the single geometry truth; the view exists for in-tree consumers like the
 //! Workbench's platen tiling), and each seam becomes a divider surface that

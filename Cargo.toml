@@ -1,17 +1,17 @@
 [workspace]
 
 [package]
-name = "merecat"
+name = "turnstone"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "The cat that lives on the mere: a graph-workspace browser and reference host for the mere library. Merecat is the English calque of meerkat (Dutch meer + kat, lake-cat); the app is named for the lake it works over."
-repository = "https://github.com/mark-ik/merecat"
+description = "The cat that lives on the mere: a graph-workspace browser and reference host for the mere library. Turnstone is the English calque of meerkat (Dutch meer + kat, lake-cat); the app is named for the lake it works over."
+repository = "https://github.com/mark-ik/turnstone"
 keywords = ["browser", "graph", "workspace", "canvas"]
 categories = ["gui"]
 
 [[bin]]
-name = "merecat"
+name = "turnstone"
 path = "src/main.rs"
 
 [dependencies]
@@ -23,12 +23,12 @@ path = "src/main.rs"
 # re-exports only two are compatibility scaffolding, `platen` and
 # `workbench`: those move INTO this repo as the port proceeds. Canvas
 # STAYS in mere (the 2026-07-09 amendment reversed its move); the crate
-# was called `orrery` at merecat's founding. Boundary pass plan, 2026-07-09.
+# was called `orrery` at turnstone's founding. Boundary pass plan, 2026-07-09.
 mere = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Mere's graph-to-Scenograph adapter remains kernel-aware and product-owned.
 # G3 consumes its existing score + scene lowering directly.
 cartography = { package = "mere-cartography", git = "https://github.com/mark-ik/mere.git", branch = "main" }
-# The fetch actor (armillary + netfetcher/errand + the cookie jar): merecat's
+# The fetch actor (armillary + netfetcher/errand + the cookie jar): turnstone's
 # web lane, consumed as an individual crate from mere's workspace while it
 # still lives there — per the boundary pass, fetch is app-side material that
 # moves into this repo with the port.
@@ -49,7 +49,7 @@ codicil = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen subjects are content-derived: blake3(source) is the 32-byte keyholder.
 blake3 = "1"
 
-# The portable projection score stored beside a Merecat session. The app maps
+# The portable projection score stored beside a Turnstone session. The app maps
 # browser graph truth into it; Scenograph itself stays product-free.
 sceno = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 scenomise = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
@@ -85,22 +85,22 @@ armillary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 eidetic = { package = "mere-eidetic", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 eidetic-fjall = { package = "mere-eidetic-fjall", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 pollster = "0.4"
-# The per-user data root (`<data_dir>/merecat`), MERECAT_ROOT-overridable for
+# The per-user data root (`<data_dir>/turnstone`), TURNSTONE_ROOT-overridable for
 # scratch profiles (the meerkat MERE_ROOT convention).
 dirs = "6"
 # Render-free static-parse page extraction: the fetched body's `<title>`
 # (and later description/OpenGraph) enriches the page's graph node.
 # The engine contracts + the content lanes as session engines (session-engines
-# plan phase 4: merecat's content port spawns through the registry; the static
+# plan phase 4: turnstone's content port spawns through the registry; the static
 # lane's netfetch feature gives LocalFetcher its https branch).
 inker = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-documents = { git = "https://github.com/mark-ik/genet.git", branch = "main", features = ["netfetch", "livery"] }
-# Optional app-control scripting. Piccolo is a Merecat mod/workflow backend,
+# Optional app-control scripting. Piccolo is a Turnstone mod/workflow backend,
 # not a browser-page engine; Vano/Boa remain the JavaScript lanes.
 script-engine-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
 script-engine-piccolo = { git = "https://github.com/mark-ik/genet.git", branch = "main", optional = true }
 # The app-core component host (mere): instantiates the envelope world and
-# backs `emit` with merecat's ring gate. Optional — the `wasm` feature.
+# backs `emit` with turnstone's ring gate. Optional — the `wasm` feature.
 app-host = { git = "https://github.com/mark-ik/mere.git", branch = "main", optional = true }
 # Store limits for a component instance (the same wasmtime the host uses).
 wasmtime = { version = "45", optional = true }
@@ -111,7 +111,7 @@ genet-static-dom = { git = "https://github.com/mark-ik/genet.git", branch = "mai
 # layer's layout engine (the omnibar document).
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # The chrome layer's document substrate + name types + paint vocabulary
-# (rung 3: the omnibar is merecat's first DOM surface, composited above the
+# (rung 3: the omnibar is turnstone's first DOM surface, composited above the
 # canvas by the layered present).
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-probe = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
@@ -160,7 +160,7 @@ default = []
 # through the action envelope, ring-gated per emission. Opt-in like piccolo
 # so an ordinary browser build carries no wasm runtime.
 wasm = ["dep:app-host", "dep:wasmtime"]
-# Piccolo drives Merecat's capability-scoped control scripts. It is kept
+# Piccolo drives Turnstone's capability-scoped control scripts. It is kept
 # opt-in so the browser host's ordinary build carries no scripting runtime.
 piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo"]
 

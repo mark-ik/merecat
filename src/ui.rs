@@ -373,8 +373,8 @@ pub fn scene_from_subtree(
 
 /// Adapts sprigging's rendered leaf buffers to genet-layout's paint-list source
 /// (the orphan-rule-legal home: this crate owns the newtype). The same shape
-/// meerkat's `genet_render` proved; merecat re-owns it rather than importing
-/// meerkat, which merecat exists to obviate.
+/// meerkat's `genet_render` proved; turnstone re-owns it rather than importing
+/// meerkat, which turnstone exists to obviate.
 struct LeafSource<'a>(&'a sprigging::RenderedLeaves);
 
 impl genet_layout::LeafPaintSource for LeafSource<'_> {
@@ -494,7 +494,7 @@ mod tests {
     /// of a multi-root document (a host-built DOM with no `<html>` wrapper),
     /// so the omnibar card blanked whenever the caption chip preceded it.
     /// Fixed genet-side (multi-root box tree + cascade + root-background
-    /// gate); this stays as merecat's tripwire on the behavior it leans on.
+    /// gate); this stays as turnstone's tripwire on the behavior it leans on.
     #[test]
     fn chrome_absolute_siblings_all_paint() {
         let count = |style: &str, nested: bool| {

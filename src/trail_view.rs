@@ -5,7 +5,7 @@
 //! `mere::trail` is the neutral vocabulary (`TrailInput` in, `TrailItem` out, on
 //! the P8 pattern); this host half gathers the inputs from the canvas graph and
 //! maps the items onto rows the pane renders and a click acts on. meerkat maps
-//! its Row items inert; merecat makes them navigable, attaching the full url each
+//! its Row items inert; turnstone makes them navigable, attaching the full url each
 //! row came from (the neutral `Row` item carries only display text). The Removed
 //! section is the recycle bin's mirror (`App::removed`, the eidetic deleted-node
 //! bin behind the bin port) minus nodes present in the graph; a Recover click

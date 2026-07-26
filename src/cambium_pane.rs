@@ -1,18 +1,18 @@
-//! The cambium seam: a cambium view rendered into a merecat pane surface, and
+//! The cambium seam: a cambium view rendered into a turnstone pane surface, and
 //! the pane's pointer events routed back into it. Rung 5 slice D, the toolkit
 //! adoption.
 //!
-//! cambium builds a `ScriptedDom` — the exact type merecat's chrome already lays
+//! cambium builds a `ScriptedDom` — the exact type turnstone's chrome already lays
 //! out through genet-layout into a paint list — so a cambium view drops into the
 //! compose-at-surface-rect seam slice A built. A `GenetAppRunner` holds the view's
-//! state and renders it into a `DomHandle`; merecat composites that DOM, and
+//! state and renders it into a `DomHandle`; turnstone composites that DOM, and
 //! routes a pane-local click back through genet-layout's hit test into
 //! `dispatch_click`, which returns the Actions the view emitted. Those lower
-//! through merecat's ordinary spine — the same path a keypress takes.
+//! through turnstone's ordinary spine — the same path a keypress takes.
 //!
 //! That round trip (render -> composite -> hit-test -> dispatch -> Action) is the
 //! general pane-event path every cambium pane reuses; the Roster's `data_grid` is
-//! its first consumer. Merecat is cambium's first pixel host, so this integration
+//! its first consumer. Turnstone is cambium's first pixel host, so this integration
 //! is new: the catalog example is a headless acceptance test.
 
 use std::cell::RefCell;
@@ -360,7 +360,7 @@ mod tests {
     /// The tabs are live end-to-end: a click at a tab's centre reaches the
     /// strip's handler and switches the pane's body. This is the whole point of
     /// the strip — that cambium's catalog widget takes a real pane click through
-    /// merecat's hit-test path, not just that it renders.
+    /// turnstone's hit-test path, not just that it renders.
     #[test]
     fn clicking_a_tab_switches_the_body() {
         let mut g = grid_with_rows();

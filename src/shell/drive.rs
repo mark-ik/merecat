@@ -1,10 +1,10 @@
-//! The automation surface: what a scenario drives merecat through.
+//! The automation surface: what a scenario drives turnstone through.
 //!
 //! `Automatable` grants the shared `resolve` / `click` verbs for free, so the
 //! app implements only what it alone knows: its DOMs (via a visitor, since
 //! they sit behind `RefCell`), its snapshot, its labelled actions, and whether
 //! it is still busy. `Driveable` adds the two the generic loop cannot do — a
-//! screenshot and merecat's own verbs.
+//! screenshot and turnstone's own verbs.
 
 use winit::event::MouseButton;
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
@@ -14,11 +14,11 @@ use crate::panes::PaneContent;
 
 use super::Shell;
 
-/// merecat drives through the shared genet-probe harness: implementing this
+/// turnstone drives through the shared genet-probe harness: implementing this
 /// small surface grants the `resolve` / `click` verbs (used by the collapsed
 /// `click_pane_*` above) for free. `with_surfaces` hands the retained pane DOMs
 /// to a visitor — the borrow guards live only for the callback, which is why the
-/// trait takes a visitor rather than returning a `Vec` (merecat's DOMs are behind
+/// trait takes a visitor rather than returning a `Vec` (turnstone's DOMs are behind
 /// `RefCell`). Inspector/Workbench panes join by adding their `dom_ref` here when
 /// they grow click verbs.
 impl genet_probe::Automatable for Shell {
@@ -127,7 +127,7 @@ impl genet_probe::Automatable for Shell {
         }
     }
 
-    /// Merecat's quiescence report, driving the `wait` verb. Busy while any of
+    /// Turnstone's quiescence report, driving the `wait` verb. Busy while any of
     /// the three kinds of work a scenario must not race is outstanding:
     ///
     /// - a page or favicon FETCH is in flight (the port has not answered),
@@ -135,7 +135,7 @@ impl genet_probe::Automatable for Shell {
     /// - a live session is not `settled()` (script work or layout pending).
     ///
     /// Deliberately conservative in both directions. It reports `Some` always
-    /// (merecat DOES report quiescence, even when the honest answer is "idle"),
+    /// (turnstone DOES report quiescence, even when the honest answer is "idle"),
     /// and it counts a spawn as busy from the effect rather than from the
     /// session, so the gap between them cannot read as quiet.
     fn busy(&mut self) -> Option<bool> {
@@ -164,9 +164,9 @@ impl genet_probe::Automatable for Shell {
 /// The `Driveable` half: the two things the shared genet-probe scenario loop
 /// cannot do itself. `capture` queues a screenshot the next render fulfills (into
 /// the active shared run's dir); `app_step` is left at its default (unknown verb
-/// fails loudly) — merecat's ~30 app-specific verbs are the coordinated
+/// fails loudly) — turnstone's ~30 app-specific verbs are the coordinated
 /// follow-on, homed here when the harness fully retires `scenario.rs`. Until
-/// then the shared loop drives merecat through its generic verbs, proving the
+/// then the shared loop drives turnstone through its generic verbs, proving the
 /// two grammars are one loop.
 impl genet_probe::Driveable for Shell {
     fn capture(&mut self, name: &str) -> bool {
@@ -175,8 +175,8 @@ impl genet_probe::Driveable for Shell {
         true
     }
 
-    /// merecat's app-specific verbs, reached when the shared grammar passes a
-    /// line through. The whole vocabulary now: parse the line with merecat's own
+    /// turnstone's app-specific verbs, reached when the shared grammar passes a
+    /// line through. The whole vocabulary now: parse the line with turnstone's own
     /// parser and run it against the Shell via `run_scenario_step`. An unknown
     /// verb fails loudly (parse returns Err), never a silent skip.
     fn app_step(&mut self, line: &str) -> Result<(), String> {
@@ -189,9 +189,9 @@ impl genet_probe::Driveable for Shell {
 }
 
 impl Shell {
-    /// Execute one merecat scenario step against the Shell — the app-specific
+    /// Execute one turnstone scenario step against the Shell — the app-specific
     /// verbs the shared genet-probe loop hands to `Driveable::app_step`. This is
-    /// merecat's former `scenario.rs` `tick()` (asserts) and `scenario_pump`'s
+    /// turnstone's former `scenario.rs` `tick()` (asserts) and `scenario_pump`'s
     /// `Tick` execution (interactions), unified into one pass: an assert reads
     /// the observation snapshot and returns `Err` on mismatch; an interaction
     /// drives the Shell directly. The generic verbs (act/settle/capture/log,

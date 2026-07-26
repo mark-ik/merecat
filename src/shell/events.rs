@@ -28,12 +28,12 @@ impl ApplicationHandler for Shell {
             return;
         }
         let attributes = Window::default_attributes()
-            .with_title("Merecat")
+            .with_title("Turnstone")
             .with_inner_size(PhysicalSize::new(self.width, self.height));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
-                .expect("failed to create the merecat window"),
+                .expect("failed to create the turnstone window"),
         );
         let size = window.inner_size();
         self.width = size.width.max(1);
@@ -52,7 +52,7 @@ impl ApplicationHandler for Shell {
         match SurfaceHost::boot(window.clone(), self.width, self.height, options) {
             Ok(host) => self.host = Some(host),
             Err(err) => {
-                eprintln!("[merecat] {err}");
+                eprintln!("[turnstone] {err}");
                 event_loop.exit();
                 return;
             }

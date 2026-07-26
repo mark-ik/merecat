@@ -1,11 +1,11 @@
-# Merecat's surfaces expressed in cambium
+# Turnstone's surfaces expressed in cambium
 
-2026-07-15. With cambium adopted (the Roster grid landed, d05f24d), every merecat
+2026-07-15. With cambium adopted (the Roster grid landed, d05f24d), every turnstone
 surface gets asked the same question: what cambium component expresses it? The
 answer is one of three — an existing catalog entry, a new catalog addition, or
 "stays non-cambium." This doc is that mapping.
 
-> Sibling: the cambium adoption also gave every merecat surface a
+> Sibling: the cambium adoption also gave every turnstone surface a
 > semantic, hit-testable DOM — the substrate for driving the app by name. Where
 > that generalizes across the genet apps is
 > [`2026-07-17_genet_probe_automatability_plan.md`](2026-07-17_genet_probe_automatability_plan.md).
@@ -18,10 +18,10 @@ strongest additions are the ones several panes pull at once.
 
 ## The seam (recap)
 
-A cambium view renders into a `ScriptedDom`; merecat lays that out with
+A cambium view renders into a `ScriptedDom`; turnstone lays that out with
 genet-layout and composites it at the pane's surface rect (`ui::scene_from_dom`
 under a host sheet). Events feed into the view's `GenetAppRunner`, which returns
-Actions merecat lowers through its spine. So "express surface X in cambium" means:
+Actions turnstone lowers through its spine. So "express surface X in cambium" means:
 X's content is a cambium view over a `GenetAppRunner`, composited at X's rect. The
 host keeps the surface plan, the compositor, and the canvas; cambium owns what a
 pane draws inside its rect.
@@ -45,11 +45,11 @@ pane draws inside its rect.
 | **Pane furniture** (frisket dividers, stacked-pane tabs, maximize/close) | **split** + **tab strip** | NEW |
 | **Orrery (the canvas)** | stays `mere::canvas` | non-cambium |
 | **Content documents** (live pages) | stays genet document sessions | non-cambium |
-| **Surface plan / layered present** | stays merecat (host composition) | non-cambium |
+| **Surface plan / layered present** | stays turnstone (host composition) | non-cambium |
 
 ## The catalog additions the consumers justify
 
-Ranked by pull — how many merecat surfaces want each. The multi-consumer ones are
+Ranked by pull — how many turnstone surfaces want each. The multi-consumer ones are
 the real catalog candidates; the single-consumer ones can compose from existing
 primitives first and graduate to the catalog if a second consumer appears (the
 family's crate-promotion gate, applied to components).
@@ -76,7 +76,7 @@ family's crate-promotion gate, applied to components).
      cambium widget inherits this shape**: the widget's geometry is knowable only
      from the layout, so ask it.
 
-2. **Split / divider pane** — the pane furniture. Today merecat hand-computes pane
+2. **Split / divider pane** — the pane furniture. Today turnstone hand-computes pane
    rects in `pane.rs` and has no divider drag. A cambium `split` (two children, a
    draggable divider, a ratio) owns the resize gesture and the seam, and both the
    frisket pane tiling and the Workbench's platen tiling pull it. This is the
@@ -117,10 +117,10 @@ Everything else a pane needs already exists: the `data_grid`, the full control s
 - **Live content documents.** genet's document sessions render web pages to a
   `netrender::Scene`. That is the engine, not the toolkit; it stays.
 - **The host composition** — the surface plan, the compositor, event routing into
-  each pane's runner. This is merecat's job as the host; cambium owns pane
+  each pane's runner. This is turnstone's job as the host; cambium owns pane
   interiors, not the window.
 
-So the boundary is clean: **cambium owns what is inside a pane rect; merecat owns
+So the boundary is clean: **cambium owns what is inside a pane rect; turnstone owns
 the rects, the canvas, the documents, and the composition.**
 
 ## Sequencing
@@ -147,7 +147,7 @@ The order follows pull and dependency, not pane-by-pane:
    `divider_rect` (the component's pure state math is the geometry truth), each
    seam is a thin divider surface (empty scene over the seam clear), and drag
    works: press captures the seam, moves become ratios through
-   `Split::ratio_at`, release persists once. NOTE merecat consumes the
+   `Split::ratio_at`, release persists once. NOTE turnstone consumes the
    component's MATH, not its view — a surface-compositing host needs the rects
    before layout and keeps one hit-test authority (the surface plan). The
    split's VIEW (slots + ARIA separator + keyboard resize + on_pointer drag)
@@ -167,5 +167,5 @@ The order follows pull and dependency, not pane-by-pane:
    hand-DOM holdout retires.
 
 Each cambium addition is a small PR to the cambium catalog, justified in its
-description by the merecat surfaces that pull it — the serval/genet pattern, now
-running with merecat as the consumer.
+description by the turnstone surfaces that pull it — the serval/genet pattern, now
+running with turnstone as the consumer.

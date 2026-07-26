@@ -51,7 +51,7 @@ impl Shell {
     pub(super) fn drain_pending_windows(&mut self, event_loop: &ActiveEventLoop) {
         while let Some(ordinal) = self.pending_windows.pop() {
             let attributes = Window::default_attributes()
-                .with_title("Merecat — lens")
+                .with_title("Turnstone — lens")
                 .with_inner_size(PhysicalSize::new(800u32, 600u32));
             let Ok(window) = event_loop.create_window(attributes) else {
                 tracing::warn!("lens window creation failed");

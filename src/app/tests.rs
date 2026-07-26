@@ -13,7 +13,7 @@ use super::*;
 fn adopt_session_restores_the_saved_canvas_layout_from_facets() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-facet-adopt-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-facet-adopt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     // A manifest so the session has a container id for its `scene.*` facets.
     let container = uuid::Uuid::from_u128(0xc0ffee);
@@ -91,7 +91,7 @@ fn adopt_session_restores_the_saved_canvas_layout_from_facets() {
 fn denizen_installs_after_visible_review() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-denizen-b1-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-denizen-b1-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("trail-keeper.lua");
@@ -167,7 +167,7 @@ fn denizen_installs_after_visible_review() {
 fn resident_petitions_run_through_the_gate() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-denizen-gate-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-denizen-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("keeper.lua");
@@ -224,7 +224,7 @@ fn resident_petitions_run_through_the_gate() {
 fn denizen_runs_attributed() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-denizen-run-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-denizen-run-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("keeper.lua");
@@ -261,7 +261,7 @@ fn denizen_runs_attributed() {
 fn fork_session_snapshots_the_component_with_its_facets() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-fork-test-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-fork-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     let donor_container = uuid::Uuid::from_u128(0xd0);
     app.sessions
@@ -357,7 +357,7 @@ fn fork_session_snapshots_the_component_with_its_facets() {
 fn fork_carries_denizen_worlds_as_real_copies() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-fork-world-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-fork-world-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("keeper.lua");
@@ -422,7 +422,7 @@ fn fork_carries_denizen_worlds_as_real_copies() {
 fn close_session_trashes_and_recover_restores_identity() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-o3-test-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-o3-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     // Two real sessions on disk (manifests bound to the root so trash ops
     // have a home), the second is current.
@@ -744,7 +744,7 @@ fn delete_stages_into_the_bin_and_recover_restores_identity() {
 fn a_component_denizen_acts_only_within_its_reviewed_rings() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-component-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-component-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = std::path::Path::new("scenarios/fixtures/app_core_guest.wasm");
@@ -838,7 +838,7 @@ fn a_rerooted_profile_reissues_delegations_from_the_reviewed_projections() {
 
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-reroot-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-reroot-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("keeper.lua");
@@ -892,7 +892,7 @@ fn install_delegates_from_the_profile_identity_and_uninstall_revokes_it() {
 
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-revoke-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-revoke-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     // The root identity is the profile's, not a constant.
@@ -964,7 +964,7 @@ fn install_delegates_from_the_profile_identity_and_uninstall_revokes_it() {
 fn deleting_a_denizen_archives_its_world_and_recovery_restores_residency() {
     let mut app = App::test_stub();
     app.data_root =
-        std::env::temp_dir().join(format!("merecat-bin-world-{}", std::process::id()));
+        std::env::temp_dir().join(format!("turnstone-bin-world-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&app.data_root);
     std::fs::create_dir_all(app.session_dir()).unwrap();
     let pack = app.data_root.join("keeper.lua");
@@ -1430,7 +1430,7 @@ fn browser_states_refresh_and_round_trip() {
         "a node without content stays out of the sidecar"
     );
     // Round trip through the converged store: web.* facets in facets.json.
-    let dir = std::env::temp_dir().join(format!("merecat-bn-test-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("turnstone-bn-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut facets = session_runtime::NodeFacetStore::new();
     session_runtime::write_web_states(&mut facets, &app.browser);
@@ -1452,7 +1452,7 @@ fn browser_states_refresh_and_round_trip() {
 /// pruned to present members (platen's canonical pair underneath).
 #[test]
 fn workbench_persists_and_restores_pruned() {
-    let dir = std::env::temp_dir().join(format!("merecat-wb-test-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("turnstone-wb-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let (a, b) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
     let mut wb = mere::platen::Workbench::new();

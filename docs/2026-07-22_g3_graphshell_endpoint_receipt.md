@@ -1,11 +1,11 @@
-# G3 Graphshell Merecat endpoint receipt
+# G3 Graphshell Turnstone endpoint receipt
 
 **Status:** complete locally on 2026-07-22. Publication remains gated on the
 Graphshell donor rename and repository publication.
 
 ## What this proves
 
-- Merecat now has a library boundary around its existing read model, action
+- Turnstone now has a library boundary around its existing read model, action
   reducer, desktop shell, and remote projection adapter.
 - The endpoint reads the live Mere graph. Mere cartography maps three stable
   node UUIDs, their recency order, measured card extents, and two graph
@@ -28,7 +28,7 @@ Graphshell donor rename and repository publication.
 
 - `cargo check --lib`
 - `cargo test --lib remote_projection -- --nocapture`
-- the committed `docs/receipts/g3_merecat_endpoint.html` is compared
+- the committed `docs/receipts/g3_turnstone_endpoint.html` is compared
   byte-for-byte with a fresh executable run;
 - Graphshell `cargo test --workspace` remains green;
 - headed inspection at 1180 by 900 and 390 by 844 confirmed the semantic
@@ -37,7 +37,7 @@ Graphshell donor rename and repository publication.
 
 ## Deliberate limits
 
-This is a local loopback endpoint over an in-memory deterministic Merecat
+This is a local loopback endpoint over an in-memory deterministic Turnstone
 fixture. It supports the Spiral score for this proof. A real session selector,
 authenticated carrier, grant negotiation, diffs, revocation, live-pane codec,
 and durable Graphshell host store remain later proofs. The graph action is

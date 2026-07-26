@@ -1,8 +1,8 @@
-//! Merecat's Graphshell endpoint.
+//! Turnstone's Graphshell endpoint.
 //!
-//! The adapter reads Merecat's live graph, asks Mere cartography to disclose a
+//! The adapter reads Turnstone's live graph, asks Mere cartography to disclose a
 //! product-free score and scene, and keeps all rendered card data beside that
-//! scene. Incoming intents return through Merecat's ordinary [`Action`] spine
+//! scene. Incoming intents return through Turnstone's ordinary [`Action`] spine
 //! only after Servitor has evaluated the endpoint's projected grant.
 
 use std::collections::{BTreeMap, HashMap};
@@ -31,7 +31,7 @@ use servitor::{Cap, Gate, Grant, Mode, ScopePath, Subject};
 use crate::action::Action;
 use crate::app::App;
 
-const SESSION: &str = "loopback:merecat:g3";
+const SESSION: &str = "loopback:turnstone:g3";
 const LAYOUT_SCOPE: &str = "projection/layout/";
 const GRAPH_SCOPE: &str = "graph/open/";
 
@@ -45,12 +45,12 @@ fn layout_scope() -> ScopePath {
 fn graph_scope() -> ScopePath {
     ScopePath::parse(GRAPH_SCOPE).expect("a valid scope")
 }
-const FIT_INTENT: &str = "merecat.fit-view";
-const OPEN_INTENT: &str = "merecat.open-address";
+const FIT_INTENT: &str = "turnstone.fit-view";
+const OPEN_INTENT: &str = "turnstone.open-address";
 
 /// The product endpoint. Its default card extent can be replaced by the host
 /// once a real retained card has measured itself.
-pub struct MerecatEndpoint {
+pub struct TurnstoneEndpoint {
     app: App,
     session: ProjectionSession,
     card_extent: (f32, f32),
@@ -62,7 +62,7 @@ pub struct MerecatEndpoint {
     subject: Subject,
 }
 
-impl MerecatEndpoint {
+impl TurnstoneEndpoint {
     pub fn new(app: App) -> Result<Self, String> {
         Self::with_card_extent(app, (248.0, 168.0))
     }
@@ -82,7 +82,7 @@ impl MerecatEndpoint {
         // "the endpoint did not grant itself", which is not an authority
         // statement. Now: a per-session keypair derived from the user's
         // master key, holding a capability the USER delegated to it.
-        let salt = format!("merecat/projection-endpoint/{}", session.0);
+        let salt = format!("turnstone/projection-endpoint/{}", session.0);
         let endpoint_key = app
             .identity
             .derive_keypair(salt.as_bytes())
@@ -158,14 +158,14 @@ impl MerecatEndpoint {
             AdvertisedAction {
                 intent: IntentReference(FIT_INTENT.into()),
                 label: "Fit view".into(),
-                explanation: "Frame the disclosed Merecat graph without changing it.".into(),
+                explanation: "Frame the disclosed Turnstone graph without changing it.".into(),
                 payload_schema: r#"{"type":"null"}"#.into(),
                 effect: IntentEffect::Curation,
             },
             AdvertisedAction {
                 intent: IntentReference(OPEN_INTENT.into()),
                 label: "Open address".into(),
-                explanation: "Ask Merecat to add or select an address in graph truth.".into(),
+                explanation: "Ask Turnstone to add or select an address in graph truth.".into(),
                 payload_schema: r#"{"type":"string","format":"uri"}"#.into(),
                 effect: IntentEffect::DomainTruth,
             },
@@ -203,10 +203,10 @@ impl MerecatEndpoint {
                     },
                     CardValueV1 {
                         label: "Source".into(),
-                        value: "Merecat graph".into(),
+                        value: "Turnstone graph".into(),
                     },
                 ],
-                badges: vec!["merecat".into(), "granted projection".into()],
+                badges: vec!["turnstone".into(), "granted projection".into()],
                 media: Vec::new(),
             };
             let glyph = NativeGlyphV1 {
@@ -288,7 +288,7 @@ impl MerecatEndpoint {
     }
 }
 
-impl ProjectionSource for MerecatEndpoint {
+impl ProjectionSource for TurnstoneEndpoint {
     type Error = String;
 
     fn snapshot(&mut self, request: ProjectionRequest) -> Result<ProjectionSnapshot, Self::Error> {
@@ -302,7 +302,7 @@ impl ProjectionSource for MerecatEndpoint {
             return Err("projection request uses an unsupported score".into());
         }
         let Arrangement::Spiral(spiral) = request.score.arrangement else {
-            return Err("G3 Merecat endpoint currently accepts Spiral arrangements".into());
+            return Err("G3 Turnstone endpoint currently accepts Spiral arrangements".into());
         };
 
         let graph = self.app.canvas.graph();
@@ -365,10 +365,10 @@ impl ProjectionSource for MerecatEndpoint {
     }
 }
 
-impl ProjectionCatalog for MerecatEndpoint {
+impl ProjectionCatalog for TurnstoneEndpoint {
     fn describe(&self) -> EndpointDescriptor {
         EndpointDescriptor {
-            label: "Merecat".into(),
+            label: "Turnstone".into(),
             projections: vec![ProjectionOffer {
                 label: "Browsing graph".into(),
                 request: ProjectionRequest {
@@ -381,7 +381,7 @@ impl ProjectionCatalog for MerecatEndpoint {
     }
 }
 
-impl PresentationSource for MerecatEndpoint {
+impl PresentationSource for TurnstoneEndpoint {
     type Error = String;
 
     fn resource(&mut self, request: ResourceRequest) -> Result<ResourceResponse, Self::Error> {
@@ -401,7 +401,7 @@ impl PresentationSource for MerecatEndpoint {
     }
 }
 
-impl IntentSink for MerecatEndpoint {
+impl IntentSink for TurnstoneEndpoint {
     type Error = String;
 
     fn invoke(&mut self, intent: IntentInvocation) -> Result<IntentResult, Self::Error> {
@@ -431,7 +431,7 @@ impl IntentSink for MerecatEndpoint {
                     });
                 }
                 let audit = Container::new(format!("{LAYOUT_SCOPE}fit-{}", self.audit.revision()))
-                    .with_title("Fit disclosed Merecat graph");
+                    .with_title("Fit disclosed Turnstone graph");
                 match self.petition(&layout_scope(), audit) {
                     Ok(()) => {
                         self.app.update(Action::FitView);
@@ -494,7 +494,7 @@ pub struct G3Run {
 }
 
 pub fn run_g3_canary() -> Result<G3Run, String> {
-    let mut endpoint = MerecatEndpoint::fixture()?;
+    let mut endpoint = TurnstoneEndpoint::fixture()?;
     let session = endpoint.session().clone();
     let request = ProjectionRequest {
         version: ProtocolVersion::V1,
@@ -508,7 +508,7 @@ pub fn run_g3_canary() -> Result<G3Run, String> {
     let mut client = ClientState::default();
     client
         .apply_snapshot(snapshot)
-        .map_err(|error| format!("client rejected Merecat snapshot: {error:?}"))?;
+        .map_err(|error| format!("client rejected Turnstone snapshot: {error:?}"))?;
     let profile = CapabilityProfile::new([
         PresentationCapability::PortableCard,
         PresentationCapability::NativeGlyph,
@@ -516,7 +516,7 @@ pub fn run_g3_canary() -> Result<G3Run, String> {
     let presentations = resolve_all(&mut endpoint, &mut client, &session, &profile)?;
     let ack = client
         .acknowledgement(&session)
-        .ok_or_else(|| "client did not acknowledge the Merecat snapshot".to_string())?;
+        .ok_or_else(|| "client did not acknowledge the Turnstone snapshot".to_string())?;
     let target = client
         .mounted(&session)
         .and_then(|mounted| {
@@ -526,7 +526,7 @@ pub fn run_g3_canary() -> Result<G3Run, String> {
                 .first()
                 .map(|(id, _)| *id)
         })
-        .ok_or_else(|| "Merecat snapshot disclosed no target".to_string())?;
+        .ok_or_else(|| "Turnstone snapshot disclosed no target".to_string())?;
     let fit_result = endpoint.invoke(IntentInvocation {
         session: session.clone(),
         target,
@@ -570,14 +570,14 @@ pub fn run_g3_canary() -> Result<G3Run, String> {
 }
 
 fn resolve_all(
-    endpoint: &mut MerecatEndpoint,
+    endpoint: &mut TurnstoneEndpoint,
     client: &mut ClientState,
     session: &ProjectionSession,
     profile: &CapabilityProfile,
 ) -> Result<Vec<ResolvedPresentation>, String> {
     let instances: Vec<_> = client
         .mounted(session)
-        .ok_or_else(|| "client did not mount the Merecat projection".to_string())?
+        .ok_or_else(|| "client did not mount the Turnstone projection".to_string())?
         .scene
         .active_items_in_order()
         .into_iter()
@@ -594,14 +594,14 @@ fn resolve_all(
                 let response = endpoint.resource(request)?;
                 client
                     .apply_resource(response)
-                    .map_err(|error| format!("client refused Merecat resource: {error:?}"))?;
+                    .map_err(|error| format!("client refused Turnstone resource: {error:?}"))?;
                 match client
                     .resolve(session, instance, profile)
                     .map_err(resolution_error)?
                 {
                     PresentationResolution::Ready(presentation) => presentation,
                     PresentationResolution::NeedsResource(_) => {
-                        return Err("Merecat resource remained unresolved after transfer".into());
+                        return Err("Turnstone resource remained unresolved after transfer".into());
                     }
                 }
             }
@@ -612,7 +612,7 @@ fn resolve_all(
 }
 
 fn resolution_error(error: ResolutionError) -> String {
-    format!("could not resolve Merecat presentation: {error:?}")
+    format!("could not resolve Turnstone presentation: {error:?}")
 }
 
 pub fn render_g3_receipt() -> Result<String, String> {
@@ -630,7 +630,7 @@ pub fn render_g3_receipt() -> Result<String, String> {
     Ok(graphshell::view::render_projection_receipt(
         &graphshell::view::ProjectionReceiptView {
             eyebrow: "Graphshell · G3 receipt".into(),
-            title: "Merecat truth, projected.".into(),
+            title: "Turnstone truth, projected.".into(),
             lede: "Mere cartography maps the live browser graph into one Scenograph scene. Graphshell resolves the endpoint-owned cards and returns both intents through the same Servitor authority gate.".into(),
             session: run.session.0,
             status: format!(
@@ -677,7 +677,7 @@ mod tests {
 
         let app = App::projection_fixture();
         let user = IdentityProvider::master_public_key(app.identity.as_ref()).to_bytes();
-        let endpoint = MerecatEndpoint::new(app).unwrap();
+        let endpoint = TurnstoneEndpoint::new(app).unwrap();
         let layout = Cap::Scope(layout_scope());
 
         assert_eq!(
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn live_mere_graph_becomes_cards_and_routed_relations() {
-        let mut endpoint = MerecatEndpoint::new(App::projection_fixture()).unwrap();
+        let mut endpoint = TurnstoneEndpoint::new(App::projection_fixture()).unwrap();
         let snapshot = endpoint
             .snapshot(ProjectionRequest {
                 version: ProtocolVersion::V1,
@@ -752,10 +752,10 @@ mod tests {
     }
 
     #[test]
-    fn committed_receipt_matches_the_live_merecat_endpoint() {
+    fn committed_receipt_matches_the_live_turnstone_endpoint() {
         assert_eq!(
             render_g3_receipt().unwrap(),
-            include_str!("../docs/receipts/g3_merecat_endpoint.html")
+            include_str!("../docs/receipts/g3_turnstone_endpoint.html")
         );
     }
 }

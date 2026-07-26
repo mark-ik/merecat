@@ -17,9 +17,9 @@
 //! The **personae vault**, opened with the same ceremony the personae bins
 //! use (`bootstrap::open_storage` + `load_or_create_profile`): OS-sealed
 //! records under DPAPI on Windows, or the portable passphrase vault when
-//! `PERSONAE_PASSPHRASE` is set. By default merecat opens the SHARED vault at
+//! `PERSONAE_PASSPHRASE` is set. By default turnstone opens the SHARED vault at
 //! [`default_vault_dir`] with the `default` profile — the same profile the
-//! personae SSH agent serves — so merecat's root identity IS the user's
+//! personae SSH agent serves — so turnstone's root identity IS the user's
 //! personae identity, not a browser-local key.
 //!
 //! Where no sealed backend exists (non-Windows without a passphrase), the
@@ -99,7 +99,7 @@ impl IdentityProvider for RootIdentity {
 }
 
 /// Load the profile's root identity: the personae vault at `vault_dir` first
-/// (profile `default` — shared with the personae bins, so merecat's root is
+/// (profile `default` — shared with the personae bins, so turnstone's root is
 /// the user's actual identity), the legacy unsealed seed as a loud fallback.
 ///
 /// Never fails the caller: a browser that refuses to start over a key store
@@ -202,7 +202,7 @@ mod tests {
 
     fn scratch(tag: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("merecat-identity-{tag}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("turnstone-identity-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

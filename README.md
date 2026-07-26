@@ -1,8 +1,8 @@
-# merecat
+# turnstone
 
 The cat that lives on the mere.
 
-Merecat is a graph-workspace browser: an infinite canvas of nodes, panes, and
+Turnstone is a graph-workspace browser: an infinite canvas of nodes, panes, and
 web surfaces over a semantically related content graph. It is the reference
 host for [mere](https://github.com/mark-ik/mere), the library that composes
 the graph substrate (chartulary, stemma, scholia), persistence (muniment,
@@ -10,21 +10,21 @@ codicil), retrieval and inference (sibylla, vates), and identity (personae)
 into one lake of content.
 
 The name is the English calque of *meerkat*: Dutch *meer* + *kat*, lake-cat.
-Mere is the lake; merecat is the animal you meet at it.
+Mere is the lake; turnstone is the animal you meet at it.
 
 ## Build and run
 
 ```sh
-cargo run     # the merecat window
+cargo run     # the turnstone window
 cargo test    # unit tests
 ```
 
-Merecat pulls `mere` and the genet engine family as git dependencies; a plain
+Turnstone pulls `mere` and the genet engine family as git dependencies; a plain
 `cargo build` fetches them. Headed self-drive receipts live under `scenarios/`.
 
 ## Status
 
-Working reference host. Merecat obviated mere's former `meerkat` crate on
+Working reference host. Turnstone obviated mere's former `meerkat` crate on
 2026-07-18: the behavioral deletion matrix went green and meerkat left mere's
 tree, so the browser host now lives here as its own binary over the `mere`
 library.
@@ -39,12 +39,12 @@ tile tear-out; and multi-session (`sessions/<id>/` with a switcher and
 restart restore). Every capability carries a self-driving scenario receipt
 (the shared genet-probe driver) plus an accessibility projection.
 
-The live plan is `design_docs/2026-07-10_merecat_architecture_plan.md`; the
-founding brief is `design_docs/2026-07-08_merecat_founding.md`.
+The live plan is `design_docs/2026-07-10_turnstone_architecture_plan.md`; the
+founding brief is `design_docs/2026-07-08_turnstone_founding.md`.
 
 ## Graphshell endpoint
 
-Merecat exposes its first local Graphshell projection through the library's
+Turnstone exposes its first local Graphshell projection through the library's
 `remote_projection` adapter. Mere cartography maps the live graph into a
 Scenograph spiral and routed relations; Graphshell resolves separately
 transferred cards and returns advertised intents through Servitor. The G3

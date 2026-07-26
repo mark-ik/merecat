@@ -54,13 +54,13 @@ pub fn project_app(app: &App) -> UxTree {
             let mut root = Node::new(Role::Group);
             root.set_label(format!("graph canvas, {count} nodes"));
             let subtrees = docs.take().unwrap_or_default();
-            Some(stitch("merecat/canvas", root, subtrees))
+            Some(stitch("turnstone/canvas", root, subtrees))
         }
         _ => None,
     });
     let mut root = Node::new(Role::Window);
-    root.set_label("Merecat");
-    stitch("merecat", root, vec![chrome, panes])
+    root.set_label("Turnstone");
+    stitch("turnstone", root, vec![chrome, panes])
 }
 
 /// The projection flattened to "role: label" lines for the observation
@@ -88,7 +88,7 @@ fn project_chrome(app: &App) -> UxTree {
     let mut nodes = Vec::new();
     let mut children = Vec::new();
     if app.omnibar.open {
-        let id = node_id_for_path("merecat/chrome/omnibar");
+        let id = node_id_for_path("turnstone/chrome/omnibar");
         let mut n = Node::new(Role::TextInput);
         n.set_label("omnibar");
         n.set_value(app.omnibar.text.clone());
@@ -96,13 +96,13 @@ fn project_chrome(app: &App) -> UxTree {
         children.push(id);
     }
     if let Some(caption) = crate::app::focused_caption(&app.canvas) {
-        let id = node_id_for_path("merecat/chrome/caption");
+        let id = node_id_for_path("turnstone/chrome/caption");
         let mut n = Node::new(Role::Label);
         n.set_label(caption);
         nodes.push((id, n));
         children.push(id);
     }
-    let root_id = node_id_for_path("merecat/chrome");
+    let root_id = node_id_for_path("turnstone/chrome");
     let mut root = Node::new(Role::Group);
     root.set_label("chrome");
     root.set_children(children);
@@ -119,7 +119,7 @@ fn project_chrome(app: &App) -> UxTree {
 /// bookkeeping — nesting reconstruction is a follow-on, said in the
 /// description rather than faked).
 fn project_live_document(app: &App, node: uuid::Uuid, url: &str) -> UxTree {
-    let root_path = format!("merecat/doc/{node}");
+    let root_path = format!("turnstone/doc/{node}");
     let root_id = node_id_for_path(&root_path);
     let mut nodes = Vec::new();
     let mut children = Vec::new();
@@ -234,7 +234,7 @@ mod tests {
         }
         let (_, root) = tree.nodes.iter().find(|(id, _)| *id == tree.root).unwrap();
         assert_eq!(root.role(), Role::Window);
-        assert_eq!(root.label(), Some("Merecat"));
+        assert_eq!(root.label(), Some("Turnstone"));
     }
 
     /// The pane structure, the workbench tiling, and the live document's

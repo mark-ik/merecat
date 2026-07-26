@@ -1,5 +1,5 @@
 # The Gloss pane receipt: the graph's minimap on cambium's graph_canvas_swatch —
-# the first custom-paint leaf a merecat pane renders (the leaf pipeline,
+# the first custom-paint leaf a turnstone pane renders (the leaf pipeline,
 # scene_from_dom_with_leaves). Node colour carries node identity from mere's
 # palette; a node click lowers Action::OpenAddress through the same spine as a
 # Roster row. Network-dependent (example.com gives a titled node); FRESH profile.

@@ -316,7 +316,7 @@ pub(super) fn decode_sprite(path: &Path) -> Option<(String, Vec<(f32, f32)>)> {
 /// receipt matches what was shown (occlusion and all).
 pub(super) fn capture_composed(host: &SurfaceHost, layers: &[CompositeLayer], w: u32, h: u32, path: &Path) -> bool {
     let target = host.device().create_texture(&wgpu::TextureDescriptor {
-        label: Some("merecat scenario capture"),
+        label: Some("turnstone scenario capture"),
         size: wgpu::Extent3d {
             width: w,
             height: h,
@@ -365,13 +365,13 @@ pub(super) fn read_texture_rgba(
     let row_bytes = width * 4;
     let padded = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("merecat capture readback"),
+        label: Some("turnstone capture readback"),
         size: padded as u64 * height as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("merecat capture readback"),
+        label: Some("turnstone capture readback"),
     });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {

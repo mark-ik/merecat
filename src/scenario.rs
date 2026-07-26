@@ -6,8 +6,8 @@
 //! [`Action`] through the same `update` spine as a keypress, so the runner
 //! needs no second execution model.
 //!
-//! Activation: set `MERECAT_SCENARIO` to a scenario file path before launch;
-//! captures land in `MERECAT_CAPTURE_DIR` (default: beside the scenario).
+//! Activation: set `TURNSTONE_SCENARIO` to a scenario file path before launch;
+//! captures land in `TURNSTONE_CAPTURE_DIR` (default: beside the scenario).
 //! The run ends by writing `scenario.done` there — first line `RESULT ok` or
 //! `RESULT fail`, then the log lines — and exiting WITHOUT saving the
 //! session, so a scenario never mutates the profile it ran against and
@@ -74,7 +74,7 @@
 //! scenario certifies the surface those lanes will stand on.
 
 
-/// One parsed scenario step. `MERECAT_SCENARIO` runs on the shared
+/// One parsed scenario step. `TURNSTONE_SCENARIO` runs on the shared
 /// `genet_probe::Scenario` loop; the generic verbs (act/settle/capture/log,
 /// assert text/event/snap) it owns, and these app-specific steps reach the Shell
 /// via `Driveable::app_step`, parsed here and run by `Shell::run_scenario_step`.

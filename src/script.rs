@@ -1,6 +1,6 @@
 //! Capability-scoped Piccolo control scripts.
 //!
-//! This is Merecat's app-control lane, not a web-page JavaScript substitute.
+//! This is Turnstone's app-control lane, not a web-page JavaScript substitute.
 //! A script receives a small observation snapshot and emits ordinary
 //! [`crate::action::Action`] values. The caller remains responsible for
 //! lowering those actions through [`crate::app::App::update`] and running the
@@ -91,7 +91,7 @@ type PiccoloValue = <PiccoloEngine as ScriptEngine>::Value;
 fn host(cx: &PiccoloCallCx<'_>) -> Result<Rc<ControlScriptHost>, String> {
     cx.host_data()
         .and_then(|data| data.downcast::<ControlScriptHost>().ok())
-        .ok_or_else(|| "Merecat control script has no host state".to_string())
+        .ok_or_else(|| "Turnstone control script has no host state".to_string())
 }
 
 fn require(host: &ControlScriptHost, capability: u8, name: &str) -> Result<(), String> {
@@ -289,7 +289,7 @@ pub(crate) fn run(
             "mere = { snapshot = __mere_snapshot, dispatch = __mere_dispatch, \
              open = __mere_open, summon = __mere_summon }",
         )
-        .map_err(|err| format!("install Merecat control API: {err:?}"))?;
+        .map_err(|err| format!("install Turnstone control API: {err:?}"))?;
     engine
         .eval_bounded(source, Budget::Steps(max_steps))
         .map_err(|err| format!("control script failed: {err:?}"))?;

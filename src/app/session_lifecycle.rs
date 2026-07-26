@@ -28,7 +28,7 @@ impl App {
     /// launch address or the first-run sample graph on top. Returns the
     /// state plus the boot effects.
     pub fn boot(address: Option<&str>) -> (Self, Vec<Effect>) {
-        let data_root = session::default_merecat_root();
+        let data_root = session::default_turnstone_root();
         let _ = std::fs::create_dir_all(&data_root);
         // The attributed journal + its capture hook (participant gate B1):
         // every mutation that flows through apply_graph_delta records here

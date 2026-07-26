@@ -1,4 +1,4 @@
-//! Merecat's core state and the two update functions — the middle of the
+//! Turnstone's core state and the two update functions — the middle of the
 //! spine: `Action -> update -> Effects` and `Update -> apply_update ->
 //! Effects`. Holds data, never handles: the ports (actors, stores, the
 //! window) live in the shell, which runs the effects this module returns.
@@ -1043,7 +1043,7 @@ impl App {
         use mere::kernel::graph::apply::{add_node, assert_relation};
         use mere::kernel::graph::{EdgeAssertion, Graph, SemanticSubKind};
 
-        let mut app = Self::isolated(std::env::temp_dir().join("merecat-graphshell-g3"));
+        let mut app = Self::isolated(std::env::temp_dir().join("turnstone-graphshell-g3"));
         let mut graph = Graph::new();
         let notes = add_node(
             &mut graph,
@@ -1085,7 +1085,7 @@ impl App {
 
     #[cfg(test)]
     pub(crate) fn test_stub() -> Self {
-        Self::isolated(std::env::temp_dir().join("merecat-app-test"))
+        Self::isolated(std::env::temp_dir().join("turnstone-app-test"))
     }
 
     /// Fold one typed service answer into state.

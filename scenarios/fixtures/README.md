@@ -9,7 +9,7 @@ Packs the scenarios and tests install as denizens.
   ```
   cd <mere>/crates/script/app-host/guest
   cargo build --target wasm32-wasip2 --release
-  cp target/wasm32-wasip2/release/app_core_guest.wasm <merecat>/scenarios/fixtures/
+  cp target/wasm32-wasip2/release/app_core_guest.wasm <turnstone>/scenarios/fixtures/
   ```
 
   It is committed so the wasm lane's receipts run on any checkout without a

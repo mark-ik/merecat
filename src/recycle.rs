@@ -3,7 +3,7 @@
 //!
 //! The bin IS `eidetic::deleted` — `DeletedNode` records staged into a
 //! session-scoped `eidetic_fjall::FjallStore` at `sessions/<id>/bin`. This
-//! module is the port adapter on merecat's spine: the app lowers
+//! module is the port adapter on turnstone's spine: the app lowers
 //! [`Effect::RecordDeleted`](crate::action::Effect), the shell forwards a
 //! [`BinCommand`] to the actor, and the actor answers with app-owned
 //! [`Update`]s ([`Update::BinListed`] / [`Update::BinFailed`]) — eidetic's

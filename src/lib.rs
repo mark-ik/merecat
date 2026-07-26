@@ -1,4 +1,4 @@
-//! Merecat application core and desktop host.
+//! Turnstone application core and desktop host.
 //!
 //! The library boundary exposes the existing read model, action reducer, and
 //! remote projection adapter. Platform handles remain in [`shell`].
@@ -20,7 +20,7 @@ mod inspector_view;
 pub mod observe;
 mod overmap;
 mod pane;
-/// Merecat's own pane model (was the `frisket` crate; folded in 2026-07-25).
+/// Turnstone's own pane model (was the `frisket` crate; folded in 2026-07-25).
 pub mod panes;
 mod recycle;
 pub mod remote_projection;

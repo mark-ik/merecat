@@ -1,4 +1,4 @@
-//! The wasm denizen lane: an `app-core` component acting on merecat through
+//! The wasm denizen lane: an `app-core` component acting on turnstone through
 //! the action ENVELOPE, ring-gated at every emission.
 //!
 //! This is the second face of the ONE grant (participant gate B2/B3): the

@@ -113,7 +113,7 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let dir =
-            std::env::temp_dir().join(format!("merecat-frame-store-test-{label}-{pid}-{nanos}"));
+            std::env::temp_dir().join(format!("turnstone-frame-store-test-{label}-{pid}-{nanos}"));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

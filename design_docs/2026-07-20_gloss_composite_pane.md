@@ -66,7 +66,7 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
 
 ## Progress
 
-- **2026-07-21 (the preset half LANDED — merecat `b02025c`):**
+- **2026-07-21 (the preset half LANDED — turnstone `b02025c`):**
   `src/swatch_pane.rs` is the vocabulary: `ProjectionPreset` (id, label,
   leaf key, component knobs, one pure `gather: fn(&App) -> SwatchModel`) and
   the one retained `SwatchPane` over any preset. Activation rides each node
@@ -81,7 +81,7 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
   (the provider registry, `PaneContent::Gloss(GlossConfig)`, and the UI
   question above — untouched, still the real work).
 
-- **2026-07-22 (the sections half, slice 1 LANDED — merecat `151b416`):**
+- **2026-07-22 (the sections half, slice 1 LANDED — turnstone `151b416`):**
   `src/sections.rs` is the section-provider registry: `SectionProvider` (id,
   title, a pure `gather: fn(&App) -> Vec<SectionRow>` — the same currency as a
   preset's `gather`, the seam the swatch half left), with `RECENT_SECTION` /
@@ -102,7 +102,7 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
   so a pane chooses its sections, persisted with `frame.json`); and the
   add/remove UI (the right-click palette scoped to the active pane).
 
-- **2026-07-22 (the sections half FINISHED — merecat `4afed14`):** all three
+- **2026-07-22 (the sections half FINISHED — turnstone `4afed14`):** all three
   remaining slices.
   - **Rows are live.** `SectionRow` carries a `SectionActivate` (Open /
     Recover) as DATA, like a swatch node's, so a provider declares what its
@@ -182,7 +182,7 @@ arrangement/view state, not graph-object metadata (the taxonomy holds).
     node by its ORIGINAL id from inside the Overmap. 109 unit tests + frisket's
     17.
 
-  **The drag gesture stays deferred, with a reason.** Merecat already has a
+  **The drag gesture stays deferred, with a reason.** Turnstone already has a
   full tab-drag grammar (`WorkbenchStackOnto`, `WorkbenchSplitBeside`,
   `TearOutTile`), but it lives in the WORKBENCH lane and is tile-shaped. A
   section-header drag would either duplicate that machinery inside the swatch

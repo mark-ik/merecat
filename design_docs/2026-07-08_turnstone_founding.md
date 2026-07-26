@@ -1,16 +1,16 @@
-# Merecat founding
+# Turnstone founding
 
 > **Reader's note, 2026-07-14.** Names below are as of 2026-07-08 and several have
 > since changed. `orrery` is now `canvas` and stays in mere (the 2026-07-09 boundary-pass
 > amendment reversed its move), so `mere::orrery::Orrery` is a path that no longer exists.
 > The engine `serval` is now `genet`. This doc's target-shape section is superseded by
-> [2026-07-10_merecat_architecture_plan.md](./2026-07-10_merecat_architecture_plan.md);
+> [2026-07-10_turnstone_architecture_plan.md](./2026-07-10_turnstone_architecture_plan.md);
 > the naming, sequencing, and done-conditions story here still stands. Rung 5 is scoped in
-> [2026-07-14_merecat_rung5_panes_plan.md](./2026-07-14_merecat_rung5_panes_plan.md).
+> [2026-07-14_turnstone_rung5_panes_plan.md](./2026-07-14_turnstone_rung5_panes_plan.md).
 
-2026-07-08. Merecat is the promotion target for mere's `meerkat` app crate,
+2026-07-08. Turnstone is the promotion target for mere's `meerkat` app crate,
 and the other half of a role swap: **mere becomes a library** (the lake: a
-graph over semantically related content) and **merecat becomes its consumer**
+graph over semantically related content) and **turnstone becomes its consumer**
 (the reference host app, in its own repo, like every other promoted crate's
 consumers).
 
@@ -18,11 +18,11 @@ consumers).
 
 Too many apps, companies, and services already use "meerkat" (the dead
 livestreaming app, Compare-the-Market's finance app, meerkat-software.com,
-others). "Merecat" makes the pun explicit and load-bearing: meerkat is Dutch
-*meer* + *kat*, lake-cat, so merecat is the English calque, and *mere* (a
-lake) is the library it lives on. Known prior occupant: troglobit's `merecat`
+others). "Turnstone" makes the pun explicit and load-bearing: meerkat is Dutch
+*meer* + *kat*, lake-cat, so turnstone is the English calque, and *mere* (a
+lake) is the library it lives on. Known prior occupant: troglobit's `turnstone`
 embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
-`merecat` was free on crates.io at founding.
+`turnstone` was free on crates.io at founding.
 
 ## Target shape
 
@@ -32,13 +32,13 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
   domain snapshots and events. Local-first in the strict sense: fully
   functional offline, with peer dependencies absent from core. Mere has no
   window, engine, GPU, fetch, or browser-lifecycle knowledge.
-- **merecat** = this repo. The app: windows, panes, input, render hosts,
+- **turnstone** = this repo. The app: windows, panes, input, render hosts,
   chrome, settings, session, **and the presentation surfaces**: orrery
   (graph canvas scene host), platen with its arrangements/cartography
   satellites (composition/projection), and the verso family (verso,
   verso-api, verso-scry, verso-genet, browser-worker: the engine
   multiplexer, the heart of the web lane). Amended 2026-07-09 per the
-  [mere/merecat boundary pass plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-09_mere_merecat_boundary_pass_plan.md):
+  [mere/turnstone boundary pass plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-09_mere_turnstone_boundary_pass_plan.md):
   the earlier shape kept orrery/platen in mere; they are application
   surfaces, and the `mere` facade's re-exports of them are compatibility
   scaffolding for the in-workspace host, not the library boundary. Its
@@ -56,7 +56,7 @@ embedded httpd (thttpd fork, BSD). Different domain; Mark is unbothered.
    observability + a11y-projection cluster becomes promotable; scrying_host
    folds toward verso-scry; fetch/cookies toward the crawl lane). No
    `pub(crate)` reach-ins, no kernel hooks wired from the bin.
-3. **Port meerkat → merecat once the seam holds** through normal work
+3. **Port meerkat → turnstone once the seam holds** through normal work
    (observable signal: meerkat changes stop requiring same-day mere
    changes). Strip MPL headers on the way; this repo is MIT/Apache,
    edition 2024. Mere re-bases last, per standing doctrine.
@@ -65,7 +65,7 @@ Until step 3 the crate is a name-reserving placeholder. Murm/Moot promotion
 follows Mere's
 [`murm-replication` boundary plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-12_murm_peer_runtime_and_moot_domain_plan.md):
 Murm owns the reusable peer-exchange foundation, Moot supplies governed-space
-semantics over its lower replication crate, and Merecat configures both through
+semantics over its lower replication crate, and Turnstone configures both through
 domain-level services rather than assembling p2panda sessions.
 
 ## Current extraction state
@@ -82,7 +82,7 @@ its app-local chrome, rendering, session, actor, and browser-runtime lanes; it
 must build from this repo against a branch dependency on `mere` before the
 application moves here.
 
-**First vertical slice landed 2026-07-09**: merecat builds and runs from this
+**First vertical slice landed 2026-07-09**: turnstone builds and runs from this
 repo against `mere` as a branch dep (git sibling + gitignored local patches,
 plus the `[patch.crates-io]` entries restated from mere's workspace manifest —
 a standalone consumer must carry those itself). The bin is a thin winit shell
@@ -90,7 +90,7 @@ hosting the window-agnostic `mere::orrery::Orrery` content-root: an address
 argument mints its node in a fresh mere graph (`Orrery::visit`) and the canvas
 renders it through genet-winit-host, with physics on an armillary actor.
 Nothing was copied from meerkat's shell; orrery's demo-scene catalog stayed
-behind. Headed receipt: `testing/merecat/images/2026-07-09_first_vertical_slice.png`.
+behind. Headed receipt: `testing/turnstone/images/2026-07-09_first_vertical_slice.png`.
 Done-condition 1 of three is met; the next slices are the verso-api browser
 lane (open address -> live content on the node) and session persistence.
 
@@ -101,7 +101,7 @@ material that moves here with the port); the page outcome stamps the response
 Content-Type as the node's MIME hint and, for HTML, the static-parse
 `<title>` (genet-extract) onto the node — the canvas caption flips from the
 host fallback to the real title (`example.com` -> `Example Domain`,
-receipt `testing/merecat/images/2026-07-09_fetch_title_enrichment.png`).
+receipt `testing/turnstone/images/2026-07-09_fetch_title_enrichment.png`).
 Supporting seam work in mere: orrery gained `set_node_title` (rebuilds the
 caption pool) and `set_node_mime_hint` (metadata-only), mirroring its favicon
 stamp; and the founded-family sibling deps (chartulary/stemma/numen/codicil/
@@ -115,11 +115,11 @@ content rendering (verso lane), session persistence.
 favicon stamp; the icon insets within the face so the node accent frames it
 — orrery `FAVICON_INSET`, design space in mere's node body/face model plan)
 and **session persistence**: the flat single-session `graph.json` under
-`<data_dir>/merecat` (`MERECAT_ROOT` override for scratch profiles), loaded
+`<data_dir>/turnstone` (`TURNSTONE_ROOT` override for scratch profiles), loaded
 at boot, saved after each enrichment and on close. The browser remembers:
 launch with an address, close, relaunch bare, and the node returns with its
 title and favicon off disk (receipts:
-`testing/merecat/images/2026-07-09_favicon_inset_frame.png`,
+`testing/turnstone/images/2026-07-09_favicon_inset_frame.png`,
 `…_session_restore.png`). Remaining from the slice list: live content
 rendering (the verso lane) — the next big build; then multi-session
 (`sessions/<id>/` + manifests) and the BrowserNodeState sidecar once the
@@ -127,7 +127,7 @@ shell holds per-node browser state worth persisting.
 
 ## Done-conditions
 
-- merecat builds and runs from this repo against mere as a dependency
+- turnstone builds and runs from this repo against mere as a dependency
   (branch dep, not a local path, per workspace convention).
 - mere's workspace no longer contains an app bin.
 - The meerkat name survives only in mere's git history.

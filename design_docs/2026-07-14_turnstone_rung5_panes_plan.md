@@ -1,7 +1,7 @@
-# Merecat rung 5: panes
+# Turnstone rung 5: panes
 
 2026-07-14. Scopes rung 5 of the obviation ladder in
-[2026-07-10_merecat_architecture_plan.md](./2026-07-10_merecat_architecture_plan.md).
+[2026-07-10_turnstone_architecture_plan.md](./2026-07-10_turnstone_architecture_plan.md).
 The ladder's one-line gate for this rung ("platen's pane model") is wrong in
 both halves, so this plan restates the gate before it slices the work.
 
@@ -26,7 +26,7 @@ debug-asserted on every persist and a 600-seed random-gesture fuzz test.
 enum with a variant for every rung-5 pane, a `PaneNode` split tree, `FrisketLayout`,
 and serde persistence that `session_runtime::frisket_store` already writes to
 `frame.json`. Deps are accesskit, serde, tracing, uuid, uxtree only. Host-neutral,
-geometry-free, and already compiled into merecat's dependency graph.
+geometry-free, and already compiled into turnstone's dependency graph.
 
 **The two nest rather than compete.** `PaneContent::Workbench` is one frisket leaf
 whose content is a platen `Workbench`. Three tiers, not one:
@@ -55,7 +55,7 @@ which is doc rot rather than a roadmap.
 Decided 2026-07-10 with Mark, recorded in mere's boundary-pass plan. This plan does
 not reopen it:
 
-> mere owns what a pane says when it speaks graph or persistence truth, merecat
+> mere owns what a pane says when it speaks graph or persistence truth, turnstone
 > owns panes that speak app-runtime truth, platen owns how any of them dock and
 > tile.
 
@@ -63,18 +63,18 @@ Concretely: gloss + roster stay `crates/domain/*`; **trail** earns its domain cr
 on the P8 pattern; alembic + steward vocabulary is session-runtime's (persistence
 truth) with views app-side; apparatus splits its natures (settings vocabulary =
 `domain/apparatus` in mere, the diagnostics feed is HostObservability = app runtime,
-so the live pane is merecat's); **inspector is merecat's outright**; **comms**
+so the live pane is turnstone's); **inspector is turnstone's outright**; **comms**
 consumes the Murm and Moot domain services.
 
 ## Supply reachable today
 
 The most useful fact for planning this rung, and it appears nowhere in the ladder.
-In merecat's `Cargo.lock` **today**, transitively through `mere` and
+In turnstone's `Cargo.lock` **today**, transitively through `mere` and
 `session-runtime`, all of these resolve and compile: `frisket`, `platen`, `forme`,
 `gloss`, `roster`, `trail`, `apparatus`, `uxtree`, `pelt-core`, and `verso-tile`
 (a hard dep of `fetch`; `fetch::cookies::session_cookies_for` already returns
 `verso_tile::api::Cookie`). They are in the build graph and merely not nameable.
-Naming one costs a dep line, the precedent merecat already uses twice (`fetch` and
+Naming one costs a dep line, the precedent turnstone already uses twice (`fetch` and
 `session-runtime` as direct git deps on mere.git).
 
 Two facade gaps: `frisket` and `uxtree` are not re-exported by `mere`, so each needs a
@@ -84,7 +84,7 @@ Not in the build graph: `cambium`, `sprigging`, `pelt-desktop` (all in
 `[[patch.unused]]`), and `scrying-engine`.
 
 So rung 5's **model half needs no repo move and no facade change to start**. Only the
-renderer half is blocked, and it is blocked outside merecat.
+renderer half is blocked, and it is blocked outside turnstone.
 
 ## Slices
 
@@ -127,14 +127,14 @@ commit, or the scenario receipts stop covering panes. Grow `observe::Snapshot` w
 `surfaces` and `focus`, and the scenario grammar with `assert surface` and
 `assert focus`.
 
-Take the free win while the ids are being minted: merecat calls the unkeyed
+Take the free win while the ids are being minted: turnstone calls the unkeyed
 `SurfaceHost::rasterize` three times per frame, and genet-winit-host's own doc says
 an unkeyed multi-surface host rebuilds every tile on every call.
 `host.core().rasterize_for(id, ..)` is reachable today and `SurfaceId` is exactly the
 u64 key it wants.
 
 - **Supply**: nothing new. netrender's `ExternalTexturePlacement` already carries
-  `dest_rect`, `uv`, and `opacity`; merecat passes `[0,0,w,h]` to everything.
+  `dest_rect`, `uv`, and `opacity`; turnstone passes `[0,0,w,h]` to everything.
 - **Gate**: none. Buildable today.
 - **Done**: a scenario opens a node, toggles live content, and the page renders inside
   a rect that is not the whole window, with the canvas still visible beside it.
@@ -169,7 +169,7 @@ pointer and wheel are. Original scope below.
 Rung-4 debt, and it must clear before panes.
 
 Route pointer, wheel, and keys to the focused surface. Live content sessions receive
-nothing today: merecat calls only `pump`, `frame`, and `settled`, while
+nothing today: turnstone calls only `pump`, `frame`, and `settled`, while
 `inker::DocumentSession` already offers `click_at`, `scroll_by`, `scroll_at`,
 `scroll_for_key`, `scroll_to`, and `links`. Fold `SessionClick::Navigate(url)` back
 into `Action::OpenAddress` so a link click inside a page grows the graph.
@@ -195,7 +195,7 @@ Fix two rung-4 bugs in the same slice:
 
 ### C. The pane tree: adopt `frisket` — LANDED 2026-07-15 (79cdcbf)
 
-merecat git-deps frisket, holds a `FrisketLayout` in app truth, and drives it
+turnstone git-deps frisket, holds a `FrisketLayout` in app truth, and drives it
 through the Action spine. `pane.rs` supplies the host-side geometry frisket lacks
 (`place_panes` walks the ratio tree into rects, `path_of` aims the ops).
 `surface::plan(Layout)` became `assemble(base, content, chrome)`: the shell walks
@@ -211,8 +211,8 @@ Receipts: 35 unit tests, and two headed runs on one profile (RESULT ok):
 `rung5_panes_restore.scn` (fresh process finds the Roster restored from
 frame.json). Original scope below.
 
-Take `frisket` as a direct git dep on mere.git. It is already in merecat's `Cargo.lock`
-transitively through session-runtime; it is merely not nameable, which is why merecat
+Take `frisket` as a direct git dep on mere.git. It is already in turnstone's `Cargo.lock`
+transitively through session-runtime; it is merely not nameable, which is why turnstone
 can already call `session_runtime::frisket_store::{save,load}_frame_layout` but
 cannot name the `FrisketLayout` they take.
 
@@ -245,7 +245,7 @@ on the way over is legitimate, but it is a named step, not a silent one.
   arrangement comes back off `frame.json`. This bar is lower than it sounds and should
   be stated so: every meerkat summon is a fixed Right-split off the graph pane at a
   hardcoded ratio, and `frisket::reparent_leaf` is dead in the host (called only by
-  frame's own tests). Pane drag-rearrangement is **not** a bar merecat must clear at the
+  frame's own tests). Pane drag-rearrangement is **not** a bar turnstone must clear at the
   frisket tier.
 - **Risk**: rewriting `frisket` instead of adopting it invalidates the `frame.json` format
   session-runtime already ships (`PaneNode::Leaf` even carries `#[serde(default)] graph_id`
@@ -275,7 +275,7 @@ honest form, and the toolkit-adoption pilot. `roster_view.rs` gathers the rows
 `scene_from_dom(dom, sheet, w, h)` + `CAMBIUM_SHEET` composite it the same way the
 chrome renders. Receipt `rung5_roster.scn` (RESULT ok); the capture shows a
 Node/Address grid with the selected node highlighted. **Toolkit question
-answered: merecat adopts cambium** (the blocker — genet's duplicate toolkit — is
+answered: turnstone adopts cambium** (the blocker — genet's duplicate toolkit — is
 gone; cambium builds; the crates.io `servo-malloc-size-of` chain is patched local,
 so committed-manifest PUBLISH still waits on the genet-side fork rename). Open on
 Roster: grid event dispatch (`runner.dispatch_click`) replaces the hand-DOM
@@ -285,7 +285,7 @@ the chrome migrate onto cambium after.
 **Inspector LANDED 2026-07-17:** detail sections over app truth, on cambium's
 new `detail_panel` catalog entry (key/value sections, all inert — the
 surfaces-in-cambium mapping's named expression). The data half
-(`inspector_view.rs`) re-cuts meerkat's `inspector.rs` for merecat's shape:
+(`inspector_view.rs`) re-cuts meerkat's `inspector.rs` for turnstone's shape:
 node facts off the kernel node; content facts off a spawn-time mirror
 (`ContentFacts` on `Update::ContentSpawned`, the adapter conversion) whose
 structural half arrives through **`DocumentSession::inspect`** — the genet
@@ -315,7 +315,7 @@ Order matters, and it is set by dependency weight:
    items out, host maps items to rows) as the model the other extractions should follow.
 2. **roster** next: 1,290 LOC, deps forme and kernel only, the biggest single payoff in
    the supply.
-3. **inspector** after: merecat's outright per the taxonomy, no crate by design. The
+3. **inspector** after: turnstone's outright per the taxonomy, no crate by design. The
    donor is `meerkat/src/inspector.rs` (488 LOC) over
    `inker::{Block, DocumentDiagnostic, DocumentTrustState, EngineDocument}` and
    `session_runtime::browser_node_state::BrowserNodeState`. It is fetch/content
@@ -389,7 +389,7 @@ is the real decision, not a detail:
   (`TileFrame { frame_scene, tiles: Vec<TileLayer { tile, rect, scene }> }`, plus
   `TileShell`).
 - **(b) Walk platen's `WorkbenchPlan` fraction tree into rects host-side** and render it on
-  the ScriptedDom + genet-layout path merecat already runs, keeping merecat's dep graph free
+  the ScriptedDom + genet-layout path turnstone already runs, keeping turnstone's dep graph free
   of pelt and cambium.
 
 Preserve platen's persistence discipline verbatim either way. The canonical
@@ -399,7 +399,7 @@ Preserve platen's persistence discipline verbatim either way. The canonical
 - **Supply**: `platen` (already facade-exported, already in the lock) plus `pelt-core`'s
   tile contract (also in the lock). Note platen is view-framework-free but **not** dep-free:
   it deps `document-canvas`, `inker`, `pelt-core`, `forme`, serde. Option (a) additionally
-  needs `pelt-desktop`, `cambium`, and `sprigging`, none of which are in merecat's build
+  needs `pelt-desktop`, `cambium`, and `sprigging`, none of which are in turnstone's build
   graph.
 - **Gate**: option (b) gates on nothing beyond slices A and C. Option (a) gates on the
   cambium/genet duplication being resolved (see Watch items).
@@ -436,7 +436,7 @@ screen-reader bridge would consume. NOT landed, said plainly: pushing the
 landed that either; producing the coherent tree is this rung's matrix bar,
 and the adapter is a follow-on. Original scope below.
 
-The deletion matrix requires a coherent snapshot and accessibility tree. Merecat has no
+The deletion matrix requires a coherent snapshot and accessibility tree. Turnstone has no
 accesskit dep, no uxtree dep, and calls no projector.
 
 The projectors exist and are unused:
@@ -450,20 +450,20 @@ The projectors exist and are unused:
   whose own doc says it is for a host that stitches several subtrees (chrome, content panes,
   host root) into one tree, with id-salting and skip-pruning. Use
   `build_subtree_with_leaves` if sprigging leaves ever enter.
-- `uxtree::stitch`: mere's stitcher, in merecat's lock but not facade-re-exported.
+- `uxtree::stitch`: mere's stitcher, in turnstone's lock but not facade-re-exported.
 
 - **Supply**: all of the above. Only `uxtree` needs a facade export or a direct dep.
 - **Gate**: slice D. There must be panes to stitch.
 - **Done**: the window's AccessKit tree carries chrome plus each pane's subtree under one
   root with disjoint id ranges. A document pane announces as a region and reports its
   capability honestly rather than implying coverage it does not have.
-- **Risk**: the missing piece is precise and small, and it is **not** merecat's to fix. A live
+- **Risk**: the missing piece is precise and small, and it is **not** turnstone's to fix. A live
   `DocumentSession` has no accessor to its `EngineDocument`, so a live document cannot be
   projected: `LoadedDocument`'s fields are private (pub methods stop at
-  `inspect() -> ContentReport`), and merecat's one registered engine is genet's
+  `inspect() -> ContentReport`), and turnstone's one registered engine is genet's
   `StaticSessionEngine`, whose session type `StaticDocumentSession` is **private** (only
   `ScriptedDocumentSession` and `SmolwebDocumentSession` are `pub`). Meerkat solves this by
-  downcasting through `as_any` to `HostScriptedDocument`, its **own** type. Merecat cannot:
+  downcasting through `as_any` to `HostScriptedDocument`, its **own** type. Turnstone cannot:
   for the one lane it ships, the downcast option does not exist. This is a genet ask (put a
   projection accessor on `DocumentSession`), and it is the only path. Until it lands,
   `A11yCapability::Partial` is the honest answer and the pane should say so, per the
@@ -476,7 +476,7 @@ The projectors exist and are unused:
   and SyncIndicator: live host state with no mere-side vocabulary, and its charter is half a
   comms surface, so part of it is rung-8 material. `alembic` is roughly 155 LOC inline in
   meerkat's `pane_data.rs`; its engine half is landed and pure in session-runtime (athanor's
-  propose/apply passes, memory_levels, graph_engram), which merecat already git-deps. Per the
+  propose/apply passes, memory_levels, graph_engram), which turnstone already git-deps. Per the
   taxonomy both are session-runtime vocabulary with views app-side, so they are pane views to
   build, not crates to fetch.
 - **`apparatus` as working supply.** The crate exists and is facade-re-exported, so it scans as
@@ -493,7 +493,7 @@ The projectors exist and are unused:
   blocked on step 3 of `2026-07-08_forest_dom_plan.md`, names meerkat as its consumer, and rides
   genet's `PortableKeyed` / `Moved` / nursery.
 - **meerkat's `sync.rs` protocol assembly.** mere's peer-runtime plan has an explicit stop rule
-  against leaving operation verification or insertion callbacks in merecat. That wiring is deleted
+  against leaving operation verification or insertion callbacks in turnstone. That wiring is deleted
   by its Phase F and must not be ported.
 - **`ContentPane`.** A `pub(crate)`, two-variant, non-serde nav-focus discriminator
   (Orrery | Workbench) meaning "which content pane does the omnibar act on". It is not a
@@ -514,9 +514,9 @@ These are Mark's, not the implementer's.
    - **`frisket`** (renamed from `frame`, `crates/shell/frisket`): the pane model. On a hand press
      the frisket is the frame whose cut-out apertures decide what prints where.
 
-   Destination: **merecat**, because `PaneContent` names panes merecat owns outright (Inspector,
+   Destination: **turnstone**, because `PaneContent` names panes turnstone owns outright (Inspector,
    Comms), and a library crate enumerating the app's panes is an inversion. It **cannot move yet**:
-   meerkat still depends on it. So it stays a mere crate and merecat git-deps it, exactly as merecat
+   meerkat still depends on it. So it stays a mere crate and turnstone git-deps it, exactly as turnstone
    already does with `fetch` and `session-runtime`. It relocates when meerkat is deleted, and
    `session_runtime::frisket_store` goes with it. That is the session-runtime split the
    boundary-pass plan already parked as a follow-on, so this inherits an existing gate rather than
@@ -529,25 +529,25 @@ These are Mark's, not the implementer's.
    Receipts: frisket 14 tests green, incipit 3, session-runtime 188, meerkat compiles.
 2. **Workbench-pane renderer: pelt-desktop's `TileSurface`, or hand-rendered on the ScriptedDom
    path?** Slice E, options (a) and (b).
-3. **Does merecat ever adopt a view framework** (cambium + sprigging + register-theme), or do panes
+3. **Does turnstone ever adopt a view framework** (cambium + sprigging + register-theme), or do panes
    stay on hand-built DOM? Rung 3 shipped without one and shipped well. Roster's hundreds of rows
    is where the answer starts to matter. Right now this decision is being made by omission, which
    is the worst way to make it.
 4. **Does `workbench` (crates/platen/domain/workbench, 164 LOC) move with platen?** It hard-deps
-   platen, so when platen moves to merecat it moves or breaks. No doc says. If it does **not** move,
+   platen, so when platen moves to turnstone it moves or breaks. No doc says. If it does **not** move,
    a library crate ends up depending on the app's crate, which is an inversion. It would otherwise
    be discovered at the compile error.
 5. **Which settings are app truth versus persisted?** Not "where do they live": session-runtime
    already ships `settings_store` (`PersistedSettings`, `ShellbarEdge`, `ScriptPermissionPrefs`,
    `save_settings`/`load_settings`, `<session_dir>/settings.json`, atomic write, additive-field-safe),
-   and merecat direct-deps it. The real gap is ownership: three live mere plans (peer-runtime,
+   and turnstone direct-deps it. The real gap is ownership: three live mere plans (peer-runtime,
    deletion/retention, native-drop) assign retention, transport-preference, and export-profile
-   settings to merecat by name, and the ladder has no settings module and no settings rung.
-6. **Does Steward ship content-ops-only at rung 5** and grow its sync rows later, or does merecat take
+   settings to turnstone by name, and the ladder has no settings module and no settings rung.
+6. **Does Steward ship content-ops-only at rung 5** and grow its sync rows later, or does turnstone take
    a rung-8 dependency early? Per the no-placebo rule the readout must be genuine or absent; a fake
    sync row is not an option. The cheap honest answer is a status port that returns empty until comms
    lands, the same shape the content port already uses.
-7. **Should file ingress (OS file drop plus a picker) get a rung?** Merecat handles no winit
+7. **Should file ingress (OS file drop plus a picker) get a rung?** Turnstone handles no winit
    `DroppedFile` or `HoveredFile`. It is independent of comms, it serves the ordinary "open a local
    file as a node" case, and it is the app-facing seam of the whole native-drop lane
    (`import_plain_drop_file(path, ...)`). The deletion matrix's last row makes the omission a defect
@@ -563,14 +563,14 @@ Neither is a dependency; both landed after the ladder was written.
    `components/chisel` are still genet workspace members. Two live, diverged copies of the toolkit.
    mere's HEAD (`271e79d`, "Point Meerkat UI at Cambium") already points meerkat at cambium through
    its gitignored `.cargo/config.toml`, so mere's committed manifest builds only because of a local
-   file. Merecat is the only family member currently insulated from this, because it took no toolkit
+   file. Turnstone is the only family member currently insulated from this, because it took no toolkit
    dep. That insulation is an asset; spend it deliberately. Note the flagship component (the
    filterable action list) does **not** exist in cambium: `menu()` is render-only and the host owns
    query, selection, and keyboard. Do not budget it as supply.
 2. **`livery`.** `livery` 0.0.2 and `genet-livery` 0.0.2 are genet workspace members at HEAD: a
    clean-room, generated CSS property and cascade engine. `genet-livery` deps `layout-dom-api`,
-   `paint_list_api`, and taffy, the same seam merecat's `ui.rs` already drives through genet-layout.
-   Genet's own audit names Cambium as first consumer and says it "does not claim to be Merecat's
+   `paint_list_api`, and taffy, the same seam turnstone's `ui.rs` already drives through genet-layout.
+   Genet's own audit names Cambium as first consumer and says it "does not claim to be Turnstone's
    production theme". Watch, do not plan against it; the swap would be confined to `ui.rs`'s layout
    and paint call.
 
@@ -578,30 +578,30 @@ Neither is a dependency; both landed after the ladder was written.
 
 ## Destination update, 2026-07-25: the name goes to Cambium, the tree stays here
 
-Superseding the 2026-07-24 draft of this section, which said merecat's pane tree
-would retire onto the shared frame's. Reading merecat's own code says otherwise,
+Superseding the 2026-07-24 draft of this section, which said turnstone's pane tree
+would retire onto the shared frame's. Reading turnstone's own code says otherwise,
 and the correction is the useful part.
 
-**Merecat does not render a pane frame; it composites surfaces.**
+**Turnstone does not render a pane frame; it composites surfaces.**
 `shell::surface_plan` walks this tree into one surface per pane plus divider
 bands, which is how a live WebView, the Orrery's GPU canvas, and a
 cambium-rendered pane share a window. `src/pane.rs` is that geometry, and it has
 consumed `cambium::Split`'s state math — not its view — since 2026-07-17. The
 shared idea was therefore already shared; what remained were two *presentation
 strategies*, both legitimate: `cambium::frisket` renders one DOM with content
-holes (Pelt's way), and merecat places surfaces.
+holes (Pelt's way), and turnstone places surfaces.
 
-So: **the tree stays, as merecat's own pane authority** (the analog of forme in
+So: **the tree stays, as turnstone's own pane authority** (the analog of forme in
 mere), and the two tree shapes are a recorded deliberate divergence rather than
-debt. Converging merecat's binary-split-with-ratio onto the contract's
-n-ary-with-tab-stacks costs ~473 references and buys nothing until merecat wants
+debt. Converging turnstone's binary-split-with-ratio onto the contract's
+n-ary-with-tab-stacks costs ~473 references and buys nothing until turnstone wants
 tabs or wants its panes inside one DOM.
 
 **What landed 2026-07-25:** the `frisket` crate folded into `src/panes`. One
 consumer wants no package identity, and the name went to `cambium::frisket` — a
 crate and a module of the same name in one graph is a trap. 13 call-site files
 rebased to `crate::panes::`, the workspace member and path dep dropped, `serde`
-and `incipit` moved onto merecat's manifest. The pane model, its layout ops, the
+and `incipit` moved onto turnstone's manifest. The pane model, its layout ops, the
 `frame.json` store, the tearout lane, and the uxtree projection are unchanged.
 
 Direction and the publish order are in genet's

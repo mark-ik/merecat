@@ -1,6 +1,6 @@
 //! The chrome as a cambium view over a FOREST of window-roots — the toolkit
 //! question's endpoint, executed 2026-07-18 ("chrome migrates to a cambium
-//! view"), and merecat's literal consumption of the two forest primitives:
+//! view"), and turnstone's literal consumption of the two forest primitives:
 //! cambium's `push_forest_projection` (every window's chrome is a window-root
 //! subtree of ONE shared document) and genet-layout's `layout_subtree` (each
 //! window lays out and paints ITS root at its own size).
@@ -16,11 +16,11 @@
 //! catalog, recorded against the surfaces-in-cambium mapping's prediction):
 //!
 //! - `command_palette`/`action_list` own their `query` state and filter a
-//!   static item list; merecat's omnibar keys lower through the Action spine
+//!   static item list; turnstone's omnibar keys lower through the Action spine
 //!   (doctrine 2) and its suggestions are GRAPH TRUTH re-queried per edit.
 //!   The rows here render `OmnibarState`, they do not own it.
 //! - `styled_text_field` renders no visible caret glyph (its caret is a
-//!   position for a host overlay); merecat's caret-split rendering (the "▍"
+//!   position for a host overlay); turnstone's caret-split rendering (the "▍"
 //!   at the true position, preedit underlined beside it) is the receipt-
 //!   proven IME/caret honesty, so the input row keeps it. The follow-on
 //!   `cambium::caret_text_field` (3d0edc7a) now renders that same triple —

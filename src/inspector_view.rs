@@ -1,8 +1,8 @@
 //! The Inspector pane's data half: focused-object detail sections off app
-//! truth (rung 5 slice D, last pane; merecat's outright per the pane
+//! truth (rung 5 slice D, last pane; turnstone's outright per the pane
 //! taxonomy — fetch/content introspection is app-runtime truth, so there is
 //! no mere crate and none is wanted). The behavioral donor is meerkat's
-//! `inspector.rs`, re-cut for merecat's shape: node facts come from the
+//! `inspector.rs`, re-cut for turnstone's shape: node facts come from the
 //! kernel node, content facts from the [`ContentFacts`] mirror the content
 //! port stamps at spawn (the structural read arrives through genet's
 //! `DocumentSession::inspect`, the trait accessor this pane pulled into
@@ -13,7 +13,7 @@
 //! snapshot flattens them so a scenario can assert a row.
 //!
 //! Not carried from meerkat (deliberately): the re-parse of the fetched
-//! body through nematic engines — merecat's structural read comes from the
+//! body through nematic engines — turnstone's structural read comes from the
 //! LIVE session, not a second parse (one truth, no drift). The sidecar rows
 //! (viewer override, compat mode) joined at rung 6 with the browser-state
 //! sidecar itself.

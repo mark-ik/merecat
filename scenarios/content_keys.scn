@@ -7,7 +7,7 @@
 settle 30
 key escape
 
-# A page with real height, opened and made live. `wait` holds until merecat
+# A page with real height, opened and made live. `wait` holds until turnstone
 # reports its own work done (fetch landed, spawn answered, session settled)
 # instead of guessing a frame count at someone else's network.
 open https://www.iana.org/

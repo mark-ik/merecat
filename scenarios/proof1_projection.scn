@@ -2,7 +2,7 @@
 # palette switches the canvas to the phyllotaxis cartography strategy; the
 # shell's new drive loop projects it through the canvas's recompute gate and
 # the analytic layout holds still; reverting re-settles the physics. Offline
-# (mere:// nodes ride the sample ring); run on a FRESH profile (MERECAT_ROOT).
+# (mere:// nodes ride the sample ring); run on a FRESH profile (TURNSTONE_ROOT).
 settle 30
 key escape
 

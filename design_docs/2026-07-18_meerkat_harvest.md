@@ -13,14 +13,14 @@ with the crate.
 
 | Gem | From | To | Why |
 | --- | --- | --- | --- |
-| **Sprite collider-hull tracer** (`trace_sprite_hull`: grid sampler + monotone-chain convex hull + deviation-decimating simplify) | `sprite_import.rs` | **`mere::canvas::sprite_hull`** (+ merecat's drop lane wires it: `SetNodeSprite` now carries the hull) | Completes the file-drop lane's honest gap — a dropped sprite collides at its picture. Promoted to canvas, not merecat, so every host shares one tracer (the ecosystem-over-app steer). |
-| **Inspector row semantics** | `inspector.rs` | merecat `inspector_view.rs` | Already taken at rung 5 slice D (re-cut, not copied: live-session `inspect()` instead of the body re-parse). |
-| **Scenario/self-drive vocabulary** | `scenario/runner.rs` | merecat `scenario.rs` + genet-probe | Already taken as a re-derivation ("the vocabulary returns as Action-driven automation"); genet-probe generalized it ecosystem-wide. |
-| **Behavioral test corpus as spec** | `agent_harness/tests.rs` (2,216 LOC), `tests.rs` (807) | This doc + the deletion-matrix receipts | Read as the checklist behind the matrix rows; the receipts (18 scenarios, 70+ unit tests) are their merecat successors. Nothing further to port — the harness itself is superseded by scenario + probe. |
+| **Sprite collider-hull tracer** (`trace_sprite_hull`: grid sampler + monotone-chain convex hull + deviation-decimating simplify) | `sprite_import.rs` | **`mere::canvas::sprite_hull`** (+ turnstone's drop lane wires it: `SetNodeSprite` now carries the hull) | Completes the file-drop lane's honest gap — a dropped sprite collides at its picture. Promoted to canvas, not turnstone, so every host shares one tracer (the ecosystem-over-app steer). |
+| **Inspector row semantics** | `inspector.rs` | turnstone `inspector_view.rs` | Already taken at rung 5 slice D (re-cut, not copied: live-session `inspect()` instead of the body re-parse). |
+| **Scenario/self-drive vocabulary** | `scenario/runner.rs` | turnstone `scenario.rs` + genet-probe | Already taken as a re-derivation ("the vocabulary returns as Action-driven automation"); genet-probe generalized it ecosystem-wide. |
+| **Behavioral test corpus as spec** | `agent_harness/tests.rs` (2,216 LOC), `tests.rs` (807) | This doc + the deletion-matrix receipts | Read as the checklist behind the matrix rows; the receipts (18 scenarios, 70+ unit tests) are their turnstone successors. Nothing further to port — the harness itself is superseded by scenario + probe. |
 
 ## Noted (backlog, each with its named home)
 
-Capabilities meerkat ships that merecat does not yet. None block the funeral
+Capabilities meerkat ships that turnstone does not yet. None block the funeral
 (none are deletion-matrix rows); each is recorded so its future implementer
 reads the donor file BEFORE the crate leaves the tree — after deletion, `git
 log` archaeology on mere's history still reaches them.
@@ -28,39 +28,39 @@ log` archaeology on mere's history still reaches them.
 - **The focus card** (`card/`, `render/cards.rs` — 962 LOC): the summonable
   node-focus card, meerkat's third representation (node / gnode / card).
   Home ruled 2026-07-18 (Mark): cards return **only as cambium primitives** —
-  a catalog `card` component any genet app composes, never a merecat-special
+  a catalog `card` component any genet app composes, never a turnstone-special
   rebuild. Meerkat's geometry + summon semantics are the technique read for
   that catalog entry when a consumer pulls it.
 - **Command registry vocabulary** (`command.rs`, 603): ids, categories,
-  binding declarations — richer than merecat's flat `palette_actions()`.
-  Home: merecat's palette when it grows categories/keybinding surfaces (the
+  binding declarations — richer than turnstone's flat `palette_actions()`.
+  Home: turnstone's palette when it grows categories/keybinding surfaces (the
   architecture plan already earmarked this reread).
 - **Settings pages** (`settings_lane/` 4 files ~1.4k, `settings_node.rs`,
   `settings_pane_view.rs`): the settings-AS-NODES design is ruled a **bust**
   (2026-07-18, Mark: `settings://` nodes bred "node settings of a settings
   node type" soup — do not resurrect it), and with it the PELT settings
   tiles it rendered through. The surviving shape is the retargeting PANE
-  (merecat's Apparatus already works this way: sync to the selected node).
+  (turnstone's Apparatus already works this way: sync to the selected node).
   With the reclaimable inventory absorbed pane-side, **nothing of the pelt
   settings machinery needs porting — it dies with meerkat entirely.** The
   harvestable remainder is only the PAGE CATALOG — the inventory of what was
   settable (engine prefs, retention, shellbar edge, script permissions) — as
   the checklist for pane-shaped settings surfaces to grow through.
 - **Web clip** (`web_clip.rs`): page selection → stored node content. Home:
-  merecat content lane backlog.
+  turnstone content lane backlog.
 - **In-page find** (`find.rs`, `find_worker.rs`): the content-search lane.
-  Home: merecat content lane backlog (genet-side `links()`/text APIs are the
+  Home: turnstone content lane backlog (genet-side `links()`/text APIs are the
   substrate now).
 - **Theming lane** (`theme_sheets.rs` 639, `theme_store.rs`, `theme_edit.rs`,
   `tile_theme.rs`, `doc_style.rs`): palette-derived per-content themes.
   Home: rung 8 (register-theme/tinct); genet's livery is the future engine.
-- **Export** (`export.rs`): graph/session export profiles. Home: merecat rung
+- **Export** (`export.rs`): graph/session export profiles. Home: turnstone rung
   8; the deletion/retention plan names export-profile settings.
 - **Wallet pairing** (`wallet_pairing.rs`, 869): personae pairing UX. Home:
   the comms rung (murm/moot posture) — UI to re-derive over personae, not
   copy.
 - **Constellation actor pool** (`constellation/`, ~1.5k): per-node actor
-  supervision + drain — Steward's data source. Home: read when merecat's
+  supervision + drain — Steward's data source. Home: read when turnstone's
   Steward grows real rows (its status-port shape is the honest reference).
 - **Graph delta log** (`graph_delta_log.rs`, 857): attributable graph-change
   diagnostics. Home: mere-side (chartulary's journal is the successor
@@ -76,8 +76,8 @@ log` archaeology on mere's history still reaches them.
   Home: rung 8 intel port; the affinity heuristics are the gem.
 - **Idle forgetting + snapshot refresh** (`app_handler/idle_*.rs`): memory
   policy driven by idle time (alembic B5's by-session eviction consumer).
-  Home: merecat once alembic surfaces land.
-- **IME nuances** (`ime.rs`, `input/text_input.rs` 686): merecat's IME is
+  Home: turnstone once alembic surfaces land.
+- **IME nuances** (`ime.rs`, `input/text_input.rs` 686): turnstone's IME is
   landed; meerkat's file carries extra edge-cases (surrogate handling,
   composition-cancel) worth a diff-read if IME bugs surface.
 
@@ -90,11 +90,11 @@ log` archaeology on mere's history still reaches them.
 - `views/`, `window_view/`, `frame_view.rs`, `genet_render.rs`,
   `render/`: the retired Masonry-era + hand-rolled render paths; cambium +
   the layered present + forest dom are the successors.
-- `frame_a11y*.rs`, `genet_a11y.rs`, `a11y_bridge`: merecat's stitched
+- `frame_a11y*.rs`, `genet_a11y.rs`, `a11y_bridge`: turnstone's stitched
   projection (rung 5 slice F) is the successor shape; the OS-adapter push
   neither app landed stays a named follow-on.
 - `shell_new.rs` (714), `app_handler/`, `input/` (the ~2.5k dispatch tree):
-  merecat's shell + surface plan re-derived these smaller.
+  turnstone's shell + surface plan re-derived these smaller.
 - `main.rs` 85-module sprawl: the founding anti-goal.
 - `meerkat-browser-worker`: the compat lane went to genet as `verso-tile`;
   the worker process dies with the app.
@@ -125,20 +125,20 @@ apparatus/steward split ("apparatus splits its natures"):
 
 1. ✔ mere: `crates/meerkat` + `crates/meerkat-browser-worker` removed from
    the workspace and disk; their workspace-dep entries dropped.
-2. ✔ mere: `frisket` relocated to merecat; `session_runtime::frisket_store`
+2. ✔ mere: `frisket` relocated to turnstone; `session_runtime::frisket_store`
    went with it (as `frisket::store`), plus the tear-out payload types (as
    `frisket::tearout` — they name `PaneId`); session-runtime dropped its
    frisket dep. 193 session-runtime tests green; `cargo check -p mere` green.
 3. ✔ mere facade: **unchanged** — platen + workbench stay library (the
    composition-domain-model decision; isometry/woodshed are the prospective
    consumers).
-4. ✔ merecat: frisket is a workspace member (`crates/frisket`, relicensed
+4. ✔ turnstone: frisket is a workspace member (`crates/frisket`, relicensed
    MPL→MIT/Apache — the named step; same-repo path, so committed manifests
    still carry no cross-repo local paths). Workspace suite green (frisket 17
    incl. the moved store tests + bin 68); headed receipts re-run green on the
    post-funeral binary (the settings pair exercises frame.json through the
    relocated store).
 5. ✔ Docs: the architecture plan's deletion condition stamped executed; this
-   rite checked off. The torch is passed: merecat is the reference host, and
+   rite checked off. The torch is passed: turnstone is the reference host, and
    meerkat survives only in git history — reachable for archaeology, gone
    from the tree.

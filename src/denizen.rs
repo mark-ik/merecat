@@ -1,4 +1,4 @@
-//! Denizen residency (participant gate B1, the merecat half): install a local
+//! Denizen residency (participant gate B1, the turnstone half): install a local
 //! scenario pack as a resident helper, review its grant visibly, run it from
 //! the palette, and read its edits back attributed.
 //!
@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use crate::app::App;
 
-/// The facet carrying a scenario denizen's runnable source (merecat's own
+/// The facet carrying a scenario denizen's runnable source (turnstone's own
 /// namespace beside `denizen.binding`; the binding stays app-agnostic).
 pub const SCENARIO_SOURCE_FACET: &str = "scenario.source";
 
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn staged_installs_are_content_derived_and_reviewable() {
-        let dir = std::env::temp_dir().join(format!("merecat-denizen-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("turnstone-denizen-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("trail-keeper.lua");
         std::fs::write(&path, "mere.open('mere://kept')").unwrap();
@@ -734,7 +734,7 @@ mod tests {
         // the facet. The resident still rebuilds (no one is orphaned by an
         // upgrade), and the member is listed for the adopt-path heal that
         // moves the pointer onto `Node.nested`.
-        let dir = std::env::temp_dir().join(format!("merecat-legacy-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("turnstone-legacy-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let member = Uuid::from_u128(0xa);
         let mut store = session_runtime::NodeFacetStore::new();
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn nested_logs_round_trip_through_disk() {
-        let dir = std::env::temp_dir().join(format!("merecat-nested-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("turnstone-nested-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let gate = Gate::new();
         let subject = Subject::new([7u8; 32]);

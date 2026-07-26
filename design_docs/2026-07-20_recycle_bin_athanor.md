@@ -1,11 +1,11 @@
 # The recycle bin: node deletion through eidetic + athanor
 
-2026-07-20, with Mark. How "forget this page" works in merecat: stage the
+2026-07-20, with Mark. How "forget this page" works in turnstone: stage the
 removed node in the memory subsystem, recover it with its identity intact,
 and let athanor (the oven) permanently forget it later, on command or
 schedule, baking an engram on the way out.
 
-This resumes work meerkat already did and merecat forgot. It extends the
+This resumes work meerkat already did and turnstone forgot. It extends the
 [Alembic implementation plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-06-24_alembic_implementation_plan.md)
 (slice D, Athanor) and the deleted-node bin it names.
 
@@ -16,7 +16,7 @@ stranger that happens to share a url. Three approaches were tried and rejected
 before this one, each recorded so the reasoning survives:
 
 1. **App-side tombstone list + a `tombstones` sidecar.** Rejected: invented
-   merecat state that leverages none of the stack, plus a sidecar. (Mark: "no
+   turnstone state that leverages none of the stack, plus a sidecar. (Mark: "no
    tombstones", "no dang sidecars".)
 2. **Derive "removed" from the graph's navigation memory** (remembered but
    absent). Stack-native, but recovery mints a NEW uuid, so edges/identity are
@@ -39,7 +39,7 @@ The chosen model: the bin lives in **eidetic**; the oven is **athanor**.
 
 meerkat wired this in `node_ops.rs` (`record_deleted` / `list_deleted` +
 `run_forgetting_pass`) over an eidetic store opened in `main.rs`. It died with
-meerkat; merecat never re-derived it. There is no `purge` / `restore` in the
+meerkat; turnstone never re-derived it. There is no `purge` / `restore` in the
 API by design: the bin is append-only, and "still deleted" is `list_deleted`
 MINUS the nodes currently present in the graph — a recovered node reappears in
 the graph and drops off the list on its own.
@@ -47,7 +47,7 @@ the graph and drops off the list on its own.
 ## The slices
 
 ### Slice 1 — the eidetic store, as an async port
-merecat opens an `eidetic_fjall::FjallStore` at the session dir
+turnstone opens an `eidetic_fjall::FjallStore` at the session dir
 (`sessions/<id>/bin/`), behind an armillary actor, mirroring the fetch port:
 `Effect::{RecordDeleted, ListDeleted}` -> actor command -> `Update::DeletedListed`.
 `record_deleted` / `list_deleted` are async; nothing blocks the render thread
@@ -71,7 +71,7 @@ on the way out (distill before forget), on command ("empty the bin") or the
 steady-heat schedule. Config knobs land in Apparatus, live passes in Steward
 (the Alembic plan's §8 answer).
 
-**The on-command half LANDED 2026-07-21/22** (mere `df316b6` + merecat
+**The on-command half LANDED 2026-07-21/22** (mere `df316b6` + turnstone
 `94c3043`):
 
 - mere `df316b6`: `eidetic::deleted` grew its deletion door — the append-only
@@ -81,7 +81,7 @@ steady-heat schedule. Config knobs land in Apparatus, live passes in Steward
   idempotent on an empty/absent bin. 3 tests, landed in isolation while the
   wider tree was transiently red on a concurrent cartography refactor
   (eidetic-core is independent of it).
-- merecat `94c3043` (committed forward by the concurrent projection-proof
+- turnstone `94c3043` (committed forward by the concurrent projection-proof
   session): `BinCommand::Empty` -> `clear_deleted` -> the refreshed (empty)
   list; `Action::EmptyRecycleBin` (palette "Empty recycle bin") lowers
   `Effect::EmptyRecycleBin` only when the bin is non-empty (no placebo), and
@@ -90,7 +90,7 @@ steady-heat schedule. Config knobs land in Apparatus, live passes in Steward
   Removed gone, record forgotten from the STORE, not just derived away);
   headed RESULT ok, 88 unit tests green.
 
-**The retirement pass LANDED 2026-07-22** (mere `499b071` + merecat `232f188`):
+**The retirement pass LANDED 2026-07-22** (mere `499b071` + turnstone `232f188`):
 athanor's third pass, beside forgetting (content) and consolidation (engrams).
 `propose_retirement(deleted, keep_ms, now_ms)` names the tombstone ids past the
 retention window (pure, R0 — a "what will be forgotten" preview is possible);
@@ -121,7 +121,7 @@ Design locked 2026-07-20; slices 1+2 LANDED the same day.
 - mere 370a148: `canvas::recover_node` takes the record's uuid and re-mints
   under it (`mint_node_as` over `GraphDelta::AddNode`'s existing id param);
   idempotent (an existing id selects, never twins).
-- merecat: `recycle.rs` is the bin port — an armillary actor
+- turnstone: `recycle.rs` is the bin port — an armillary actor
   (`spawn_named("recycle-bin")`) over `eidetic_fjall::FjallStore` at
   `sessions/<id>/bin`, store ops under pollster (serial disk IO, no
   runtime). It answers every command AND its own spawn with the refreshed

@@ -58,16 +58,16 @@ fn pane_display_label(content: &PaneContent) -> String {
     }
 }
 
-/// The scenario, parsed from `MERECAT_SCENARIO` (a
+/// The scenario, parsed from `TURNSTONE_SCENARIO` (a
 /// path). A parse error yields a stillborn scenario whose first `finish` reports
 /// the failure — the harness learns WHY instead of timing out. `None` when the
-/// env var is unset (the merecat driver, or no driver, runs instead).
+/// env var is unset (the turnstone driver, or no driver, runs instead).
 fn shared_scenario_from_env() -> Option<genet_probe::Scenario> {
-    let path = std::path::PathBuf::from(std::env::var_os("MERECAT_SCENARIO")?);
+    let path = std::path::PathBuf::from(std::env::var_os("TURNSTONE_SCENARIO")?);
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     // A parse error becomes a scenario that logs why and fails a step (an
     // assert on a field no snapshot has), so the run reports RESULT fail with the
-    // reason rather than timing out — the same courtesy merecat's own driver pays.
+    // reason rather than timing out — the same courtesy turnstone's own driver pays.
     Some(match genet_probe::Scenario::parse(&body) {
         Ok(sc) => sc,
         Err(err) => {
@@ -77,13 +77,13 @@ fn shared_scenario_from_env() -> Option<genet_probe::Scenario> {
     })
 }
 
-/// Where a shared run writes its captures and sentinel: `MERECAT_CAPTURE_DIR`, or
+/// Where a shared run writes its captures and sentinel: `TURNSTONE_CAPTURE_DIR`, or
 /// the scenario file's own directory.
 fn shared_out_dir_from_env() -> std::path::PathBuf {
-    let dir = std::env::var_os("MERECAT_CAPTURE_DIR")
+    let dir = std::env::var_os("TURNSTONE_CAPTURE_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            std::env::var_os("MERECAT_SCENARIO")
+            std::env::var_os("TURNSTONE_SCENARIO")
                 .map(std::path::PathBuf::from)
                 .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
         })
@@ -116,7 +116,7 @@ struct CompositeLayer {
     placement: ExternalTexturePlacement,
 }
 
-/// The merecat shell: app state plus the window, present stack, and ports
+/// The turnstone shell: app state plus the window, present stack, and ports
 /// that drive it.
 pub struct Shell {
     app: App,
@@ -140,10 +140,10 @@ pub struct Shell {
     alt: bool,
     /// Live Shift state, for the tear-out modifier arms (Ctrl+Shift = fork).
     shift: bool,
-    /// The genet-probe scenario driver (activated by `MERECAT_SCENARIO`): the
+    /// The genet-probe scenario driver (activated by `TURNSTONE_SCENARIO`): the
     /// generic one-step-per-frame loop every genet app shares, driving this
     /// Shell through its
-    /// `Automatable`/`Driveable` impl — the one scenario loop merecat runs.
+    /// `Automatable`/`Driveable` impl — the one scenario loop turnstone runs.
     /// `shared_out_dir` stays
     /// on `self` (the scenario is taken out during a tick) so `capture` can reach
     /// it. `shared_done` guards writing the sentinel exactly once.
@@ -601,9 +601,9 @@ impl Shell {
     /// Steps lower to Actions through the same spine as a keypress; a Done
     /// tick writes the sentinel and exits WITHOUT saving the session (a
     /// scenario never mutates the profile it ran against).
-    /// Write the shared driver's outcome in merecat's `scenario.done` format
+    /// Write the shared driver's outcome in turnstone's `scenario.done` format
     /// (first line `RESULT ok`/`RESULT fail`, then the log), so the same headed
-    /// harness that waits on the merecat driver reads a shared run identically.
+    /// harness that waits on the turnstone driver reads a shared run identically.
     fn write_shared_done(&self, outcome: &genet_probe::Outcome) {
         let result = if outcome.ok { "ok" } else { "fail" };
         let mut body = format!("RESULT {result}\n");
@@ -618,7 +618,7 @@ impl Shell {
         // The shared genet-probe driver, when active, takes the frame: take the
         // scenario out (so `tick(self)` can borrow the Shell mutably), tick it,
         // put it back — or, on Done, write the `scenario.done` sentinel in
-        // merecat's format and exit. Mutually exclusive with the merecat driver.
+        // turnstone's format and exit. Mutually exclusive with the turnstone driver.
         if let Some(mut shared) = self.shared_scenario.take() {
             use genet_probe::Progress;
             match shared.tick(self) {
@@ -665,7 +665,7 @@ mod tests {
     /// file declines (and so becomes a node instead of a sprite).
     #[test]
     fn dropped_files_classify_by_decodability() {
-        let dir = std::env::temp_dir().join(format!("merecat-drop-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("turnstone-drop-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let png_path = dir.join("drop.png");
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
