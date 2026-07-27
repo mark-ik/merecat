@@ -23,9 +23,10 @@ use genet_layout::{IncrementalLayout, ScrollOffsets};
 use genet_scripted_dom::{NodeId, ScriptedDom};
 use graphshell::client::{ResolvedContent, ResolvedPresentation};
 use graphshell::protocol::{
-    AdvertisedAction, CapabilityProfile, EDITABLE_TEXT_SAVE_INTENT, EditableTextV1,
-    InsertKnotClipV1, IntentResult, KNOT_CLIP_INSERT_INTENT, PresentationCapability,
-    ProjectionSession, SaveTextV1,
+    AdvertisedAction, CapabilityProfile, DerivedTextV1, EDITABLE_TEXT_SAVE_INTENT, EditableTextV1,
+    InsertKnotClipV1, IntentResult, KNOT_BLOCK_RUN_INTENT, KNOT_CLIP_INSERT_INTENT,
+    KNOT_TRANSCLUSION_RESOLVE_INTENT, KnotEffectV1, PresentationCapability, ProjectionSession,
+    SaveTextV1,
 };
 use graphshell::sessions::RetainedEndpointSession;
 use inker::{
@@ -41,18 +42,22 @@ use sceno::InstanceId;
 pub const ENGINE_ID: &str = "knot.authoring";
 
 const DEFAULT_MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+const DEFAULT_EFFECT_MAX_DEPTH: u8 = 1;
+const DEFAULT_EFFECT_MAX_OPS: u64 = 100_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 const KNOT_SHEET: &str = "\
     .knot-root { background-color: rgb(22, 27, 40); color: rgb(205, 212, 226); } \
     .knot-toolbar { display: flex; background-color: rgb(18, 22, 33); \
                     padding: 6px 10px; } \
-    .knot-title { color: rgb(205, 212, 226); font-size: 12px; width: 55%; \
+    .knot-title { color: rgb(205, 212, 226); font-size: 12px; width: 35%; \
                   white-space: nowrap; overflow: hidden; } \
-    .knot-status { color: rgb(140, 153, 176); font-size: 12px; width: 25%; \
+    .knot-status { color: rgb(140, 153, 176); font-size: 12px; width: 20%; \
                    white-space: nowrap; } \
     .knot-save { color: rgb(232, 150, 40); background-color: rgb(28, 34, 50); \
                  border: 1px solid rgb(52, 62, 86); padding: 3px 10px; } \
+    .knot-effect { color: rgb(103, 184, 235); background-color: rgb(28, 34, 50); \
+                   border: 1px solid rgb(52, 62, 86); padding: 3px 10px; } \
     .knot-body { display: flex; } \
     .knot-editor-wrap { width: 70%; padding: 10px; } \
     .knot-editor-wrap textarea { color: rgb(218, 224, 236); \
@@ -74,6 +79,8 @@ struct DocumentBinding {
     target: InstanceId,
     save_action: AdvertisedAction,
     clip_action: AdvertisedAction,
+    resolve_action: Option<AdvertisedAction>,
+    run_action: Option<AdvertisedAction>,
     editable: EditableTextV1,
 }
 
@@ -100,12 +107,23 @@ enum HubCommand {
         clip: PendingClip,
         status: Arc<Mutex<KnotClipStatus>>,
     },
+    Effect {
+        registration: u64,
+        kind: KnotEffectKind,
+        confirmed: bool,
+    },
     Reload {
         registration: u64,
     },
     Unregister {
         registration: u64,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KnotEffectKind {
+    Resolve,
+    Run,
 }
 
 #[derive(Clone)]
@@ -267,6 +285,8 @@ impl KnotHub {
 pub struct KnotAuthoringEngine {
     hub: Arc<KnotHub>,
     clip_target: Option<String>,
+    auto_resolve: bool,
+    auto_run: bool,
 }
 
 impl KnotAuthoringEngine {
@@ -289,7 +309,37 @@ impl KnotAuthoringEngine {
             .unwrap_or(DEFAULT_MAX_SOURCE_BYTES);
         let mode =
             std::env::var("TURNSTONE_KNOT_MODE").unwrap_or_else(|_| "directory-write".into());
+        let resolve_mode = effect_mode("TURNSTONE_KNOT_RESOLVE_MODE")?;
+        let run_mode = effect_mode("TURNSTONE_KNOT_RUN_MODE")?;
+        let schemes = std::env::var("TURNSTONE_KNOT_RESOLVE_SCHEMES").unwrap_or_else(|_| {
+            if resolve_mode == "never" {
+                String::new()
+            } else {
+                "file".into()
+            }
+        });
+        let languages = std::env::var("TURNSTONE_KNOT_RUN_LANGUAGES").unwrap_or_else(|_| {
+            if run_mode == "never" {
+                String::new()
+            } else {
+                "rhai".into()
+            }
+        });
+        let max_depth = env_integer("TURNSTONE_KNOT_RESOLVE_MAX_DEPTH", DEFAULT_EFFECT_MAX_DEPTH)?;
+        let max_ops = env_integer("TURNSTONE_KNOT_RUN_MAX_OPS", DEFAULT_EFFECT_MAX_OPS)?;
+        let effects_enabled = resolve_mode != "never" || run_mode != "never";
         let args = match mode.as_str() {
+            "directory-write" if effects_enabled => vec![
+                "directory-write-effects".into(),
+                root.into_os_string(),
+                max_source_bytes.to_string().into(),
+                resolve_mode.clone().into(),
+                run_mode.clone().into(),
+                schemes.clone().into(),
+                languages.clone().into(),
+                max_depth.to_string().into(),
+                max_ops.to_string().into(),
+            ],
             "directory-write" => vec![
                 "directory-write".into(),
                 root.into_os_string(),
@@ -299,12 +349,35 @@ impl KnotAuthoringEngine {
                 let persona = std::env::var_os("TURNSTONE_KNOT_PERSONA").ok_or_else(|| {
                     "TURNSTONE_KNOT_PERSONA is required for persona-vault mode".to_string()
                 })?;
-                vec![
-                    "persona-vault".into(),
-                    root.into_os_string(),
-                    persona,
-                    max_source_bytes.to_string().into(),
-                ]
+                if effects_enabled {
+                    if schemes
+                        .split(',')
+                        .any(|scheme| scheme.trim().eq_ignore_ascii_case("file"))
+                    {
+                        return Err(
+                            "persona-vault effects cannot admit file: outside the vault".into()
+                        );
+                    }
+                    vec![
+                        "persona-vault-effects".into(),
+                        root.into_os_string(),
+                        persona,
+                        max_source_bytes.to_string().into(),
+                        resolve_mode.clone().into(),
+                        run_mode.clone().into(),
+                        schemes.clone().into(),
+                        languages.clone().into(),
+                        max_depth.to_string().into(),
+                        max_ops.to_string().into(),
+                    ]
+                } else {
+                    vec![
+                        "persona-vault".into(),
+                        root.into_os_string(),
+                        persona,
+                        max_source_bytes.to_string().into(),
+                    ]
+                }
             }
             other => {
                 return Err(format!(
@@ -316,7 +389,12 @@ impl KnotAuthoringEngine {
         let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
             .ok()
             .filter(|target| !target.trim().is_empty());
-        Ok(Some(Self { hub, clip_target }))
+        Ok(Some(Self {
+            hub,
+            clip_target,
+            auto_resolve: resolve_mode == "auto",
+            auto_run: run_mode == "auto",
+        }))
     }
 
     pub fn clip_handle(&self) -> Option<KnotClipHandle> {
@@ -344,6 +422,38 @@ impl KnotAuthoringEngine {
                 Arc::new(|| {}),
             )?,
             clip_target: None,
+            auto_resolve: false,
+            auto_run: false,
+        })
+    }
+
+    #[cfg(test)]
+    fn connect_directory_effects(
+        program: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        max_source_bytes: u64,
+        resolve: &str,
+        run: &str,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            hub: KnotHub::connect(
+                program.into(),
+                vec![
+                    "directory-write-effects".into(),
+                    root.into().into_os_string(),
+                    max_source_bytes.to_string().into(),
+                    resolve.into(),
+                    run.into(),
+                    "file".into(),
+                    "rhai".into(),
+                    "1".into(),
+                    "10000".into(),
+                ],
+                Arc::new(|| {}),
+            )?,
+            clip_target: None,
+            auto_resolve: resolve == "auto",
+            auto_run: run == "auto",
         })
     }
 }
@@ -371,8 +481,34 @@ impl SessionEngine<Scene> for KnotAuthoringEngine {
             self.hub.clone(),
             opened,
             request.viewport,
+            self.auto_resolve,
+            self.auto_run,
         )))
     }
+}
+
+fn effect_mode(name: &str) -> Result<String, String> {
+    let value = std::env::var(name).unwrap_or_else(|_| "never".into());
+    match value.as_str() {
+        "auto" | "ask" | "never" => Ok(value),
+        _ => Err(format!("{name} must be auto, ask, or never")),
+    }
+}
+
+fn env_integer<T>(name: &str, default: T) -> Result<T, String>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| format!("{name} must be an integer: {error}"))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(default))
 }
 
 fn default_endpoint_path() -> Result<PathBuf, String> {
@@ -449,6 +585,22 @@ fn run_hub(mut retained: RetainedEndpointSession, commands: Receiver<HubCommand>
                     &address,
                     clip,
                     &status,
+                    &wake,
+                );
+            }
+            Ok(HubCommand::Effect {
+                registration,
+                kind,
+                confirmed,
+            }) => {
+                invoke_effect(
+                    &mut retained,
+                    mounted.as_ref(),
+                    &mut bindings,
+                    &subscribers,
+                    registration,
+                    kind,
+                    confirmed,
                     &wake,
                 );
             }
@@ -552,10 +704,24 @@ fn binding_from_presentation(
         .iter()
         .find(|action| action.intent.0 == KNOT_CLIP_INSERT_INTENT)?
         .clone();
+    let resolve_action = presentation
+        .semantics
+        .actions
+        .iter()
+        .find(|action| action.intent.0 == KNOT_TRANSCLUSION_RESOLVE_INTENT)
+        .cloned();
+    let run_action = presentation
+        .semantics
+        .actions
+        .iter()
+        .find(|action| action.intent.0 == KNOT_BLOCK_RUN_INTENT)
+        .cloned();
     Some(DocumentBinding {
         target,
         save_action,
         clip_action,
+        resolve_action,
+        run_action,
         editable,
     })
 }
@@ -678,6 +844,76 @@ fn insert_clip(
     wake();
 }
 
+#[allow(clippy::too_many_arguments)]
+fn invoke_effect(
+    retained: &mut RetainedEndpointSession,
+    session: Option<&ProjectionSession>,
+    bindings: &mut BTreeMap<String, DocumentBinding>,
+    subscribers: &BTreeMap<u64, Subscriber>,
+    registration: u64,
+    kind: KnotEffectKind,
+    confirmed: bool,
+    wake: &Wake,
+) {
+    let Some(subscriber) = subscribers.get(&registration) else {
+        return;
+    };
+    let Some(session) = session else {
+        send_event(
+            subscriber,
+            HubEvent::Rejected("Knot projection is not mounted".into()),
+            wake,
+        );
+        return;
+    };
+    let Some(binding) = bindings.get(&subscriber.address).cloned() else {
+        send_event(
+            subscriber,
+            HubEvent::Rejected("Knot document is no longer effect-capable".into()),
+            wake,
+        );
+        return;
+    };
+    let action = match kind {
+        KnotEffectKind::Resolve => binding.resolve_action.as_ref(),
+        KnotEffectKind::Run => binding.run_action.as_ref(),
+    };
+    let Some(action) = action else {
+        send_event(
+            subscriber,
+            HubEvent::Rejected(format!(
+                "{} is disabled for this document",
+                match kind {
+                    KnotEffectKind::Resolve => "Resolve",
+                    KnotEffectKind::Run => "Run",
+                }
+            )),
+            wake,
+        );
+        return;
+    };
+    let result = retained.invoke(
+        session,
+        binding.target,
+        action,
+        &KnotEffectV1 {
+            base_token: binding.editable.base_token,
+            confirmed,
+        },
+    );
+    match result {
+        Ok(IntentResult::Accepted) => match retained.wait_for_change() {
+            Ok(_) => refresh_subscribers(retained, session, bindings, subscribers, wake),
+            Err(error) => send_event(subscriber, HubEvent::Rejected(error), wake),
+        },
+        Ok(IntentResult::Stale { .. }) => send_event(subscriber, HubEvent::Stale, wake),
+        Ok(IntentResult::Rejected { reason }) => {
+            send_event(subscriber, HubEvent::Rejected(reason), wake)
+        }
+        Err(error) => send_event(subscriber, HubEvent::Rejected(error), wake),
+    }
+}
+
 fn reload_subscriber(
     retained: &mut RetainedEndpointSession,
     session: Option<&ProjectionSession>,
@@ -757,6 +993,8 @@ fn send_event(subscriber: &Subscriber, event: HubEvent, wake: &Wake) {
 enum AuthoringStatus {
     Current,
     Saving,
+    Resolving,
+    Running,
     Reloading,
     Stale,
     Rejected,
@@ -768,7 +1006,12 @@ struct AuthoringState {
     status: AuthoringStatus,
     detail: String,
     save_requested: bool,
+    resolve_requested: bool,
+    run_requested: bool,
     reload_requested: bool,
+    resolve_available: bool,
+    run_available: bool,
+    derived: Option<DerivedTextV1>,
     width: u32,
     height: u32,
 }
@@ -795,6 +1038,8 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
         AuthoringStatus::Revoked => "closed".to_string(),
         AuthoringStatus::Stale => "stale; reload or resolve".to_string(),
         AuthoringStatus::Saving => "saving".to_string(),
+        AuthoringStatus::Resolving => "resolving".to_string(),
+        AuthoringStatus::Running => "running".to_string(),
         AuthoringStatus::Reloading => "reloading".to_string(),
         AuthoringStatus::Rejected => state.detail.clone(),
         AuthoringStatus::Current if state.editor.is_dirty() => "unsaved".to_string(),
@@ -821,11 +1066,17 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
         .next()
         .unwrap_or("Knot document")
         .to_string();
-    let preview = state
-        .editor
-        .preview()
-        .map(|document| document.to_markdown())
-        .unwrap_or_else(|error| format!("Preview unavailable: {error}"));
+    let preview = match &state.derived {
+        Some(derived) => KnotEditor::scratch("knot:derived", derived.source.clone())
+            .preview()
+            .map(|document| format!("{}\n\n{}", derived.summary, document.to_markdown()))
+            .unwrap_or_else(|error| format!("Derived preview unavailable: {error}")),
+        None => state
+            .editor
+            .preview()
+            .map(|document| document.to_markdown())
+            .unwrap_or_else(|error| format!("Preview unavailable: {error}")),
+    };
     let toolbar = el::<_, AuthoringState, ()>(
         "div",
         (
@@ -838,6 +1089,37 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
                 },
             )
             .attr("class", "knot-save"),
+            button(
+                "Resolve",
+                |state: &mut AuthoringState, _click: PointerClick| {
+                    if state.resolve_available {
+                        state.resolve_requested = true;
+                    }
+                },
+            )
+            .attr("class", "knot-effect")
+            .attr(
+                "style",
+                if state.resolve_available {
+                    ""
+                } else {
+                    "display: none;"
+                },
+            ),
+            button("Run", |state: &mut AuthoringState, _click: PointerClick| {
+                if state.run_available {
+                    state.run_requested = true;
+                }
+            })
+            .attr("class", "knot-effect")
+            .attr(
+                "style",
+                if state.run_available {
+                    ""
+                } else {
+                    "display: none;"
+                },
+            ),
             button(
                 "Reload",
                 |state: &mut AuthoringState, _click: PointerClick| {
@@ -883,16 +1165,29 @@ pub struct KnotDocumentSession {
 }
 
 impl KnotDocumentSession {
-    fn new(hub: Arc<KnotHub>, opened: OpenedDocument, viewport: (u32, u32)) -> Self {
+    fn new(
+        hub: Arc<KnotHub>,
+        opened: OpenedDocument,
+        viewport: (u32, u32),
+        auto_resolve: bool,
+        auto_run: bool,
+    ) -> Self {
         let address = opened.binding.editable.address.clone();
         let base_token = opened.binding.editable.base_token.clone();
+        let resolve_available = opened.binding.resolve_action.is_some();
+        let run_available = opened.binding.run_action.is_some();
         let dom: DomHandle = Rc::new(std::cell::RefCell::new(ScriptedDom::new()));
         let state = AuthoringState {
             editor: KnotEditor::scratch(&address, opened.binding.editable.source),
             status: AuthoringStatus::Current,
             detail: String::new(),
             save_requested: false,
+            resolve_requested: false,
+            run_requested: false,
             reload_requested: false,
+            resolve_available,
+            run_available,
+            derived: opened.binding.editable.derived,
             width: viewport.0.max(1),
             height: viewport.1.max(1),
         };
@@ -901,7 +1196,7 @@ impl KnotDocumentSession {
             authoring_view as fn(&AuthoringState) -> AuthoringView,
             state,
         );
-        Self {
+        let session = Self {
             hub,
             registration: opened.registration,
             address,
@@ -910,7 +1205,22 @@ impl KnotDocumentSession {
             revision_refreshes: 0,
             dom,
             runner,
+        };
+        if auto_resolve && resolve_available {
+            let _ = session.hub.commands.send(HubCommand::Effect {
+                registration: session.registration,
+                kind: KnotEffectKind::Resolve,
+                confirmed: false,
+            });
         }
+        if auto_run && run_available {
+            let _ = session.hub.commands.send(HubCommand::Effect {
+                registration: session.registration,
+                kind: KnotEffectKind::Run,
+                confirmed: false,
+            });
+        }
+        session
     }
 
     pub fn dispatch_key(&mut self, event: KeyEvent) -> bool {
@@ -923,7 +1233,11 @@ impl KnotDocumentSession {
         if self.runner.focus().is_none() {
             return false;
         }
+        let before = self.runner.state().editor.source().to_string();
         self.runner.dispatch_key(event);
+        if self.runner.state().editor.source() != before {
+            self.runner.update(|state| state.derived = None);
+        }
         true
     }
 
@@ -933,6 +1247,8 @@ impl KnotDocumentSession {
             AuthoringStatus::Current if self.runner.state().editor.is_dirty() => "unsaved",
             AuthoringStatus::Current => "saved",
             AuthoringStatus::Saving => "saving",
+            AuthoringStatus::Resolving => "resolving",
+            AuthoringStatus::Running => "running",
             AuthoringStatus::Reloading => "reloading",
             AuthoringStatus::Stale => "stale",
             AuthoringStatus::Rejected => "rejected",
@@ -943,7 +1259,11 @@ impl KnotDocumentSession {
     fn save(&mut self) {
         if matches!(
             self.runner.state().status,
-            AuthoringStatus::Saving | AuthoringStatus::Reloading | AuthoringStatus::Revoked
+            AuthoringStatus::Saving
+                | AuthoringStatus::Resolving
+                | AuthoringStatus::Running
+                | AuthoringStatus::Reloading
+                | AuthoringStatus::Revoked
         ) || !self.runner.state().editor.is_dirty()
         {
             return;
@@ -970,7 +1290,11 @@ impl KnotDocumentSession {
     fn reload(&mut self) {
         if matches!(
             self.runner.state().status,
-            AuthoringStatus::Saving | AuthoringStatus::Reloading | AuthoringStatus::Revoked
+            AuthoringStatus::Saving
+                | AuthoringStatus::Resolving
+                | AuthoringStatus::Running
+                | AuthoringStatus::Reloading
+                | AuthoringStatus::Revoked
         ) {
             return;
         }
@@ -994,12 +1318,72 @@ impl KnotDocumentSession {
         }
     }
 
+    fn invoke_effect(&mut self, kind: KnotEffectKind) {
+        let available = match kind {
+            KnotEffectKind::Resolve => self.runner.state().resolve_available,
+            KnotEffectKind::Run => self.runner.state().run_available,
+        };
+        if !available
+            || matches!(
+                self.runner.state().status,
+                AuthoringStatus::Saving
+                    | AuthoringStatus::Resolving
+                    | AuthoringStatus::Running
+                    | AuthoringStatus::Reloading
+                    | AuthoringStatus::Revoked
+            )
+            || self.runner.state().editor.is_dirty()
+        {
+            return;
+        }
+        if self
+            .hub
+            .commands
+            .send(HubCommand::Effect {
+                registration: self.registration,
+                kind,
+                confirmed: true,
+            })
+            .is_ok()
+        {
+            self.runner.update(|state| {
+                state.status = match kind {
+                    KnotEffectKind::Resolve => AuthoringStatus::Resolving,
+                    KnotEffectKind::Run => AuthoringStatus::Running,
+                };
+                state.detail.clear();
+            });
+        } else {
+            self.runner.update(|state| {
+                state.status = AuthoringStatus::Rejected;
+                state.detail = "Knot worker stopped".into();
+            });
+        }
+    }
+
     fn drain_events(&mut self) {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 HubEvent::Remote(binding) => {
                     self.revision_refreshes += 1;
                     if binding.editable.base_token == self.base_token {
+                        let resolve_available = binding.resolve_action.is_some();
+                        let run_available = binding.run_action.is_some();
+                        let derived = binding.editable.derived;
+                        if !self.runner.state().editor.is_dirty() {
+                            self.runner.update(|state| {
+                                state.resolve_available = resolve_available;
+                                state.run_available = run_available;
+                                state.derived = derived;
+                                state.status = AuthoringStatus::Current;
+                                state.detail.clear();
+                            });
+                        } else {
+                            self.runner.update(|state| {
+                                state.resolve_available = resolve_available;
+                                state.run_available = run_available;
+                            });
+                        }
                         continue;
                     }
                     if self.runner.state().editor.is_dirty() {
@@ -1010,9 +1394,15 @@ impl KnotDocumentSession {
                     } else {
                         self.base_token = binding.editable.base_token;
                         let source = binding.editable.source;
+                        let derived = binding.editable.derived;
+                        let resolve_available = binding.resolve_action.is_some();
+                        let run_available = binding.run_action.is_some();
                         let address = self.address.clone();
                         self.runner.update(|state| {
                             state.editor = KnotEditor::scratch(address, source);
+                            state.derived = derived;
+                            state.resolve_available = resolve_available;
+                            state.run_available = run_available;
                             state.status = AuthoringStatus::Current;
                             state.detail.clear();
                         });
@@ -1021,17 +1411,29 @@ impl KnotDocumentSession {
                 HubEvent::Reloaded(binding) => {
                     self.base_token = binding.editable.base_token;
                     let source = binding.editable.source;
+                    let derived = binding.editable.derived;
+                    let resolve_available = binding.resolve_action.is_some();
+                    let run_available = binding.run_action.is_some();
                     let address = self.address.clone();
                     self.runner.update(|state| {
                         state.editor = KnotEditor::scratch(address, source);
+                        state.derived = derived;
+                        state.resolve_available = resolve_available;
+                        state.run_available = run_available;
                         state.status = AuthoringStatus::Current;
                         state.detail.clear();
                     });
                 }
                 HubEvent::Saved { source, binding } => {
                     self.base_token = binding.editable.base_token;
+                    let derived = binding.editable.derived;
+                    let resolve_available = binding.resolve_action.is_some();
+                    let run_available = binding.run_action.is_some();
                     self.runner.update(|state| {
                         state.editor.accept_saved_source(&source);
+                        state.derived = derived;
+                        state.resolve_available = resolve_available;
+                        state.run_available = run_available;
                         state.status = AuthoringStatus::Current;
                         state.detail.clear();
                     });
@@ -1049,6 +1451,9 @@ impl KnotDocumentSession {
                     let address = self.address.clone();
                     self.runner.update(|state| {
                         state.editor = KnotEditor::scratch(address, String::new());
+                        state.derived = None;
+                        state.resolve_available = false;
+                        state.run_available = false;
                         state.status = AuthoringStatus::Revoked;
                         state.detail = reason;
                     });
@@ -1103,6 +1508,14 @@ impl DocumentSession<Scene> for KnotDocumentSession {
         if self.runner.state().save_requested {
             self.runner.update(|state| state.save_requested = false);
             self.save();
+        }
+        if self.runner.state().resolve_requested {
+            self.runner.update(|state| state.resolve_requested = false);
+            self.invoke_effect(KnotEffectKind::Resolve);
+        }
+        if self.runner.state().run_requested {
+            self.runner.update(|state| state.run_requested = false);
+            self.invoke_effect(KnotEffectKind::Run);
         }
         if self.runner.state().reload_requested {
             self.runner.update(|state| state.reload_requested = false);
@@ -1212,6 +1625,24 @@ mod tests {
             assert!(
                 Instant::now() < deadline,
                 "endpoint revision bell did not reach the dirty editor"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn wait_for_derived(session: &mut KnotDocumentSession, summary_prefix: &str) -> DerivedTextV1 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            session.drain_events();
+            if let Some(derived) = session.runner.state().derived.as_ref()
+                && derived.summary.starts_with(summary_prefix)
+            {
+                return derived.clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "expected derived result starting with {summary_prefix}, status {}",
+                session.status()
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -1397,6 +1828,82 @@ mod tests {
         assert!(saved.contains("# The report"));
         assert!(saved.contains("A useful finding."));
         assert!(saved.contains("https://example.test/source"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "receipt: set KNOT_ENDPOINT_TEST_BIN to a built Mere knot_endpoint"]
+    fn resolve_and_run_cross_the_consented_authoring_path() {
+        let program = std::env::var_os("KNOT_ENDPOINT_TEST_BIN")
+            .expect("KNOT_ENDPOINT_TEST_BIN must name the real Knot endpoint");
+        let root =
+            std::env::temp_dir().join(format!("turnstone-knot-effects-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let included = root.join("included.md");
+        fs::write(&included, "## Included\n\nFetched text.\n").unwrap();
+        let path = root.join("field.knot");
+        let authored = format!(
+            "# Field\n\n```include {}\nFallback.\n```\n\n```rhai eval\n40 + 2\n```\n",
+            file_address(&included)
+        );
+        fs::write(&path, &authored).unwrap();
+        let address = file_address(&path);
+
+        {
+            let engine = KnotAuthoringEngine::connect_directory_effects(
+                program.clone(),
+                &root,
+                4096,
+                "ask",
+                "ask",
+            )
+            .unwrap();
+            let request = SessionSpawnRequest::new(&address).with_viewport(900, 600);
+            let mut session = engine.spawn(&request).unwrap();
+            let session = session
+                .as_any()
+                .downcast_mut::<KnotDocumentSession>()
+                .unwrap();
+            assert!(session.runner.state().resolve_available);
+            assert!(session.runner.state().run_available);
+
+            session.invoke_effect(KnotEffectKind::Resolve);
+            let resolved = wait_for_derived(session, "resolved 1");
+            assert!(resolved.source.contains("Included"));
+            assert!(resolved.source.contains("rhai eval"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), authored);
+
+            session.invoke_effect(KnotEffectKind::Run);
+            let ran = wait_for_derived(session, "ran 1");
+            assert!(ran.source.contains("Included"));
+            assert!(ran.source.contains("42"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), authored);
+
+            focus_editor(session);
+            type_text(session, "local edit");
+            assert!(
+                session.runner.state().derived.is_none(),
+                "an edit must drop a derived preview tied to older source"
+            );
+        }
+
+        {
+            let engine = KnotAuthoringEngine::connect_directory_effects(
+                program, &root, 4096, "auto", "auto",
+            )
+            .unwrap();
+            let request = SessionSpawnRequest::new(&address).with_viewport(900, 600);
+            let mut session = engine.spawn(&request).unwrap();
+            let session = session
+                .as_any()
+                .downcast_mut::<KnotDocumentSession>()
+                .unwrap();
+            let ran = wait_for_derived(session, "ran 1");
+            assert!(ran.source.contains("Included"));
+            assert!(ran.source.contains("42"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), authored);
+        }
 
         fs::remove_dir_all(root).unwrap();
     }
