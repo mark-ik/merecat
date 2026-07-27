@@ -7,6 +7,7 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -124,12 +125,7 @@ struct KnotHub {
 }
 
 impl KnotHub {
-    fn connect(
-        program: PathBuf,
-        root: PathBuf,
-        max_source_bytes: u64,
-        wake: Wake,
-    ) -> Result<Arc<Self>, String> {
+    fn connect(program: PathBuf, args: Vec<OsString>, wake: Wake) -> Result<Arc<Self>, String> {
         let (commands, receiver) = mpsc::channel();
         let (ready_send, ready_receive) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -139,11 +135,6 @@ impl KnotHub {
                     PresentationCapability::EditableText,
                     PresentationCapability::PortableCard,
                 ]);
-                let args = vec![
-                    "directory-write".into(),
-                    root.into_os_string(),
-                    max_source_bytes.to_string().into(),
-                ];
                 let retained = RetainedEndpointSession::spawn(program.as_os_str(), &args, profile);
                 match retained {
                     Ok(retained) => {
@@ -212,12 +203,37 @@ impl KnotAuthoringEngine {
             })
             .transpose()?
             .unwrap_or(DEFAULT_MAX_SOURCE_BYTES);
-        let hub = KnotHub::connect(program, root, max_source_bytes, wake)?;
+        let mode =
+            std::env::var("TURNSTONE_KNOT_MODE").unwrap_or_else(|_| "directory-write".into());
+        let args = match mode.as_str() {
+            "directory-write" => vec![
+                "directory-write".into(),
+                root.into_os_string(),
+                max_source_bytes.to_string().into(),
+            ],
+            "persona-vault" => {
+                let persona = std::env::var_os("TURNSTONE_KNOT_PERSONA").ok_or_else(|| {
+                    "TURNSTONE_KNOT_PERSONA is required for persona-vault mode".to_string()
+                })?;
+                vec![
+                    "persona-vault".into(),
+                    root.into_os_string(),
+                    persona,
+                    max_source_bytes.to_string().into(),
+                ]
+            }
+            other => {
+                return Err(format!(
+                    "unsupported TURNSTONE_KNOT_MODE {other}; expected directory-write or persona-vault"
+                ));
+            }
+        };
+        let hub = KnotHub::connect(program, args, wake)?;
         Ok(Some(Self { hub }))
     }
 
     #[cfg(test)]
-    fn connect(
+    fn connect_directory(
         program: impl Into<PathBuf>,
         root: impl Into<PathBuf>,
         max_source_bytes: u64,
@@ -225,8 +241,11 @@ impl KnotAuthoringEngine {
         Ok(Self {
             hub: KnotHub::connect(
                 program.into(),
-                root.into(),
-                max_source_bytes,
+                vec![
+                    "directory-write".into(),
+                    root.into().into_os_string(),
+                    max_source_bytes.to_string().into(),
+                ],
                 Arc::new(|| {}),
             )?,
         })
@@ -1057,7 +1076,8 @@ mod tests {
         let address = file_address(&path);
 
         {
-            let engine = KnotAuthoringEngine::connect(program.clone(), &root, 4096).unwrap();
+            let engine =
+                KnotAuthoringEngine::connect_directory(program.clone(), &root, 4096).unwrap();
             let request = SessionSpawnRequest::new(&address).with_viewport(900, 600);
             let mut first = engine.spawn(&request).unwrap();
             let mut second = engine.spawn(&request).unwrap();
@@ -1134,7 +1154,7 @@ mod tests {
         }
 
         {
-            let engine = KnotAuthoringEngine::connect(program, &root, 4096).unwrap();
+            let engine = KnotAuthoringEngine::connect_directory(program, &root, 4096).unwrap();
             let request = SessionSpawnRequest::new(&address).with_viewport(900, 600);
             let mut reopened = engine.spawn(&request).unwrap();
             let reopened = reopened
