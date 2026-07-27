@@ -180,6 +180,10 @@ impl Shell {
     pub(super) fn save_session(&mut self) {
         let sdir = self.app.session_dir();
         session::save_session_graph(&sdir, self.app.canvas.graph());
+        let swept = session::gc_orphan_image_blobs(&sdir, self.app.canvas.graph());
+        if swept > 0 {
+            tracing::info!(swept, "reclaimed orphaned session image blobs");
+        }
         // The pane layout persists to frame.json alongside the graph
         // (rung 5 slice C), so summon/close/divider survive a restart.
         session::save_frisket_layout(&sdir, &self.app.frisket);
@@ -195,7 +199,10 @@ impl Shell {
         // refresh (the fork's facet-carry reads the same refreshed store).
         self.app.refresh_browser_states();
         self.app.refresh_facets();
-        session::save_node_facets(&sdir, &self.app.facets);
+        if let Err(error) = crate::content_classes::reconcile(&mut self.app.canvas) {
+            tracing::warn!(%error, "content-class reconciliation failed");
+        }
+        session::save_node_facets(&sdir, self.app.canvas.facets());
         if let Some(score) = self.app.canvas.projection_score() {
             session::save_projection_score(&sdir, score);
         }

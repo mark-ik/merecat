@@ -210,6 +210,7 @@ impl Shell {
                     self.app.drive_layout_strategy(rw, rh);
                     let (scene, anim) = self.app.canvas.frame(rw, rh);
                     animating |= anim;
+                    animating |= self.app.resolve_pending_images() > 0;
                     new_viewport = self.app.canvas.viewport();
                     self.app.canvas.set_viewport(saved);
                     (scene, wgpu::Color::WHITE)

@@ -113,7 +113,7 @@ fn denizen_installs_after_visible_review() {
     assert!(app.pending_install.is_none());
     assert_eq!(app.denizens.residents.len(), 1);
     let (&member, resident) = app.denizens.residents.iter().next().unwrap();
-    let binding = session_runtime::read_denizen_binding(&app.facets, member)
+    let binding = session_runtime::read_denizen_binding(app.canvas.facets(), member)
         .expect("the binding facet is durable truth");
     assert_eq!(binding.subject, resident.subject.to_hex());
     assert_eq!(binding.kind, session_runtime::DenizenKind::Scenario);
@@ -141,7 +141,7 @@ fn denizen_installs_after_visible_review() {
     );
 
     let rebuilt = crate::denizen::rebuild(
-        &app.facets,
+        app.canvas.facets(),
         app.canvas.graph(),
         &app.session_dir(),
         app.identity.as_ref(),
@@ -771,10 +771,11 @@ fn a_component_denizen_acts_only_within_its_reviewed_rings() {
         let (&m, r) = app.denizens.residents.iter().next().unwrap();
         (m, r.subject)
     };
-    let binding = session_runtime::read_denizen_binding(&app.facets, member).unwrap();
+    let binding = session_runtime::read_denizen_binding(app.canvas.facets(), member).unwrap();
     assert_eq!(binding.kind, session_runtime::DenizenKind::Pack);
     let file = app
-        .facets
+        .canvas
+        .facets()
         .get(&member, &chartulary::FacetId::new(crate::denizen::COMPONENT_FACET))
         .and_then(|v| v.as_str().map(str::to_string))
         .expect("the component facet points at the stored bytes");
@@ -853,7 +854,7 @@ fn a_rerooted_profile_reissues_delegations_from_the_reviewed_projections() {
     // stopgap seed). The old certificates on disk name the old root.
     let new_root = identity::InMemoryProvider::from_seed([77u8; 32]);
     let rebuilt = crate::denizen::rebuild(
-        &app.facets,
+        app.canvas.facets(),
         app.canvas.graph(),
         &app.session_dir(),
         &new_root,
@@ -928,7 +929,7 @@ fn install_delegates_from_the_profile_identity_and_uninstall_revokes_it() {
         "the delegation is revoked, so the ring is no longer authorized"
     );
     assert!(
-        session_runtime::read_denizen_binding(&app.facets, member).is_none(),
+        session_runtime::read_denizen_binding(app.canvas.facets(), member).is_none(),
         "un-resided: the agency facet is gone"
     );
     assert!(!certs.is_file(), "and its certificates cannot resurrect it on adopt");
@@ -1012,7 +1013,7 @@ fn deleting_a_denizen_archives_its_world_and_recovery_restores_residency() {
         "the runtime entry left with the node"
     );
     assert!(
-        session_runtime::read_denizen_binding(&app.facets, member).is_none(),
+        session_runtime::read_denizen_binding(app.canvas.facets(), member).is_none(),
         "the live facets went to the tombstone"
     );
 
@@ -1028,7 +1029,7 @@ fn deleting_a_denizen_archives_its_world_and_recovery_restores_residency() {
         "the archive slot emptied"
     );
     assert!(
-        session_runtime::read_denizen_binding(&app.facets, member).is_some(),
+        session_runtime::read_denizen_binding(app.canvas.facets(), member).is_some(),
         "the binding facet restored"
     );
     let resident = app

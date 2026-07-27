@@ -30,7 +30,7 @@ impl App {
                 // borne world (by id) and its facet bundle, so recovery
                 // restores residency/arrangement/web state, not just
                 // identity.
-                let facets = self.facets.facets_of(&m).map(|f| {
+                let facets = self.canvas.facets().facets_of(&m).map(|f| {
                     serde_json::Value::Object(
                         f.iter()
                             .map(|(id, value)| (id.as_str().to_string(), value.clone()))
@@ -75,11 +75,10 @@ impl App {
             };
             // The record is the archive now: the live facets go, and a
             // denizen's runtime entry goes with its node.
-            self.facets.remove_node(&member);
             if self.denizens.residents.remove(&member).is_some() {
                 let sdir = self.session_dir();
                 self.denizens = crate::denizen::rebuild(
-                    &self.facets,
+                    self.canvas.facets(),
                     self.canvas.graph(),
                     &sdir,
                     self.identity.as_ref(),
@@ -118,7 +117,7 @@ impl App {
             // runtime so a recovered resident resides again.
             if let Some(serde_json::Value::Object(map)) = &record.facets {
                 for (facet_id, value) in map {
-                    let _ = self.facets.set(
+                    let _ = self.canvas.facets_mut().set(
                         member,
                         chartulary::FacetId::new(facet_id.as_str()),
                         value.clone(),
@@ -137,7 +136,7 @@ impl App {
                 );
                 self.denizens =
                     crate::denizen::rebuild(
-                        &self.facets,
+                        self.canvas.facets(),
                         self.canvas.graph(),
                         &sdir,
                         self.identity.as_ref(),
@@ -317,5 +316,82 @@ impl App {
             self.omnibar = OmnibarState::default();
             effects.push(Effect::Redraw);
             effects
+    }
+
+    pub(super) fn open_address(&mut self, url: String) -> Vec<Effect> {
+            self.events.push(AppEvent::AddressOpened(url.clone()));
+            let key = self.canvas.visit(&url);
+            self.history.visit(url.clone());
+            let mut effects = vec![Effect::Redraw];
+            if fetch::is_fetchable(&url)
+                && let Some(node) = self.canvas.graph().get_node(key).map(|n| n.id)
+            {
+                effects.push(Effect::FetchPage { node, url });
+            }
+            effects
+    }
+
+    pub(super) fn nav_back(&mut self) -> Vec<Effect> {
+            let Some(url) = self.history.back().map(str::to_string) else {
+                return vec![Effect::Redraw];
+            };
+            self.events.push(AppEvent::NavigatedBack(url.clone()));
+            if !url.is_empty() {
+                // Navigation is a revisit even when its node already
+                // exists, so P3's recency-derived score remains honest.
+                self.canvas.visit(&url);
+            }
+            vec![Effect::Redraw]
+    }
+
+    pub(super) fn nav_forward(&mut self) -> Vec<Effect> {
+            let Some(url) = self.history.forward().map(str::to_string) else {
+                return vec![Effect::Redraw];
+            };
+            self.events.push(AppEvent::NavigatedForward(url.clone()));
+            self.canvas.visit(&url);
+            vec![Effect::Redraw]
+    }
+
+    pub(super) fn reseed_layout(&mut self) -> Vec<Effect> {
+            if self.canvas.reseed() {
+                self.events.push(AppEvent::LayoutReseeded);
+                vec![Effect::Redraw]
+            } else {
+                Vec::new()
+            }
+    }
+
+    pub(super) fn set_layout_strategy(&mut self, id: Option<&'static str>) -> Vec<Effect> {
+            self.canvas.set_layout_strategy(id.map(str::to_string));
+            if id != Some("phyllotaxis.default") {
+                self.canvas.set_projection_score(None);
+            }
+            // The projection itself is computed on the next frame by
+            // `drive_layout_strategy` (it needs the surface viewport).
+            vec![Effect::Redraw]
+    }
+
+    pub(super) fn toggle_size_by_recency(&mut self) -> Vec<Effect> {
+            let on = !self.canvas.size_by_recency();
+            self.canvas.set_size_by_recency(on);
+            // A size change moves extents and the recency ordering, so the
+            // active analytic layout must recompute; re-selecting the same
+            // strategy drops its input cache (last_strategy_inputs = None).
+            let active = self.canvas.layout_strategy().map(str::to_string);
+            self.canvas.set_layout_strategy(active);
+            vec![Effect::Redraw]
+    }
+
+    pub(super) fn set_node_sprite(&mut self, member: Uuid, data_uri: String, hull: Vec<(f32, f32)>) -> Vec<Effect> {
+            self.canvas.set_node_sprite(member, data_uri);
+            // The traced collider: the node collides at its picture. Under
+            // 3 points the tracer found no opaque region — keep the
+            // silhouette collider rather than installing a degenerate one.
+            if hull.len() >= 3 {
+                self.canvas.set_node_sprite_hull(member, hull);
+            }
+            self.events.push(AppEvent::NodeSpriteSet(member));
+            vec![Effect::SaveSession, Effect::Redraw]
     }
 }

@@ -13,6 +13,7 @@ mod chrome_view;
 #[cfg(feature = "wasm")]
 mod component;
 mod content;
+mod content_classes;
 mod denizen;
 mod identity;
 mod inspector_pane;

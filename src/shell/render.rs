@@ -172,6 +172,7 @@ impl Shell {
                     self.app.drive_layout_strategy(rw, rh);
                     let (scene, animating) = self.app.canvas.frame(rw, rh);
                     needs_redraw |= animating;
+                    needs_redraw |= self.app.resolve_pending_images() > 0;
                     (scene, wgpu::Color::WHITE)
                 }
                 crate::surface::SurfaceKind::Content(node) => {

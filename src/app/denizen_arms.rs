@@ -23,7 +23,8 @@ impl App {
                 return vec![Effect::Redraw];
             };
             let facet = |id: &str| {
-                self.facets
+                self.canvas
+                    .facets()
                     .get(&member, &chartulary::FacetId::new(id))
                     .and_then(|v| v.as_str().map(str::to_string))
             };
@@ -140,7 +141,7 @@ impl App {
                 return vec![Effect::Redraw];
             };
             let revoked = self.denizens.authority.revoke_root_grants(resident.subject);
-            session_runtime::remove_denizen_binding(&mut self.facets, member);
+            session_runtime::remove_denizen_binding(self.canvas.facets_mut(), member);
             let hex = resident.subject.to_hex();
             // The certificates go with the residency: a later adopt must
             // not resurrect the authority we just revoked.
@@ -151,6 +152,19 @@ impl App {
             tracing::info!(label = %resident.label, revoked, "denizen uninstalled");
             self.events
                 .push(AppEvent::DenizenUninstalled(resident.label.clone()));
+            vec![Effect::SaveSession, Effect::Redraw]
+    }
+
+    pub(super) fn confirm_install_denizen(&mut self) -> Vec<Effect> {
+            let Some(pending) = self.pending_install.take() else {
+                return vec![Effect::Redraw];
+            };
+            let label = pending.label.clone();
+            let member = crate::denizen::install(self, pending);
+            self.events.push(AppEvent::DenizenInstalled(label));
+            let _ = member;
+            self.omnibar = OmnibarState::default();
+            self.focus = FocusTarget::Canvas;
             vec![Effect::SaveSession, Effect::Redraw]
     }
 }

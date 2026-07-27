@@ -35,30 +35,33 @@ pub fn inspector_sections(app: &App) -> Vec<InspectorSection> {
     let focused = app
         .canvas
         .focused_member()
-        .and_then(|member| app.canvas.graph().nodes().map(|(_, n)| n).find(|n| n.id == member));
+        .and_then(|member| app.canvas.graph().get_node_by_id(member));
 
     let node_rows = match focused {
-        Some(node) => vec![
+        Some((key, node)) => vec![
             ("Title".to_string(), display_title(node.title.trim(), node.url())),
             ("URL".to_string(), node.url().to_string()),
             ("Node id".to_string(), node.id.to_string()),
             ("Addresses".to_string(), node.addresses.len().to_string()),
-            ("Pinned".to_string(), yes_no(node.is_pinned)),
+            (
+                "Pinned".to_string(),
+                yes_no(app.canvas.graph().node_is_pinned(key).unwrap_or_default()),
+            ),
             (
                 "Tags".to_string(),
                 summarize_strings(node.tags.iter().map(String::as_str)),
             ),
             (
                 "Import provenance".to_string(),
-                summarize_import_provenance(node),
+                summarize_import_provenance(app.canvas.graph(), key),
             ),
             (
                 "Classifications".to_string(),
-                summarize_classifications(node),
+                summarize_classifications(app.canvas.graph(), key),
             ),
             (
                 "Mime hint".to_string(),
-                node.mime_hint.as_deref().unwrap_or("none").to_string(),
+                node.media_type.as_deref().unwrap_or("none").to_string(),
             ),
             // The sidecar rows (rung 6): the browser's handling of the node.
             (
@@ -77,7 +80,7 @@ pub fn inspector_sections(app: &App) -> Vec<InspectorSection> {
         None => vec![("Focused node".to_string(), "none".to_string())],
     };
 
-    let content_rows = content_rows(app, focused.map(|n| n.id));
+    let content_rows = content_rows(app, focused.map(|(_, node)| node.id));
 
     vec![
         InspectorSection {
@@ -203,11 +206,15 @@ fn summarize_strings<'a>(values: impl Iterator<Item = &'a str>) -> String {
     }
 }
 
-fn summarize_import_provenance(node: &mere::kernel::graph::Node) -> String {
-    if node.import_provenance.is_empty() {
+fn summarize_import_provenance(
+    graph: &mere::kernel::graph::Graph,
+    key: mere::kernel::graph::NodeKey,
+) -> String {
+    let provenance = graph.node_import_provenance(key).unwrap_or_default();
+    if provenance.is_empty() {
         return "none".to_string();
     }
-    summarize_strings(node.import_provenance.iter().map(|p| {
+    summarize_strings(provenance.iter().map(|p| {
         if p.source_label.is_empty() {
             p.source_id.as_str()
         } else {
@@ -216,15 +223,18 @@ fn summarize_import_provenance(node: &mere::kernel::graph::Node) -> String {
     }))
 }
 
-fn summarize_classifications(node: &mere::kernel::graph::Node) -> String {
-    if node.classifications.is_empty() {
+fn summarize_classifications(
+    graph: &mere::kernel::graph::Graph,
+    key: mere::kernel::graph::NodeKey,
+) -> String {
+    let classifications = graph.node_classifications(key).unwrap_or_default();
+    if classifications.is_empty() {
         return "none".to_string();
     }
-    let labels = node
-        .classifications
+    let labels = classifications
         .iter()
         .map(|c| c.label.as_deref().unwrap_or(c.value.as_str()));
-    format!("{} ({})", node.classifications.len(), summarize_strings(labels))
+    format!("{} ({})", classifications.len(), summarize_strings(labels))
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

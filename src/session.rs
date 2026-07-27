@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::panes::{FrisketLayout, SessionId};
+use image::ImageEncoder;
 // The frame-sidecar store is frisket's own since meerkat's deletion (it moved
 // out of session-runtime with the pane model).
 use crate::panes::store as frisket_store;
@@ -193,17 +194,31 @@ pub fn load_session_graph(data_root: &Path) -> Option<Graph> {
     let graph_file = data_root.join(session_graph_store::GRAPH_FILE);
     match session_graph_store::load_snapshot(&graph_file) {
         Ok(Some(mut snapshot)) => {
+            let legacy_node_facets = snapshot.legacy_node_facet_count();
             // Externalize any pre-phase-2 inline imagery BEFORE materializing:
             // conversion keeps references only, so pixels left here would be
             // dropped silently. One-time; a snapshot already externalized has
             // nothing to do.
             let migrated = externalize_legacy_images(&mut snapshot, data_root);
-            let graph = mere::kernel::graph::Graph::from_snapshot(&snapshot);
-            if migrated > 0 {
+            let mut graph = mere::kernel::graph::Graph::from_snapshot(&snapshot);
+            if legacy_node_facets > 0 {
+                // Existing facets are canonical and therefore win over the
+                // one-time import from legacy graph columns. Persist the merged
+                // store first, then strip those columns from graph.json.
+                graph.overlay_facets(load_node_facets(data_root).unwrap_or_default());
+                save_node_facets(data_root, graph.facets());
+                save_session_graph(data_root, &graph);
+                tracing::info!(
+                    legacy_node_facets,
+                    "migrated legacy node metadata into facets"
+                );
+            } else if migrated > 0 {
                 // Re-save immediately so the pixels leave `graph.json` even if
                 // the session never saves again.
-                tracing::info!(migrated, "externalized legacy inline node imagery");
                 save_session_graph(data_root, &graph);
+            }
+            if migrated > 0 {
+                tracing::info!(migrated, "externalized legacy inline node imagery");
             }
             tracing::info!(path = ?graph_file, "session graph restored");
             Some(graph)
@@ -224,8 +239,8 @@ pub fn load_session_graph(data_root: &Path) -> Option<Graph> {
 /// migrate_legacy_images`, which needs an eidetic `Store` this host does not
 /// have. Same digest and same `<hex>` key, so the two agree.
 ///
-/// The legacy favicon is raw RGBA with no container; it is stored as-is and
-/// decoded back by dimensions, since the resolver only needs pixels.
+/// The legacy favicon is raw RGBA with no container; encode it once here so
+/// every durable image blob has the same PNG format.
 fn externalize_legacy_images(
     snapshot: &mut mere::kernel::persistence::GraphSnapshot,
     data_root: &Path,
@@ -248,13 +263,19 @@ fn externalize_legacy_images(
             written += 1;
         }
         if let Some(rgba) = node.legacy_favicon_rgba.take() {
-            let digest = *eidetic::Hash::of(&rgba).as_bytes();
+            let Some(png) =
+                encode_rgba_png(&rgba, node.legacy_favicon_width, node.legacy_favicon_height)
+            else {
+                node.legacy_favicon_rgba = Some(rgba);
+                continue;
+            };
+            let digest = *eidetic::Hash::of(&png).as_bytes();
             let image = ImageRef::new(
                 digest,
                 node.legacy_favicon_width,
                 node.legacy_favicon_height,
             );
-            save_image_blob(data_root, &image.hex(), &rgba);
+            save_image_blob(data_root, &image.hex(), &png);
             node.images.insert(ImageRole::Favicon, image);
             node.legacy_favicon_width = 0;
             node.legacy_favicon_height = 0;
@@ -267,6 +288,22 @@ fn externalize_legacy_images(
         "every legacy image must be externalized before the snapshot materializes"
     );
     written
+}
+
+/// Encode decoded straight-alpha RGBA8 pixels into the one durable image
+/// format used by the sidecar store.
+pub(crate) fn encode_rgba_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(4)?;
+    if width == 0 || height == 0 || rgba.len() != expected {
+        return None;
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some(png)
 }
 
 /// Persist the session graph at the flat `graph.json`. Best-effort: a write
@@ -314,6 +351,37 @@ pub fn save_image_blob(data_root: &Path, hex: &str, bytes: &[u8]) {
 /// fetched, or a reference that outlived its blob).
 pub fn load_image_blob(data_root: &Path, hex: &str) -> Option<Vec<u8>> {
     std::fs::read(images_dir(data_root).join(hex)).ok()
+}
+
+/// Mark/sweep the session's file-sidecar image store against every live graph
+/// reference. Only 64-character hex filenames are store members; unrelated
+/// files in the directory are left alone. Returns blobs actually removed.
+pub fn gc_orphan_image_blobs(data_root: &Path, graph: &Graph) -> usize {
+    let referenced: std::collections::HashSet<String> = graph
+        .nodes()
+        .flat_map(|(_, node)| node.images.values())
+        .map(|image| image.hex())
+        .collect();
+    let Ok(entries) = std::fs::read_dir(images_dir(data_root)) else {
+        return 0;
+    };
+    let mut dropped = 0;
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let is_digest = name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit());
+        if is_digest && !referenced.contains(&name) && std::fs::remove_file(entry.path()).is_ok() {
+            dropped += 1;
+        }
+    }
+    dropped
 }
 
 /// Restore the persisted per-node facet store (`facets.json`), if one exists.
@@ -551,6 +619,88 @@ mod tests {
         assert!(
             !root.join(session_graph_store::GRAPH_FILE).exists(),
             "the score remains a view sidecar"
+        );
+    }
+
+    #[test]
+    fn legacy_node_columns_migrate_on_load_and_existing_facets_win() {
+        let root = temp_root("node-facet-migration");
+        let mut canvas = mere::canvas::Canvas::new();
+        let key = canvas.visit("https://legacy.example/");
+        let node_id = canvas.graph().get_node(key).unwrap().id;
+        save_session_graph(&root, canvas.graph());
+
+        let graph_file = root.join(session_graph_store::GRAPH_FILE);
+        let mut snapshot = session_graph_store::load_snapshot(&graph_file)
+            .unwrap()
+            .unwrap();
+        snapshot.nodes[0].is_pinned = true;
+        std::fs::write(
+            &graph_file,
+            serde_json::to_string_pretty(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let mut facets = session_runtime::NodeFacetStore::new();
+        facets
+            .set(
+                node_id,
+                chartulary::FacetId::new(
+                    mere::kernel::graph::node_facets::ARRANGEMENT_PIN,
+                ),
+                serde_json::json!(false),
+                &chartulary::AcceptAll,
+            )
+            .unwrap();
+        save_node_facets(&root, &facets);
+
+        let restored = load_session_graph(&root).expect("legacy graph");
+        let restored_key = restored.get_node_key_by_id(node_id).unwrap();
+        assert_eq!(
+            restored.node_is_pinned(restored_key),
+            Some(false),
+            "the canonical sidecar overlays the imported legacy value"
+        );
+
+        let canonical = session_graph_store::load_snapshot(&graph_file)
+            .unwrap()
+            .unwrap();
+        assert!(!canonical.nodes[0].is_pinned);
+        assert_eq!(canonical.legacy_node_facet_count(), 0);
+        let persisted = load_node_facets(&root).unwrap();
+        assert_eq!(
+            persisted.get(
+                &node_id,
+                &chartulary::FacetId::new(
+                    mere::kernel::graph::node_facets::ARRANGEMENT_PIN,
+                ),
+            ),
+            Some(&serde_json::json!(false))
+        );
+    }
+
+    #[test]
+    fn image_gc_keeps_live_blobs_and_drops_only_hash_named_orphans() {
+        let root = temp_root("image-gc");
+        let live = mere::kernel::types::ImageRef::new([1; 32], 1, 1);
+        let orphan = mere::kernel::types::ImageRef::new([2; 32], 1, 1);
+        save_image_blob(&root, &live.hex(), b"live");
+        save_image_blob(&root, &orphan.hex(), b"orphan");
+        std::fs::write(images_dir(&root).join("README"), b"not a blob").unwrap();
+
+        let mut canvas = mere::canvas::Canvas::new();
+        let key = canvas.visit("https://live.example/");
+        let node = canvas.graph().get_node(key).unwrap().id;
+        assert!(canvas.set_node_favicon_for(node, live));
+
+        assert_eq!(gc_orphan_image_blobs(&root, canvas.graph()), 1);
+        assert!(load_image_blob(&root, &live.hex()).is_some());
+        assert!(load_image_blob(&root, &orphan.hex()).is_none());
+        assert!(images_dir(&root).join("README").exists());
+        assert_eq!(
+            gc_orphan_image_blobs(&root, canvas.graph()),
+            0,
+            "re-running the sweep is a no-op"
         );
     }
 }

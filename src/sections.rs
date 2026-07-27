@@ -104,7 +104,9 @@ fn gather_nodes(app: &App) -> Vec<SectionRow> {
         .map(|(key, node)| {
             let url = node.url().to_string();
             (
-                node.last_visited,
+                graph
+                    .node_last_visited(key)
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                 SectionRow {
                     text: graph.node_display_label(key),
                     activate: Some(SectionActivate::Open(url)),

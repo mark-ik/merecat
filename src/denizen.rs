@@ -614,7 +614,7 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
 
     // The binding + source + label facets: durable agency truth.
     session_runtime::write_denizen_binding(
-        &mut app.facets,
+        app.canvas.facets_mut(),
         member,
         &session_runtime::DenizenBinding::new(hex.clone(), pending.body.kind()),
     );
@@ -622,7 +622,7 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
     // the disk beside the worlds, with the facet as the pointer.
     match &pending.body {
         PackBody::Scenario(source) => {
-            let _ = app.facets.set(
+            let _ = app.canvas.facets_mut().set(
                 member,
                 chartulary::FacetId::new(SCENARIO_SOURCE_FACET),
                 serde_json::json!(source),
@@ -640,7 +640,7 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
             })();
             match written {
                 Ok(()) => {
-                    let _ = app.facets.set(
+                    let _ = app.canvas.facets_mut().set(
                         member,
                         chartulary::FacetId::new(COMPONENT_FACET),
                         serde_json::json!(file),
@@ -653,7 +653,7 @@ pub fn install(app: &mut App, pending: PendingInstall) -> Uuid {
             }
         }
     }
-    let _ = app.facets.set(
+    let _ = app.canvas.facets_mut().set(
         member,
         chartulary::FacetId::new("scenario.label"),
         serde_json::json!(pending.label),

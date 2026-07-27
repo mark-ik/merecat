@@ -23,7 +23,10 @@ pub fn focused_caption(canvas: &Canvas) -> Option<String> {
     let graph = canvas.graph();
     let (key, node) = graph.get_node_by_url(&url)?;
     let label = graph.node_display_label(key);
-    match node.cached_host.as_deref() {
+    let host = url::Url::parse(node.url())
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned));
+    match host.as_deref() {
         Some(host) if !label.contains(host) => Some(format!("{label}  \u{00b7}  {host}")),
         _ => Some(label),
     }
@@ -103,13 +106,6 @@ pub struct App {
     /// override, compat mode, content-on), persisted at `browser_nodes.json`.
     /// The graph stays correct without it (the sidecar's charter).
     pub browser: session_runtime::browser_node_state::BrowserNodeStates,
-    /// The per-node facet store (`facets.json`): typed per-node metadata by
-    /// namespace. `arrangement.*` carries the durable canvas layout (positions,
-    /// sizes, sprites, materials, faces — the graph itself is position-free);
-    /// `scene.*` on the container id carries the scene's own view settings.
-    /// Foreign namespaces round-trip untouched. The graph stays correct
-    /// without it, like every sidecar.
-    pub facets: session_runtime::NodeFacetStore,
     /// Linear damping for the layout physics (the "inertia" setting). Held here
     /// — the canvas is the sink, the host the durable owner — and persisted as
     /// the `scene.physics_damping` container facet (it left the app-wide
@@ -229,7 +225,7 @@ impl App {
     pub fn refresh_facets(&mut self) {
         let geometry = self.canvas.cartography_geometry();
         let container = self.container_id();
-        let facets = &mut self.facets;
+        let facets = self.canvas.facets_mut();
         session_runtime::write_web_states(facets, &self.browser);
         session_runtime::write_arrangement_positions(facets, geometry.iter());
         session_runtime::write_arrangement_sizes(facets, geometry.size_iter());
@@ -251,175 +247,10 @@ impl App {
 
 
 
-    /// The dynamic switcher entries for the omnibar's `>` lane: a switch per
-    /// OTHER session, most recently updated first ("New session" is a static
-    /// palette entry).
-    /// The denizen rows for the palette's actions lane: the pending
-    /// install's visible review (the Confirm row IS the ask), then one Run
-    /// row per resident (B1: the palette populated from denizen residency).
-    /// Lower a denizen's emitted Actions through this same spine with the
-    /// journal scoped to its subject, so every captured graph edit reads back
-    /// attributed. Shared by both runnable lanes: piccolo returns Actions
-    /// after evaluation, the component lane returns the ring-gate's accepted
-    /// queue — by here, both are authorized.
-    fn lower_denizen_actions(
-        &mut self,
-        subject: servitor::Subject,
-        label: String,
-        actions: Vec<Action>,
-    ) -> Vec<Effect> {
-        if let Ok(mut journal) = self.journal.lock() {
-            journal.set_author(subject.to_hex());
-        }
-        let mut effects = Vec::new();
-        for action in actions {
-            effects.extend(self.update(action));
-        }
-        if let Ok(mut journal) = self.journal.lock() {
-            journal.set_author(mere::kernel::graph::USER_AUTHOR);
-        }
-        self.events.push(AppEvent::DenizenRan(label));
-        effects.push(Effect::SaveSession);
-        effects.push(Effect::Redraw);
-        effects
-    }
 
-    pub fn denizen_actions(&self) -> Vec<(String, Action)> {
-        let mut rows = Vec::new();
-        if let Some(pending) = &self.pending_install {
-            rows.push((
-                crate::denizen::review_line(pending),
-                Action::ConfirmInstallDenizen,
-            ));
-            rows.push((
-                format!("Cancel install {}", pending.label),
-                Action::CancelInstallDenizen,
-            ));
-        }
-        let mut residents: Vec<_> = self.denizens.residents.iter().collect();
-        residents.sort_by(|(_, a), (_, b)| a.label.cmp(&b.label));
-        for (member, resident) in residents {
-            rows.push((
-                format!("Run {}", resident.label),
-                Action::RunDenizen { member: *member },
-            ));
-            rows.push((
-                format!("Uninstall {}", resident.label),
-                Action::UninstallDenizen { member: *member },
-            ));
-        }
-        rows
-    }
 
-    pub fn session_actions(&self) -> Vec<(String, Action)> {
-        // Denizen rows lead: a pending install's review must be the first
-        // thing the opened palette shows (B1's visible grant review).
-        let mut rows = self.denizen_actions();
-        let mut others: Vec<_> = self
-            .sessions
-            .iter()
-            .filter(|(id, _)| *id != self.session_id)
-            .collect();
-        others.sort_by_key(|(_, m)| std::cmp::Reverse(m.updated_at));
-        rows.extend(others.into_iter().map(|(id, _)| {
-            (
-                format!("Switch to session {}", self.session_label(id)),
-                Action::SwitchSession(id),
-            )
-        }));
-        rows.extend(self.pane_section_actions());
-        rows
-    }
 
-    /// **The** action catalog offered right now: the contextual rows LEAD the
-    /// static registry, because a pending denizen install's grant review must be
-    /// the first thing an opened palette shows (participant gate B1) and the
-    /// contextual rows outrank the fixed verbs generally.
-    ///
-    /// One composition, read by everything that offers or resolves an action:
-    /// the omnibar's `>` lane filters it, the observation snapshot reports it,
-    /// and the automation runner resolves a label through it. Composing it in
-    /// more than one place is how the runner and the palette come to disagree
-    /// about what a label means (they did: the runner resolved static-first
-    /// while the palette showed dynamic-first, so a dynamic row that shadowed a
-    /// static label would have acted as the wrong one).
-    pub fn available_actions(&self) -> Vec<(String, Action)> {
-        let mut rows = self.session_actions();
-        rows.extend(
-            crate::action::palette_actions()
-                .into_iter()
-                .map(|(label, action)| (label.to_string(), action)),
-        );
-        rows
-    }
 
-    /// The composed-section rows for the ACTIVE pane, when its content composes
-    /// (a Gloss, an Overmap): one add/remove per registered provider, plus the
-    /// reorder rows. Pane-scoped palette entries are how the gloss-composite
-    /// design chose to expose composition (the right-click palette already
-    /// selects the pane under the pointer), so no new chrome. Empty when the
-    /// active pane is not a composable one.
-    ///
-    /// Written against `PaneContent::composition`, not a pane kind, so a pane
-    /// that gains a composition gains this whole UI without touching it. The
-    /// row's prefix is the pane's own tag, so it names itself too.
-    fn pane_section_actions(&self) -> Vec<(String, Action)> {
-        let Some(pane) = self.active_pane else {
-            return Vec::new();
-        };
-        let Some(content) = self.pane_content(pane) else {
-            return Vec::new();
-        };
-        let Some(cfg) = content.composition() else {
-            return Vec::new();
-        };
-        let who = pane_label(content);
-        let mut rows: Vec<(String, Action)> = crate::sections::ALL
-            .iter()
-            .map(|p| {
-                let on = cfg.sections.iter().any(|id| id == p.id);
-                let verb = if on { "remove" } else { "add" };
-                (
-                    format!("{who}: {verb} section — {}", p.title),
-                    Action::TogglePaneSection {
-                        pane,
-                        section: p.id.to_string(),
-                    },
-                )
-            })
-            .collect();
-        // Reorder rows only where a move would DO something: nothing to
-        // reorder with one section, and no "up" on the first (the palette
-        // should not offer a no-op).
-        if cfg.sections.len() > 1 {
-            for (i, id) in cfg.sections.iter().enumerate() {
-                let Some(p) = crate::sections::by_id(id) else {
-                    continue;
-                };
-                if i > 0 {
-                    rows.push((
-                        format!("{who}: move section up — {}", p.title),
-                        Action::MovePaneSection {
-                            pane,
-                            section: id.clone(),
-                            delta: -1,
-                        },
-                    ));
-                }
-                if i + 1 < cfg.sections.len() {
-                    rows.push((
-                        format!("{who}: move section down — {}", p.title),
-                        Action::MovePaneSection {
-                            pane,
-                            section: id.clone(),
-                            delta: 1,
-                        },
-                    ));
-                }
-            }
-        }
-        rows
-    }
 
     /// A pane's content by id, in whichever space holds it (primary or a lens).
     pub fn pane_content(&self, pane: PaneId) -> Option<&PaneContent> {
@@ -532,60 +363,16 @@ impl App {
     /// Consume one app intent. Never blocks; anything slow leaves as an effect.
     pub fn update(&mut self, action: Action) -> Vec<Effect> {
         match action {
-            Action::OpenAddress(url) => {
-                self.events.push(AppEvent::AddressOpened(url.clone()));
-                let key = self.canvas.visit(&url);
-                self.history.visit(url.clone());
-                let mut effects = vec![Effect::Redraw];
-                if fetch::is_fetchable(&url)
-                    && let Some(node) = self.canvas.graph().get_node(key).map(|n| n.id)
-                {
-                    effects.push(Effect::FetchPage { node, url });
-                }
-                effects
-            }
+            Action::OpenAddress(url) => self.open_address(url),
             // The nav pair: move the history cursor and RE-SELECT (never a
             // refetch — the find lane's discipline). A remembered address
             // whose node was deleted re-mints it via visit, without touching
             // the cursor again.
-            Action::NavBack => {
-                let Some(url) = self.history.back().map(str::to_string) else {
-                    return vec![Effect::Redraw];
-                };
-                self.events.push(AppEvent::NavigatedBack(url.clone()));
-                if !url.is_empty() {
-                    // Navigation is a revisit even when its node already
-                    // exists, so P3's recency-derived score remains honest.
-                    self.canvas.visit(&url);
-                }
-                vec![Effect::Redraw]
-            }
-            Action::NavForward => {
-                let Some(url) = self.history.forward().map(str::to_string) else {
-                    return vec![Effect::Redraw];
-                };
-                self.events.push(AppEvent::NavigatedForward(url.clone()));
-                self.canvas.visit(&url);
-                vec![Effect::Redraw]
-            }
+            Action::NavBack => self.nav_back(),
+            Action::NavForward => self.nav_forward(),
             Action::Reload => self.reload_focused(),
-            Action::ReseedLayout => {
-                if self.canvas.reseed() {
-                    self.events.push(AppEvent::LayoutReseeded);
-                    vec![Effect::Redraw]
-                } else {
-                    Vec::new()
-                }
-            }
-            Action::SetLayoutStrategy(id) => {
-                self.canvas.set_layout_strategy(id.map(str::to_string));
-                if id != Some("phyllotaxis.default") {
-                    self.canvas.set_projection_score(None);
-                }
-                // The projection itself is computed on the next frame by
-                // `drive_layout_strategy` (it needs the surface viewport).
-                vec![Effect::Redraw]
-            }
+            Action::ReseedLayout => self.reseed_layout(),
+            Action::SetLayoutStrategy(id) => self.set_layout_strategy(id),
             Action::ToggleIsometric => {
                 let on = !self.canvas.is_isometric();
                 self.canvas.set_isometric(on);
@@ -612,16 +399,7 @@ impl App {
                 self.canvas.toggle_physics_paused();
                 vec![Effect::Redraw]
             }
-            Action::ToggleSizeByRecency => {
-                let on = !self.canvas.size_by_recency();
-                self.canvas.set_size_by_recency(on);
-                // A size change moves extents and the recency ordering, so the
-                // active analytic layout must recompute; re-selecting the same
-                // strategy drops its input cache (last_strategy_inputs = None).
-                let active = self.canvas.layout_strategy().map(str::to_string);
-                self.canvas.set_layout_strategy(active);
-                vec![Effect::Redraw]
-            }
+            Action::ToggleSizeByRecency => self.toggle_size_by_recency(),
             Action::SaveSession => vec![Effect::SaveSession],
             // Multi-session (rung 6's second half). Both lower to the shell's
             // SwitchSession effect: the PORT saves the departing session and
@@ -639,18 +417,7 @@ impl App {
             }
             // ---- Denizen residency (participant gate B1) ----
             Action::InstallDenizen { path } => self.install_denizen(path),
-            Action::ConfirmInstallDenizen => {
-                let Some(pending) = self.pending_install.take() else {
-                    return vec![Effect::Redraw];
-                };
-                let label = pending.label.clone();
-                let member = crate::denizen::install(self, pending);
-                self.events.push(AppEvent::DenizenInstalled(label));
-                let _ = member;
-                self.omnibar = OmnibarState::default();
-                self.focus = FocusTarget::Canvas;
-                vec![Effect::SaveSession, Effect::Redraw]
-            }
+            Action::ConfirmInstallDenizen => self.confirm_install_denizen(),
             Action::CancelInstallDenizen => {
                 if self.pending_install.take().is_some() {
                     self.events.push(AppEvent::DenizenRefused("cancelled".into()));
@@ -660,89 +427,14 @@ impl App {
             }
             Action::UninstallDenizen { member } => self.uninstall_denizen(member),
             Action::RunDenizen { member } => self.run_denizen(member),
-            Action::RecoverSession(id) => {
-                // Overmap O3 recovery: the trashed directory moves back whole
-                // (graph + facets + bin), the manifest re-lists, and the
-                // ordinary switch adopts it — same identity by construction.
-                match self.sessions.restore_from_trash(id) {
-                    Ok(true) => {
-                        self.trash = self.sessions.list_trash();
-                        self.events
-                            .push(AppEvent::SessionRecovered(self.session_label(id)));
-                        vec![Effect::SwitchSession { id }]
-                    }
-                    Ok(false) => {
-                        tracing::warn!(session = %id.as_uuid(), "no trash entry to recover");
-                        vec![Effect::Redraw]
-                    }
-                    Err(err) => {
-                        tracing::warn!(%err, "failed to recover the trashed session");
-                        vec![Effect::Redraw]
-                    }
-                }
-            }
-            Action::CloseSession => {
-                // Trash the current session, then land on the newest remaining
-                // one; if it was the last, mint a fresh empty session. Either
-                // way the switch effect saves nothing for the trashed session
-                // (it is already gone) and adopts the target.
-                let closing = self.session_id;
-                let next = self
-                    .sessions
-                    .iter()
-                    .filter(|(id, _)| *id != closing)
-                    .max_by_key(|(_, m)| m.updated_at)
-                    .map(|(id, _)| id)
-                    .unwrap_or_else(|| Self::mint_session(&self.data_root, &mut self.sessions));
-                // The disk half (bin release + trash move + adopt-without-save)
-                // is ordering the SHELL owns — see Effect::TrashSession.
-                vec![Effect::TrashSession { closing, next }]
-            }
-            Action::BeginRenameSession => {
-                // Seed empty (the omnibar has no selection, so a seeded label
-                // could not be replaced by typing); the current label shows in
-                // the switcher, and an empty commit clears back to it.
-                self.omnibar = OmnibarState {
-                    open: true,
-                    mode: crate::ui::OmnibarMode::RenameSession(self.session_id),
-                    ..OmnibarState::default()
-                };
-                self.focus = FocusTarget::Chrome;
-                let actions = self.available_actions();
-                recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                self.events.push(AppEvent::OmnibarOpened);
-                vec![Effect::Redraw]
-            }
-            Action::RenameSession { id, name } => {
-                let name = name.trim().to_string();
-                let applied = self.sessions.update(id, |m| {
-                    m.display_name = (!name.is_empty()).then(|| name.clone());
-                });
-                if applied {
-                    let _ = self.sessions.flush_dirty();
-                    self.events
-                        .push(AppEvent::SessionRenamed(self.session_label(id)));
-                }
-                vec![Effect::Redraw]
-            }
+            Action::RecoverSession(id) => self.recover_session(id),
+            Action::CloseSession => self.close_session(),
+            Action::BeginRenameSession => self.begin_rename_session(),
+            Action::RenameSession { id, name } => self.rename_session(id, name),
             Action::DeleteFocusedNode => self.delete_focused_node(),
             Action::RecoverDeletedNode(id) => self.recover_deleted_node(id),
-            Action::EmptyRecycleBin => {
-                // Athanor's oven, on command: the bin actor clears its store
-                // and answers with the empty list (which refreshes the mirror).
-                // A no-op when the bin is already empty (honest — no event).
-                if self.removed.is_empty() {
-                    return vec![Effect::Redraw];
-                }
-                self.events
-                    .push(AppEvent::RecycleBinEmptied(self.removed.len()));
-                vec![Effect::EmptyRecycleBin, Effect::Redraw]
-            }
-            Action::NewWindow => {
-                let ordinal = self.seed_lens_space();
-                self.events.push(AppEvent::WindowOpened);
-                vec![Effect::OpenWindow { ordinal }, Effect::Redraw]
-            }
+            Action::EmptyRecycleBin => self.empty_recycle_bin(),
+            Action::NewWindow => self.new_window(),
             // The tear-out trichotomy's LEAF arm: the active pane's frisket
             // leaf leaves this window's tree and joins the newest lens's
             // (spawning one when none is open). The pane's retained runner is
@@ -769,109 +461,22 @@ impl App {
                 member,
                 data_uri,
                 hull,
-            } => {
-                self.canvas.set_node_sprite(member, data_uri);
-                // The traced collider: the node collides at its picture. Under
-                // 3 points the tracer found no opaque region — keep the
-                // silhouette collider rather than installing a degenerate one.
-                if hull.len() >= 3 {
-                    self.canvas.set_node_sprite_hull(member, hull);
-                }
-                self.events.push(AppEvent::NodeSpriteSet(member));
-                vec![Effect::SaveSession, Effect::Redraw]
-            }
+            } => self.set_node_sprite(member, data_uri, hull),
             Action::ToggleNodeContent => self.toggle_node_content(),
-            Action::OmnibarOpen { command } => {
-                self.omnibar = OmnibarState {
-                    open: true,
-                    text: if command {
-                        ">".to_string()
-                    } else {
-                        String::new()
-                    },
-                    ..OmnibarState::default()
-                };
-                self.omnibar.cursor = self.omnibar.text.len();
-                self.focus = FocusTarget::Chrome;
-                {
-                    let actions = self.available_actions();
-                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                }
-                self.events.push(AppEvent::OmnibarOpened);
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarClose => {
-                self.omnibar = OmnibarState::default();
-                // Chrome relinquishes focus back to the canvas. Content focus
-                // is slice B (content takes input); slice A only distinguishes
-                // canvas from chrome.
-                if self.focus == FocusTarget::Chrome {
-                    self.focus = FocusTarget::Canvas;
-                }
-                self.events.push(AppEvent::OmnibarClosed);
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarChar(c) => {
-                self.omnibar.insert_str(c.encode_utf8(&mut [0u8; 4]));
-                self.omnibar.selected = 0;
-                {
-                    let actions = self.available_actions();
-                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                }
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarInsert(s) => {
-                self.omnibar.insert_str(&s);
-                self.omnibar.selected = 0;
-                {
-                    let actions = self.available_actions();
-                    recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                }
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarBackspace => {
-                if self.omnibar.backspace() {
-                    self.omnibar.selected = 0;
-                    {
-                        let actions = self.available_actions();
-                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                    }
-                }
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarDelete => {
-                if self.omnibar.delete_forward() {
-                    self.omnibar.selected = 0;
-                    {
-                        let actions = self.available_actions();
-                        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
-                    }
-                }
-                vec![Effect::Redraw]
-            }
+            Action::OmnibarOpen { command } => self.open_omnibar(command),
+            Action::OmnibarClose => self.close_omnibar(),
+            Action::OmnibarChar(c) => self.omnibar_char(c),
+            Action::OmnibarInsert(s) => self.omnibar_insert(s),
+            Action::OmnibarBackspace => self.omnibar_backspace(),
+            Action::OmnibarDelete => self.omnibar_delete(),
             Action::OmnibarCaret(m) => {
                 // Caret motion never changes the text, so the suggestion
                 // list (and the highlight) stays put.
                 self.omnibar.move_caret(m);
                 vec![Effect::Redraw]
             }
-            Action::OmnibarMove(delta) => {
-                let len = self.omnibar.suggestions.len();
-                if len > 0 {
-                    let cur = self.omnibar.selected as i32;
-                    self.omnibar.selected = (cur + delta).rem_euclid(len as i32) as usize;
-                }
-                vec![Effect::Redraw]
-            }
-            Action::OmnibarCommitRow(index) => {
-                // A row click: select that row, then the ordinary commit path
-                // (one commit vocabulary, whatever pointed at the row).
-                if !self.omnibar.open || index >= self.omnibar.suggestions.len() {
-                    return vec![Effect::Redraw];
-                }
-                self.omnibar.selected = index;
-                return self.update(Action::OmnibarCommit);
-            }
+            Action::OmnibarMove(delta) => self.omnibar_move(delta),
+            Action::OmnibarCommitRow(index) => self.omnibar_commit_row(index),
             Action::OmnibarCommit => self.commit_omnibar(),
             // Pane tree ops (rung 5 slice C). Each mutates the frisket layout and
             // persists it (SaveSession writes frame.json), so the arrangement
@@ -884,38 +489,8 @@ impl App {
                 }
                 vec![Effect::Redraw]
             }
-            Action::SetActivePaneDivider(ratio) => {
-                let Some((active, space)) = self
-                    .active_pane
-                    .and_then(|a| self.space_of(a).map(|s| (a, s)))
-                else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(layout) = self.space_mut(space) else {
-                    return vec![Effect::Redraw];
-                };
-                let Some(mut path) = crate::pane::path_of(layout, active) else {
-                    return vec![Effect::Redraw];
-                };
-                // The active leaf's parent split holds the divider.
-                path.pop();
-                if layout.set_split_ratio(&path, ratio) {
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
-            Action::ToggleMaximizePane => {
-                // Maximize is a PRIMARY view state (a lens's walk ignores it);
-                // a lens pane no-ops honestly instead of setting a flag its
-                // window would never show.
-                if let Some(active) = self.active_pane
-                    && self.space_of(active) == Some(SpaceRef::Primary)
-                {
-                    self.maximized = (self.maximized != Some(active)).then_some(active);
-                }
-                vec![Effect::Redraw]
-            }
+            Action::SetActivePaneDivider(ratio) => self.set_active_pane_divider(ratio),
+            Action::ToggleMaximizePane => self.toggle_maximize_pane(),
             Action::TogglePaneSection { pane, section } => self.toggle_pane_section(pane, section),
             Action::MovePaneSection {
                 pane,
@@ -935,63 +510,19 @@ impl App {
                     vec![Effect::Redraw]
                 }
             }
-            Action::CloseWorkbenchTile => {
-                let Some(member) = self.canvas.focused_member() else {
-                    return vec![Effect::Redraw];
-                };
-                if self.workbench.close_tile(member) {
-                    self.events.push(AppEvent::WorkbenchTileClosed);
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
-            Action::WorkbenchStackOnto { dragged, target } => {
-                if self.workbench.move_to_slot_of(dragged, target) {
-                    self.events.push(AppEvent::WorkbenchStacked);
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
+            Action::CloseWorkbenchTile => self.close_workbench_tile(),
+            Action::WorkbenchStackOnto { dragged, target } => self.workbench_stack_onto(dragged, target),
             Action::WorkbenchSplitBeside {
                 dragged,
                 target,
                 axis,
                 after,
-            } => {
-                // The app vocabulary's axis maps onto Genet's at the platen
-                // call (the one place the tile contract is named).
-                let axis = match axis {
-                    crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
-                    crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
-                };
-                if self
-                    .workbench
-                    .split_beside_axis(dragged, target, axis, after)
-                {
-                    self.events.push(AppEvent::WorkbenchSplit);
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
+            } => self.workbench_split_beside(dragged, target, axis, after),
             Action::WorkbenchSplitOut {
                 dragged,
                 axis,
                 after,
-            } => {
-                let axis = match axis {
-                    crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
-                    crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
-                };
-                if self.workbench.split_out(dragged, axis, after) {
-                    self.events.push(AppEvent::WorkbenchSplit);
-                    vec![Effect::SaveSession, Effect::Redraw]
-                } else {
-                    vec![Effect::Redraw]
-                }
-            }
+            } => self.workbench_split_out(dragged, axis, after),
             Action::WorkbenchSetFractions { path, fractions } => {
                 self.workbench.set_split_fractions(&path, &fractions);
                 vec![Effect::Redraw]
@@ -999,142 +530,16 @@ impl App {
         }
     }
 
-    fn isolated(data_root: PathBuf) -> Self {
-        let identity =
-            crate::identity::load_or_create_root(&data_root, &data_root.join("personae-vault"));
-        let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
-        Self {
-            canvas: Canvas::new(),
-            omnibar: OmnibarState::default(),
-            data_root,
-            sessions: session_runtime::ManifestStore::new(),
-            session_id: crate::panes::SessionId::new(),
-            content: ContentStates::default(),
-            focus: FocusTarget::Canvas,
-            frisket: FrisketLayout::default(),
-            history: chrome::nav::History::new(""),
-            active_pane: None,
-            workbench: mere::platen::Workbench::new(),
-            browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
-            facets: session_runtime::NodeFacetStore::new(),
-            physics_damping: session_runtime::DEFAULT_PHYSICS_DAMPING,
-            maximized: None,
-            window_count: 1,
-            lenses: Vec::new(),
-            roster_tab: 0,
-            removed: Vec::new(),
-            trash: Vec::new(),
-            pending_install: None,
-            denizens: crate::denizen::Denizens::new(root),
-            identity,
-            journal: {
-                let (journal, hook) = mere::kernel::graph::journal_capture_hook();
-                mere::kernel::graph::set_captured_delta_hook(Some(hook));
-                journal
-            },
-            next_pane_id: 1,
-            events: Vec::new(),
-        }
-    }
 
-    /// Deterministic live graph truth for Graphshell's headed G3 receipt.
-    pub(crate) fn projection_fixture() -> Self {
-        use mere::kernel::geometry::PortablePoint;
-        use mere::kernel::graph::apply::{add_node, assert_relation};
-        use mere::kernel::graph::{EdgeAssertion, Graph, SemanticSubKind};
 
-        let mut app = Self::isolated(std::env::temp_dir().join("turnstone-graphshell-g3"));
-        let mut graph = Graph::new();
-        let notes = add_node(
-            &mut graph,
-            Some(uuid::Uuid::from_u128(0x101)),
-            "mere://field-notes".to_string(),
-            PortablePoint::zero(),
-        );
-        let radios = add_node(
-            &mut graph,
-            Some(uuid::Uuid::from_u128(0x102)),
-            "mere://radio-map".to_string(),
-            PortablePoint::zero(),
-        );
-        let harmony = add_node(
-            &mut graph,
-            Some(uuid::Uuid::from_u128(0x103)),
-            "mere://harmony-map".to_string(),
-            PortablePoint::zero(),
-        );
-        let relation = || EdgeAssertion::Semantic {
-            sub_kind: SemanticSubKind::Hyperlink,
-            label: None,
-            decay_progress: None,
-        };
-        let _ = assert_relation(&mut graph, notes, radios, relation());
-        let _ = assert_relation(&mut graph, notes, harmony, relation());
-        app.canvas.set_graph(graph);
-        let _ = app
-            .canvas
-            .set_node_title_for(uuid::Uuid::from_u128(0x101), "Field notes".into());
-        let _ = app
-            .canvas
-            .set_node_title_for(uuid::Uuid::from_u128(0x102), "Radio map".into());
-        let _ = app
-            .canvas
-            .set_node_title_for(uuid::Uuid::from_u128(0x103), "Harmony map".into());
-        app
-    }
 
-    #[cfg(test)]
-    pub(crate) fn test_stub() -> Self {
-        Self::isolated(std::env::temp_dir().join("turnstone-app-test"))
-    }
-
-    /// Fold one typed service answer into state.
-    pub fn apply_update(&mut self, update: Update) -> Vec<Effect> {
-        match update {
-            Update::PageFetched { node, url, result } => {
-                browse::apply_page(&mut self.canvas, node, url, result)
-            }
-            Update::FaviconFetched {
-                node,
-                owner_url,
-                bytes,
-            } => browse::apply_favicon(&mut self.canvas, node, &owner_url, &bytes),
-            Update::ContentSpawned { node, facts } => {
-                self.content.note_live(node, facts);
-                self.events.push(AppEvent::ContentState {
-                    node,
-                    state: "live".to_string(),
-                });
-                vec![Effect::Redraw]
-            }
-            Update::ContentFailed { node, error } => {
-                tracing::warn!(%node, %error, "content spawn failed");
-                self.events.push(AppEvent::ContentState {
-                    node,
-                    state: format!("failed: {error}"),
-                });
-                self.content.note_failed(node, error);
-                vec![Effect::Redraw]
-            }
-            Update::BinListed { records } => {
-                // The bin mirror replaces wholesale — the actor's answer IS
-                // the store's truth (never merged with a hand-kept copy).
-                self.removed = records;
-                vec![Effect::Redraw]
-            }
-            Update::BinFailed { error } => {
-                // Loud and attributable: the Removed section going quiet
-                // because the store broke must be visible divergence, not an
-                // empty list pretending nothing was deleted.
-                tracing::warn!(%error, "recycle bin failed");
-                self.events.push(AppEvent::BinFailed(error));
-                vec![Effect::Redraw]
-            }
-        }
-    }
 }
 
 mod denizen_arms;
+mod fixtures;
+mod palette;
+mod updates;
+mod omnibar_arms;
 mod node_arms;
 mod pane_arms;
 mod session_lifecycle;

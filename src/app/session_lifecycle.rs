@@ -61,7 +61,6 @@ impl App {
             active_pane: None,
             workbench: mere::platen::Workbench::new(),
             browser: session_runtime::browser_node_state::BrowserNodeStates::new(),
-            facets: session_runtime::NodeFacetStore::new(),
             physics_damping: session_runtime::DEFAULT_PHYSICS_DAMPING,
             maximized: None,
             window_count: 1,
@@ -203,14 +202,49 @@ impl App {
         // settings donor-container -> fork-container.
         let fork_graph_id = GraphId::new();
         let mut fork_facets = session_runtime::NodeFacetStore::new();
-        session_runtime::copy_node_facets(&self.facets, &mut fork_facets, &copy.id_remap);
+        session_runtime::copy_node_facets(
+            self.canvas.facets(),
+            &mut fork_facets,
+            &copy.id_remap,
+        );
         if let Some(donor_container) = self.container_id() {
             session_runtime::copy_scene_facets(
-                &self.facets,
+                self.canvas.facets(),
                 &mut fork_facets,
                 donor_container,
                 *fork_graph_id.as_uuid(),
             );
+        }
+        let derivation_facet = chartulary::FacetId::new(
+            mere::kernel::graph::node_facets::PROVENANCE_DERIVATIONS,
+        );
+        let copied_derivations = copy
+            .id_remap
+            .iter()
+            .filter_map(|(_, minted)| {
+                fork_graph
+                    .facets()
+                    .get(minted, &derivation_facet)
+                    .cloned()
+                    .map(|value| (*minted, value))
+            })
+            .collect::<Vec<_>>();
+        fork_graph.overlay_facets(fork_facets);
+        let import_facet =
+            chartulary::FacetId::new(mere::kernel::graph::node_facets::PROVENANCE_IMPORT);
+        for (_, minted) in &copy.id_remap {
+            fork_graph.facets_mut().remove(minted, &import_facet);
+        }
+        for (minted, value) in copied_derivations {
+            fork_graph
+                .facets_mut()
+                .set(
+                    minted,
+                    derivation_facet.clone(),
+                    value,
+                    &chartulary::AcceptAll,
+                )
+                .expect("AcceptAll cannot reject copied derivation");
         }
 
         // Mint the fork's session: manifest with the parent back-reference,
@@ -225,7 +259,7 @@ impl App {
         }
         let fork_dir = session::session_dir(&self.data_root, fork_id);
         session::save_session_graph(&fork_dir, &fork_graph);
-        session::save_node_facets(&fork_dir, &fork_facets);
+        session::save_node_facets(&fork_dir, fork_graph.facets());
         // Each carried world becomes the fork's own file: donor and fork
         // evolve their copies independently thereafter. A missing donor file
         // is fine — the resident rebuilds on an empty world, as always.
@@ -299,12 +333,9 @@ impl App {
         if let Some(score) = session::load_projection_score(&sdir) {
             self.canvas.restore_projection_score(score);
         }
-        // Preview imagery lives out of the graph now (node-image
-        // externalization): the nodes carry references, so the blobs are read
-        // back and decoded into the canvas's paint cache. A missing or
-        // undecodable blob just does not paint and re-fetches on the next
-        // visit — pixels are experience, not truth.
-        restore_node_images(&mut self.canvas, &sdir);
+        // Preview imagery lives out of the graph now. The first paint queues
+        // only visible cache misses; the shell resolves those after the frame,
+        // so adoption does not decode the entire session into memory.
         // The facet store (`facets.json`): pruned to the live graph's nodes
         // (a deleted node's facets go with it), then the arrangement.* family
         // re-dresses the canvas — the durable layout, since the graph itself
@@ -315,19 +346,22 @@ impl App {
         // The removed-sessions cache (overmap O3): derived from the manifest
         // trash, refreshed here and on close/recover.
         self.trash = self.sessions.list_trash();
-        self.facets = session::load_node_facets(&sdir).unwrap_or_default();
+        self.canvas.overlay_facets(
+            session::load_node_facets(&sdir).unwrap_or_default(),
+        );
         // A profile saved before the nil-GraphId heal keyed its scene.* facets
         // by the nil uuid; move them onto the healed container id once.
         if let Some(container) = self.container_id() {
             let nil = uuid::Uuid::nil();
-            if container != nil && self.facets.facets_of(&nil).is_some() {
+            if container != nil && self.canvas.facets().facets_of(&nil).is_some() {
+                let donor = self.canvas.facets().clone();
                 session_runtime::copy_scene_facets(
-                    &self.facets.clone(),
-                    &mut self.facets,
+                    &donor,
+                    self.canvas.facets_mut(),
                     nil,
                     container,
                 );
-                self.facets.remove_node(&nil);
+                self.canvas.facets_mut().remove_node(&nil);
             }
         }
         let mut present: std::collections::BTreeSet<uuid::Uuid> =
@@ -338,14 +372,22 @@ impl App {
         if let Some(container) = self.container_id() {
             present.insert(container);
         }
-        session_runtime::retain_present_nodes(&mut self.facets, &present);
-        self.canvas
-            .seed_cartography(session_runtime::read_arrangement_positions(&self.facets));
+        session_runtime::retain_present_nodes(self.canvas.facets_mut(), &present);
+        match crate::content_classes::reconcile(&mut self.canvas) {
+            Ok(changed) if changed > 0 => {
+                tracing::info!(changed, "founded built-in content classes on restored nodes");
+                effects.push(Effect::SaveSession);
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "content-class reconciliation failed"),
+        }
+        let positions = session_runtime::read_arrangement_positions(self.canvas.facets());
+        self.canvas.seed_cartography(positions);
         // The denizen runtime derives from the binding facets (agency) + the
         // graph's `Node.nested` pointers (structure) + the nested logs.
         self.pending_install = None;
         self.denizens = crate::denizen::rebuild(
-            &self.facets,
+            self.canvas.facets(),
             self.canvas.graph(),
             &sdir,
             self.identity.as_ref(),
@@ -357,35 +399,40 @@ impl App {
             let _ = self
                 .canvas
                 .set_node_nested_for(member, Some(mere::kernel::graph::LogId::new(log_id)));
-            if let Some(binding) = session_runtime::read_denizen_binding(&self.facets, member) {
-                session_runtime::write_denizen_binding(&mut self.facets, member, &binding);
+            if let Some(binding) =
+                session_runtime::read_denizen_binding(self.canvas.facets(), member)
+            {
+                session_runtime::write_denizen_binding(
+                    self.canvas.facets_mut(),
+                    member,
+                    &binding,
+                );
             }
         }
         // The scene's own view settings ride the `scene.*` container facets:
         // the sizing mode + metric and the physics damping re-open as saved.
         let scene = self
             .container_id()
-            .map(|c| session_runtime::read_scene_facets(&self.facets, c))
+            .map(|c| session_runtime::read_scene_facets(self.canvas.facets(), c))
             .unwrap_or_default();
         self.physics_damping = scene.physics_damping;
         self.canvas.set_physics_damping(scene.physics_damping);
         self.canvas
             .apply_cartography_importance_metric(&scene.importance_metric);
+        let sizes = session_runtime::read_arrangement_sizes(self.canvas.facets());
         self.canvas.apply_cartography_sizing(
-            session_runtime::read_arrangement_sizes(&self.facets),
+            sizes,
             scene.size_by_degree,
             scene.size_by_importance,
         );
-        let sprites = session_runtime::read_arrangement_sprites(&self.facets);
+        let sprites = session_runtime::read_arrangement_sprites(self.canvas.facets());
         self.canvas
             .apply_cartography_sprites(sprites.iter().map(|(id, uri)| (*id, uri.as_str())));
-        self.canvas
-            .apply_cartography_sprite_hulls(session_runtime::read_arrangement_sprite_hulls(
-                &self.facets,
-            ));
-        self.canvas
-            .apply_cartography_materials(session_runtime::read_arrangement_materials(&self.facets));
-        let faces = session_runtime::read_arrangement_faces(&self.facets);
+        let hulls = session_runtime::read_arrangement_sprite_hulls(self.canvas.facets());
+        self.canvas.apply_cartography_sprite_hulls(hulls);
+        let materials = session_runtime::read_arrangement_materials(self.canvas.facets());
+        self.canvas.apply_cartography_materials(materials);
+        let faces = session_runtime::read_arrangement_faces(self.canvas.facets());
         self.canvas
             .apply_cartography_faces(faces.iter().map(|(id, code)| (*id, code.as_str())));
         // Session-scoped view state resets.
@@ -447,7 +494,7 @@ impl App {
         // save writes facets only, and the stale file is left inert). Every
         // node whose content was ON respawns through the ordinary port, so
         // `Live` here is spawned truth, never a painted memory.
-        self.browser = session_runtime::read_web_states(&self.facets);
+        self.browser = session_runtime::read_web_states(self.canvas.facets());
         for (id, legacy) in session::load_legacy_browser_nodes(&sdir).nodes {
             self.browser.nodes.entry(id).or_insert(legacy);
         }
@@ -579,29 +626,33 @@ impl App {
             .push(AppEvent::RecycleBinEmptied(self.removed.len()));
         vec![Effect::EmptyRecycleBin, Effect::Redraw]
     }
-}
 
-/// Load and decode every image blob the graph's nodes reference, registering
-/// the pixels with the canvas so they paint.
-///
-/// Content-addressed, so a favicon shared by many nodes decodes once.
-fn restore_node_images(canvas: &mut mere::canvas::Canvas, sdir: &std::path::Path) {
-    let refs: Vec<mere::kernel::types::ImageRef> = canvas
-        .graph()
-        .nodes()
-        .flat_map(|(_, node)| node.images.values().copied())
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    for image in refs {
-        if !seen.insert(image.digest) || canvas.has_resolved_image(&image.digest) {
-            continue;
+    /// Resolve the visible image misses the canvas observed in its last frame.
+    /// Content-addressing makes duplicate references one request, and the
+    /// canvas's byte-bounded LRU will ask again if an evicted digest later
+    /// returns to view.
+    pub(crate) fn resolve_pending_images(&mut self) -> usize {
+        let refs = self.canvas.take_image_requests();
+        if refs.is_empty() {
+            return 0;
         }
-        let Some(bytes) = session::load_image_blob(sdir, &image.hex()) else {
-            continue;
-        };
-        let Some(decoded) = genet_layout::decode_image_bytes(&bytes) else {
-            continue;
-        };
-        canvas.register_resolved_image(image.digest, decoded.rgba, decoded.width, decoded.height);
+        let sdir = self.session_dir();
+        let mut loaded = 0;
+        for image in refs {
+            let Some(bytes) = session::load_image_blob(&sdir, &image.hex()) else {
+                continue;
+            };
+            let Some(decoded) = genet_layout::decode_image_bytes(&bytes) else {
+                continue;
+            };
+            self.canvas.register_resolved_image(
+                image.digest,
+                decoded.rgba,
+                decoded.width,
+                decoded.height,
+            );
+            loaded += 1;
+        }
+        loaded
     }
 }

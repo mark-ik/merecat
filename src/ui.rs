@@ -190,14 +190,19 @@ pub fn recompute_suggestions(
         .nodes()
         .filter_map(|(key, node)| {
             let label = graph.node_display_label(key);
-            let host = node.cached_host.clone().unwrap_or_default();
+            let host = url::Url::parse(node.url())
+                .ok()
+                .and_then(|parsed| parsed.host_str().map(str::to_owned))
+                .unwrap_or_default();
             let url = node.url().to_string();
             let hit = label.to_lowercase().contains(&needle)
                 || host.to_lowercase().contains(&needle)
                 || url.to_lowercase().contains(&needle);
             hit.then(|| {
                 (
-                    node.last_visited,
+                    graph
+                        .node_last_visited(key)
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                     Suggestion::Node {
                         id: node.id,
                         url,

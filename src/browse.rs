@@ -195,8 +195,9 @@ pub fn apply_page(
     effects
 }
 
-/// A page's favicon arrived: decode it to RGBA and stamp it on the
-/// requesting node, if it still lives at the page the icon belongs to.
+/// A page's favicon arrived: decode it to RGBA for this frame, encode that
+/// canonical pixel result as PNG for durability, and stamp its reference on
+/// the requesting node if it still lives at the page the icon belongs to.
 pub fn apply_favicon(
     canvas: &mut Canvas,
     node: Uuid,
@@ -210,26 +211,28 @@ pub fn apply_favicon(
     let Some(decoded) = genet_layout::decode_image_bytes(bytes) else {
         return Vec::new();
     };
+    let Some(png) = crate::session::encode_rgba_png(&decoded.rgba, decoded.width, decoded.height)
+    else {
+        return Vec::new();
+    };
     // The graph carries a content-addressed reference; the pixels go to the
-    // canvas cache (so the icon paints this frame) and the original bytes to
-    // the session's blob directory (so it survives a restart). The digest is
-    // over the fetched bytes, matching what the blob is stored under.
-    let digest = *eidetic::Hash::of(bytes).as_bytes();
+    // canvas cache (so the icon paints this frame) and canonical PNG bytes to
+    // the session's blob directory (so every image role has one durable
+    // format). The digest is over exactly what is stored.
+    let digest = *eidetic::Hash::of(&png).as_bytes();
     let image = mere::kernel::types::ImageRef::new(digest, decoded.width, decoded.height);
-    if canvas.set_node_favicon_for(node, image) {
-        canvas.register_resolved_image(digest, decoded.rgba, decoded.width, decoded.height);
+    let changed = canvas.set_node_favicon_for(node, image);
+    canvas.register_resolved_image(digest, decoded.rgba, decoded.width, decoded.height);
+    let mut effects = vec![Effect::StoreImage {
+        hex: image.hex(),
+        bytes: png,
+    }];
+    if changed {
         tracing::info!(url = %owner_url, "node favicon enriched from the page");
-        vec![
-            Effect::StoreImage {
-                hex: image.hex(),
-                bytes: bytes.to_vec(),
-            },
-            Effect::SaveSession,
-            Effect::Redraw,
-        ]
-    } else {
-        Vec::new()
+        effects.push(Effect::SaveSession);
     }
+    effects.push(Effect::Redraw);
+    effects
 }
 
 /// The favicon URL for a fetched page: the document's declared
@@ -334,6 +337,36 @@ mod tests {
         assert!(
             unmatched.is_none(),
             "an unmatched completion is dropped, not guessed"
+        );
+    }
+
+    #[test]
+    fn favicon_write_stores_png_bytes_under_their_digest() {
+        let mut canvas = Canvas::new();
+        let url = "https://icon.example/";
+        let key = canvas.visit(url);
+        let node = canvas.graph().get_node(key).unwrap().id;
+        let fetched = crate::session::encode_rgba_png(&[255, 0, 0, 255], 1, 1).unwrap();
+
+        let effects = apply_favicon(&mut canvas, node, url, &fetched);
+        let (hex, stored) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StoreImage { hex, bytes } => Some((hex, bytes)),
+                _ => None,
+            })
+            .expect("the favicon is durably stored");
+        assert_eq!(&stored[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(hex, &eidetic::Hash::of(stored).to_hex());
+        assert_eq!(
+            canvas
+                .graph()
+                .get_node(key)
+                .unwrap()
+                .favicon()
+                .unwrap()
+                .hex(),
+            *hex
         );
     }
 }

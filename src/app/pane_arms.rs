@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-use crate::action::{Action, Effect, PaneKind, SpaceRef};
+use crate::action::{Action, Effect, PaneKind, SpaceRef, WbAxis};
 use crate::observe::AppEvent;
 use crate::panes::{GraphId, InsertSide, PaneContent, PaneId, PaneNode};
 use super::pane_content;
@@ -255,5 +255,97 @@ impl App {
             } else {
                 vec![Effect::Redraw]
             }
+    }
+
+    pub(super) fn workbench_split_beside(&mut self, dragged: Uuid, target: Uuid, axis: WbAxis, after: bool) -> Vec<Effect> {
+            // The app vocabulary's axis maps onto Genet's at the platen
+            // call (the one place the tile contract is named).
+            let axis = match axis {
+                crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
+                crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
+            };
+            if self
+                .workbench
+                .split_beside_axis(dragged, target, axis, after)
+            {
+                self.events.push(AppEvent::WorkbenchSplit);
+                vec![Effect::SaveSession, Effect::Redraw]
+            } else {
+                vec![Effect::Redraw]
+            }
+    }
+
+    pub(super) fn workbench_split_out(&mut self, dragged: Uuid, axis: WbAxis, after: bool) -> Vec<Effect> {
+            let axis = match axis {
+                crate::action::WbAxis::Row => genet_host_api::tile::SplitAxis::Row,
+                crate::action::WbAxis::Column => genet_host_api::tile::SplitAxis::Column,
+            };
+            if self.workbench.split_out(dragged, axis, after) {
+                self.events.push(AppEvent::WorkbenchSplit);
+                vec![Effect::SaveSession, Effect::Redraw]
+            } else {
+                vec![Effect::Redraw]
+            }
+    }
+
+    pub(super) fn workbench_stack_onto(&mut self, dragged: Uuid, target: Uuid) -> Vec<Effect> {
+            if self.workbench.move_to_slot_of(dragged, target) {
+                self.events.push(AppEvent::WorkbenchStacked);
+                vec![Effect::SaveSession, Effect::Redraw]
+            } else {
+                vec![Effect::Redraw]
+            }
+    }
+
+    pub(super) fn close_workbench_tile(&mut self) -> Vec<Effect> {
+            let Some(member) = self.canvas.focused_member() else {
+                return vec![Effect::Redraw];
+            };
+            if self.workbench.close_tile(member) {
+                self.events.push(AppEvent::WorkbenchTileClosed);
+                vec![Effect::SaveSession, Effect::Redraw]
+            } else {
+                vec![Effect::Redraw]
+            }
+    }
+
+    pub(super) fn toggle_maximize_pane(&mut self) -> Vec<Effect> {
+            // Maximize is a PRIMARY view state (a lens's walk ignores it);
+            // a lens pane no-ops honestly instead of setting a flag its
+            // window would never show.
+            if let Some(active) = self.active_pane
+                && self.space_of(active) == Some(SpaceRef::Primary)
+            {
+                self.maximized = (self.maximized != Some(active)).then_some(active);
+            }
+            vec![Effect::Redraw]
+    }
+
+    pub(super) fn set_active_pane_divider(&mut self, ratio: f32) -> Vec<Effect> {
+            let Some((active, space)) = self
+                .active_pane
+                .and_then(|a| self.space_of(a).map(|s| (a, s)))
+            else {
+                return vec![Effect::Redraw];
+            };
+            let Some(layout) = self.space_mut(space) else {
+                return vec![Effect::Redraw];
+            };
+            let Some(mut path) = crate::pane::path_of(layout, active) else {
+                return vec![Effect::Redraw];
+            };
+            // The active leaf's parent split holds the divider.
+            path.pop();
+            if layout.set_split_ratio(&path, ratio) {
+                vec![Effect::SaveSession, Effect::Redraw]
+            } else {
+                vec![Effect::Redraw]
+            }
+    }
+
+    pub(super) fn new_window(&mut self) -> Vec<Effect> {
+            let ordinal = self.seed_lens_space();
+            self.events.push(AppEvent::WindowOpened);
+            vec![Effect::OpenWindow { ordinal }, Effect::Redraw]
     }
 }
