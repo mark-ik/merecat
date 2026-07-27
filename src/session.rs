@@ -191,8 +191,20 @@ pub fn migrate_flat_layout(data_root: &Path, store: &mut ManifestStore) -> Optio
 /// corrupt file).
 pub fn load_session_graph(data_root: &Path) -> Option<Graph> {
     let graph_file = data_root.join(session_graph_store::GRAPH_FILE);
-    match session_graph_store::load(&graph_file) {
-        Ok(Some(graph)) => {
+    match session_graph_store::load_snapshot(&graph_file) {
+        Ok(Some(mut snapshot)) => {
+            // Externalize any pre-phase-2 inline imagery BEFORE materializing:
+            // conversion keeps references only, so pixels left here would be
+            // dropped silently. One-time; a snapshot already externalized has
+            // nothing to do.
+            let migrated = externalize_legacy_images(&mut snapshot, data_root);
+            let graph = mere::kernel::graph::Graph::from_snapshot(&snapshot);
+            if migrated > 0 {
+                // Re-save immediately so the pixels leave `graph.json` even if
+                // the session never saves again.
+                tracing::info!(migrated, "externalized legacy inline node imagery");
+                save_session_graph(data_root, &graph);
+            }
             tracing::info!(path = ?graph_file, "session graph restored");
             Some(graph)
         }
@@ -204,6 +216,59 @@ pub fn load_session_graph(data_root: &Path) -> Option<Graph> {
     }
 }
 
+/// Move a legacy snapshot's inline image bytes into the session blob
+/// directory, leaving references on the nodes. Returns how many blobs were
+/// written.
+///
+/// The file-sidecar counterpart of `session_runtime::image_store::
+/// migrate_legacy_images`, which needs an eidetic `Store` this host does not
+/// have. Same digest and same `<hex>` key, so the two agree.
+///
+/// The legacy favicon is raw RGBA with no container; it is stored as-is and
+/// decoded back by dimensions, since the resolver only needs pixels.
+fn externalize_legacy_images(
+    snapshot: &mut mere::kernel::persistence::GraphSnapshot,
+    data_root: &Path,
+) -> usize {
+    use mere::kernel::types::{ImageRef, ImageRole};
+
+    let mut written = 0usize;
+    for node in &mut snapshot.nodes {
+        if let Some(png) = node.legacy_thumbnail_png.take() {
+            let digest = *eidetic::Hash::of(&png).as_bytes();
+            let image = ImageRef::new(
+                digest,
+                node.legacy_thumbnail_width,
+                node.legacy_thumbnail_height,
+            );
+            save_image_blob(data_root, &image.hex(), &png);
+            node.images.insert(ImageRole::Preview, image);
+            node.legacy_thumbnail_width = 0;
+            node.legacy_thumbnail_height = 0;
+            written += 1;
+        }
+        if let Some(rgba) = node.legacy_favicon_rgba.take() {
+            let digest = *eidetic::Hash::of(&rgba).as_bytes();
+            let image = ImageRef::new(
+                digest,
+                node.legacy_favicon_width,
+                node.legacy_favicon_height,
+            );
+            save_image_blob(data_root, &image.hex(), &rgba);
+            node.images.insert(ImageRole::Favicon, image);
+            node.legacy_favicon_width = 0;
+            node.legacy_favicon_height = 0;
+            written += 1;
+        }
+    }
+    debug_assert_eq!(
+        snapshot.legacy_image_count(),
+        0,
+        "every legacy image must be externalized before the snapshot materializes"
+    );
+    written
+}
+
 /// Persist the session graph at the flat `graph.json`. Best-effort: a write
 /// failure is logged, not fatal. Run after each enrichment (so a crash loses
 /// nothing) and on close.
@@ -212,6 +277,43 @@ pub fn save_session_graph(data_root: &Path, graph: &Graph) {
     if let Err(err) = session_graph_store::save(&graph_file, graph) {
         tracing::warn!(%err, path = ?graph_file, "failed to persist the session graph");
     }
+}
+
+/// The session's image-blob directory: `<session>/images/<hex>`.
+///
+/// After the node-image externalization the graph carries ~40-byte references
+/// and the pixels live out of line. Turnstone's session persistence is
+/// file-sidecar shaped (`graph.json`, `facets.json`), so its blob store is a
+/// directory of the same shape rather than the eidetic-backed
+/// `session_runtime::image_store` — same content-addressed `<hex>` key, so the
+/// two converge cleanly if this session ever gains a real store.
+fn images_dir(data_root: &Path) -> std::path::PathBuf {
+    data_root.join("images")
+}
+
+/// Persist one image blob under its digest hex. Best-effort, like the graph:
+/// a lost favicon re-fetches, so a write failure is logged, not fatal.
+pub fn save_image_blob(data_root: &Path, hex: &str, bytes: &[u8]) {
+    let dir = images_dir(data_root);
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%err, path = ?dir, "failed to create the image directory");
+        return;
+    }
+    let path = dir.join(hex);
+    // Content-addressed: identical bytes are the same file, so an existing
+    // blob needs no rewrite.
+    if path.exists() {
+        return;
+    }
+    if let Err(err) = std::fs::write(&path, bytes) {
+        tracing::warn!(%err, path = ?path, "failed to persist an image blob");
+    }
+}
+
+/// Read one image blob back, or `None` when it is absent (swept, not yet
+/// fetched, or a reference that outlived its blob).
+pub fn load_image_blob(data_root: &Path, hex: &str) -> Option<Vec<u8>> {
+    std::fs::read(images_dir(data_root).join(hex)).ok()
 }
 
 /// Restore the persisted per-node facet store (`facets.json`), if one exists.

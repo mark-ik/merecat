@@ -350,10 +350,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
             "Layout: Spiral",
             Action::SetLayoutStrategy(Some("phyllotaxis.default")),
         ),
-        (
-            "Layout: Force-directed",
-            Action::SetLayoutStrategy(None),
-        ),
+        ("Layout: Force-directed", Action::SetLayoutStrategy(None)),
         ("Toggle isometric view", Action::ToggleIsometric),
         ("Toggle height-by-degree", Action::ToggleHeightByDegree),
         ("Toggle size-by-recency", Action::ToggleSizeByRecency),
@@ -365,9 +362,18 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ("Open Roster pane", Action::SummonPane(PaneKind::Roster)),
         ("Open Trail pane", Action::SummonPane(PaneKind::Trail)),
         ("Open Gloss pane", Action::SummonPane(PaneKind::Gloss)),
-        ("Open Inspector pane", Action::SummonPane(PaneKind::Inspector)),
-        ("Open Workbench pane", Action::SummonPane(PaneKind::Workbench)),
-        ("Open Apparatus pane", Action::SummonPane(PaneKind::Apparatus)),
+        (
+            "Open Inspector pane",
+            Action::SummonPane(PaneKind::Inspector),
+        ),
+        (
+            "Open Workbench pane",
+            Action::SummonPane(PaneKind::Workbench),
+        ),
+        (
+            "Open Apparatus pane",
+            Action::SummonPane(PaneKind::Apparatus),
+        ),
         ("Open Overmap pane", Action::SummonPane(PaneKind::Overmap)),
         ("New window", Action::NewWindow),
         ("Tear out pane", Action::TearOutActivePane),
@@ -399,6 +405,11 @@ pub enum Effect {
         owner_url: String,
         url: String,
     },
+    /// Persist one content-addressed image blob under its digest hex.
+    /// The node already carries the reference and the canvas already has the
+    /// decoded pixels, so this is durability only: dropping it costs a
+    /// re-fetch, never correctness.
+    StoreImage { hex: String, bytes: Vec<u8> },
     /// Persist the session through the persistence port.
     SaveSession,
     /// Spawn a live document session for `node` at `url` through the
@@ -426,7 +437,10 @@ pub enum Effect {
     /// whole directory to the manifest trash via `App::apply_trash`, and
     /// adopts `next` WITHOUT the departing save (a trashed session must not
     /// be resurrected as a zombie directory by a post-trash save).
-    TrashSession { closing: crate::panes::SessionId, next: crate::panes::SessionId },
+    TrashSession {
+        closing: crate::panes::SessionId,
+        next: crate::panes::SessionId,
+    },
     /// The projection is stale; present another frame.
     Redraw,
 }

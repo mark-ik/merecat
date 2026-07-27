@@ -7,17 +7,16 @@
 use std::sync::mpsc::Receiver;
 
 use fetch::{FetchCommand, FetchUpdate};
-use inker::{SessionSpawnRequest, SessionClick};
+use inker::{SessionClick, SessionSpawnRequest};
 
 use crate::action::{Action, Effect, Update};
-use crate::panes::PaneContent;
 use crate::browse;
+use crate::panes::PaneContent;
 use crate::session;
 
 use super::Shell;
 
 impl Shell {
-
     /// The effect runner: the one place effects meet ports.
     pub(super) fn run_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
@@ -27,6 +26,9 @@ impl Shell {
             }
             match effect {
                 Effect::SaveSession => self.save_session(),
+                Effect::StoreImage { hex, bytes } => {
+                    session::save_image_blob(&self.app.session_dir(), &hex, &bytes);
+                }
                 // The bin port: stage the record; the actor answers with the
                 // refreshed list (folded on the next wake).
                 Effect::RecordDeleted { record } => {
@@ -56,7 +58,9 @@ impl Shell {
                         .recv_timeout(std::time::Duration::from_millis(1500))
                         .is_err()
                     {
-                        tracing::warn!("bin release ack timed out; attempting the trash move anyway");
+                        tracing::warn!(
+                            "bin release ack timed out; attempting the trash move anyway"
+                        );
                     }
                     self.app.apply_trash(closing);
                     self.content_sessions.clear();

@@ -210,9 +210,23 @@ pub fn apply_favicon(
     let Some(decoded) = genet_layout::decode_image_bytes(bytes) else {
         return Vec::new();
     };
-    if canvas.set_node_favicon_for(node, decoded.rgba, decoded.width, decoded.height) {
+    // The graph carries a content-addressed reference; the pixels go to the
+    // canvas cache (so the icon paints this frame) and the original bytes to
+    // the session's blob directory (so it survives a restart). The digest is
+    // over the fetched bytes, matching what the blob is stored under.
+    let digest = *eidetic::Hash::of(bytes).as_bytes();
+    let image = mere::kernel::types::ImageRef::new(digest, decoded.width, decoded.height);
+    if canvas.set_node_favicon_for(node, image) {
+        canvas.register_resolved_image(digest, decoded.rgba, decoded.width, decoded.height);
         tracing::info!(url = %owner_url, "node favicon enriched from the page");
-        vec![Effect::SaveSession, Effect::Redraw]
+        vec![
+            Effect::StoreImage {
+                hex: image.hex(),
+                bytes: bytes.to_vec(),
+            },
+            Effect::SaveSession,
+            Effect::Redraw,
+        ]
     } else {
         Vec::new()
     }
@@ -317,6 +331,9 @@ mod tests {
             },
             &mut pending,
         );
-        assert!(unmatched.is_none(), "an unmatched completion is dropped, not guessed");
+        assert!(
+            unmatched.is_none(),
+            "an unmatched completion is dropped, not guessed"
+        );
     }
 }

@@ -45,10 +45,8 @@ impl App {
             Some(id) => (id, false),
             None => (Self::mint_session(&data_root, &mut sessions), true),
         };
-        let identity = crate::identity::load_or_create_root(
-            &data_root,
-            &crate::identity::default_vault_dir(),
-        );
+        let identity =
+            crate::identity::load_or_create_root(&data_root, &crate::identity::default_vault_dir());
         let root = identity::IdentityProvider::master_public_key(identity.as_ref()).to_bytes();
         let mut app = Self {
             canvas: Canvas::new(),
@@ -301,6 +299,12 @@ impl App {
         if let Some(score) = session::load_projection_score(&sdir) {
             self.canvas.restore_projection_score(score);
         }
+        // Preview imagery lives out of the graph now (node-image
+        // externalization): the nodes carry references, so the blobs are read
+        // back and decoded into the canvas's paint cache. A missing or
+        // undecodable blob just does not paint and re-fetches on the next
+        // visit — pixels are experience, not truth.
+        restore_node_images(&mut self.canvas, &sdir);
         // The facet store (`facets.json`): pruned to the live graph's nodes
         // (a deleted node's facets go with it), then the arrangement.* family
         // re-dresses the canvas — the durable layout, since the graph itself
@@ -340,8 +344,12 @@ impl App {
         // The denizen runtime derives from the binding facets (agency) + the
         // graph's `Node.nested` pointers (structure) + the nested logs.
         self.pending_install = None;
-        self.denizens =
-            crate::denizen::rebuild(&self.facets, self.canvas.graph(), &sdir, self.identity.as_ref());
+        self.denizens = crate::denizen::rebuild(
+            &self.facets,
+            self.canvas.graph(),
+            &sdir,
+            self.identity.as_ref(),
+        );
         // One-time heal for bindings written before the containment ruling:
         // move the world pointer onto the node (journaled through the spine)
         // and rewrite the facet without it.
@@ -489,5 +497,111 @@ impl App {
                 self.browser.entry(id).content_on = on;
             }
         }
+    }
+
+    pub(super) fn recover_session(&mut self, id: SessionId) -> Vec<Effect> {
+        // Overmap O3 recovery: the trashed directory moves back whole
+        // (graph + facets + bin), the manifest re-lists, and the
+        // ordinary switch adopts it — same identity by construction.
+        match self.sessions.restore_from_trash(id) {
+            Ok(true) => {
+                self.trash = self.sessions.list_trash();
+                self.events
+                    .push(AppEvent::SessionRecovered(self.session_label(id)));
+                vec![Effect::SwitchSession { id }]
+            }
+            Ok(false) => {
+                tracing::warn!(session = %id.as_uuid(), "no trash entry to recover");
+                vec![Effect::Redraw]
+            }
+            Err(err) => {
+                tracing::warn!(%err, "failed to recover the trashed session");
+                vec![Effect::Redraw]
+            }
+        }
+    }
+
+    pub(super) fn close_session(&mut self) -> Vec<Effect> {
+        // Trash the current session, then land on the newest remaining
+        // one; if it was the last, mint a fresh empty session. Either
+        // way the switch effect saves nothing for the trashed session
+        // (it is already gone) and adopts the target.
+        let closing = self.session_id;
+        let next = self
+            .sessions
+            .iter()
+            .filter(|(id, _)| *id != closing)
+            .max_by_key(|(_, m)| m.updated_at)
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| Self::mint_session(&self.data_root, &mut self.sessions));
+        // The disk half (bin release + trash move + adopt-without-save)
+        // is ordering the SHELL owns — see Effect::TrashSession.
+        vec![Effect::TrashSession { closing, next }]
+    }
+
+    pub(super) fn begin_rename_session(&mut self) -> Vec<Effect> {
+        // Seed empty (the omnibar has no selection, so a seeded label
+        // could not be replaced by typing); the current label shows in
+        // the switcher, and an empty commit clears back to it.
+        self.omnibar = OmnibarState {
+            open: true,
+            mode: crate::ui::OmnibarMode::RenameSession(self.session_id),
+            ..OmnibarState::default()
+        };
+        self.focus = FocusTarget::Chrome;
+        let actions = self.available_actions();
+        recompute_suggestions(&mut self.omnibar, &self.canvas, &actions);
+        self.events.push(AppEvent::OmnibarOpened);
+        vec![Effect::Redraw]
+    }
+
+    pub(super) fn rename_session(&mut self, id: SessionId, name: String) -> Vec<Effect> {
+        let name = name.trim().to_string();
+        let applied = self.sessions.update(id, |m| {
+            m.display_name = (!name.is_empty()).then(|| name.clone());
+        });
+        if applied {
+            let _ = self.sessions.flush_dirty();
+            self.events
+                .push(AppEvent::SessionRenamed(self.session_label(id)));
+        }
+        vec![Effect::Redraw]
+    }
+
+    pub(super) fn empty_recycle_bin(&mut self) -> Vec<Effect> {
+        // Athanor's oven, on command: the bin actor clears its store
+        // and answers with the empty list (which refreshes the mirror).
+        // A no-op when the bin is already empty (honest — no event).
+        if self.removed.is_empty() {
+            return vec![Effect::Redraw];
+        }
+        self.events
+            .push(AppEvent::RecycleBinEmptied(self.removed.len()));
+        vec![Effect::EmptyRecycleBin, Effect::Redraw]
+    }
+}
+
+/// Load and decode every image blob the graph's nodes reference, registering
+/// the pixels with the canvas so they paint.
+///
+/// Content-addressed, so a favicon shared by many nodes decodes once.
+fn restore_node_images(canvas: &mut mere::canvas::Canvas, sdir: &std::path::Path) {
+    let refs: Vec<mere::kernel::types::ImageRef> = canvas
+        .graph()
+        .nodes()
+        .flat_map(|(_, node)| node.images.values().copied())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    for image in refs {
+        if !seen.insert(image.digest) || canvas.has_resolved_image(&image.digest) {
+            continue;
+        }
+        let Some(bytes) = session::load_image_blob(sdir, &image.hex()) else {
+            continue;
+        };
+        let Some(decoded) = genet_layout::decode_image_bytes(&bytes) else {
+            continue;
+        };
+        canvas.register_resolved_image(image.digest, decoded.rgba, decoded.width, decoded.height);
     }
 }
