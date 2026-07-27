@@ -92,6 +92,9 @@ enum HubCommand {
         base_token: Vec<u8>,
         source: String,
     },
+    Reload {
+        registration: u64,
+    },
     Unregister {
         registration: u64,
     },
@@ -104,6 +107,7 @@ enum HubEvent {
         source: String,
         binding: DocumentBinding,
     },
+    Reloaded(DocumentBinding),
     Stale,
     Rejected(String),
     Revoked(String),
@@ -317,6 +321,16 @@ fn run_hub(mut retained: RetainedEndpointSession, commands: Receiver<HubCommand>
                     &wake,
                 );
             }
+            Ok(HubCommand::Reload { registration }) => {
+                reload_subscriber(
+                    &mut retained,
+                    mounted.as_ref(),
+                    &mut bindings,
+                    &subscribers,
+                    registration,
+                    &wake,
+                );
+            }
             Ok(HubCommand::Unregister { registration }) => {
                 subscribers.remove(&registration);
                 if subscribers.is_empty() {
@@ -468,6 +482,34 @@ fn save_from_subscriber(
     }
 }
 
+fn reload_subscriber(
+    retained: &mut RetainedEndpointSession,
+    session: Option<&ProjectionSession>,
+    bindings: &mut BTreeMap<String, DocumentBinding>,
+    subscribers: &BTreeMap<u64, Subscriber>,
+    registration: u64,
+    wake: &Wake,
+) {
+    let Some(subscriber) = subscribers.get(&registration) else {
+        return;
+    };
+    let Some(session) = session else {
+        send_event(
+            subscriber,
+            HubEvent::Rejected("Knot projection is not mounted".into()),
+            wake,
+        );
+        return;
+    };
+    match resolve_binding(retained, session, &subscriber.address) {
+        Ok(binding) => {
+            bindings.insert(subscriber.address.clone(), binding.clone());
+            send_event(subscriber, HubEvent::Reloaded(binding), wake);
+        }
+        Err(error) => send_event(subscriber, HubEvent::Revoked(error), wake),
+    }
+}
+
 fn refresh_subscribers(
     retained: &mut RetainedEndpointSession,
     session: &ProjectionSession,
@@ -519,6 +561,7 @@ fn send_event(subscriber: &Subscriber, event: HubEvent, wake: &Wake) {
 enum AuthoringStatus {
     Current,
     Saving,
+    Reloading,
     Stale,
     Rejected,
     Revoked,
@@ -529,6 +572,7 @@ struct AuthoringState {
     status: AuthoringStatus,
     detail: String,
     save_requested: bool,
+    reload_requested: bool,
     width: u32,
     height: u32,
 }
@@ -555,6 +599,7 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
         AuthoringStatus::Revoked => "closed".to_string(),
         AuthoringStatus::Stale => "stale; reload or resolve".to_string(),
         AuthoringStatus::Saving => "saving".to_string(),
+        AuthoringStatus::Reloading => "reloading".to_string(),
         AuthoringStatus::Rejected => state.detail.clone(),
         AuthoringStatus::Current if state.editor.is_dirty() => "unsaved".to_string(),
         AuthoringStatus::Current => "saved".to_string(),
@@ -597,6 +642,13 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
                 },
             )
             .attr("class", "knot-save"),
+            button(
+                "Reload",
+                |state: &mut AuthoringState, _click: PointerClick| {
+                    state.reload_requested = true;
+                },
+            )
+            .attr("class", "knot-reload"),
         ),
     )
     .attr("class", "knot-toolbar");
@@ -629,6 +681,7 @@ pub struct KnotDocumentSession {
     address: String,
     base_token: Vec<u8>,
     events: Receiver<HubEvent>,
+    revision_refreshes: u64,
     dom: DomHandle,
     runner: AuthoringRunner,
 }
@@ -643,6 +696,7 @@ impl KnotDocumentSession {
             status: AuthoringStatus::Current,
             detail: String::new(),
             save_requested: false,
+            reload_requested: false,
             width: viewport.0.max(1),
             height: viewport.1.max(1),
         };
@@ -657,6 +711,7 @@ impl KnotDocumentSession {
             address,
             base_token,
             events: opened.events,
+            revision_refreshes: 0,
             dom,
             runner,
         }
@@ -682,6 +737,7 @@ impl KnotDocumentSession {
             AuthoringStatus::Current if self.runner.state().editor.is_dirty() => "unsaved",
             AuthoringStatus::Current => "saved",
             AuthoringStatus::Saving => "saving",
+            AuthoringStatus::Reloading => "reloading",
             AuthoringStatus::Stale => "stale",
             AuthoringStatus::Rejected => "rejected",
             AuthoringStatus::Revoked => "revoked",
@@ -691,7 +747,7 @@ impl KnotDocumentSession {
     fn save(&mut self) {
         if matches!(
             self.runner.state().status,
-            AuthoringStatus::Saving | AuthoringStatus::Revoked
+            AuthoringStatus::Saving | AuthoringStatus::Reloading | AuthoringStatus::Revoked
         ) || !self.runner.state().editor.is_dirty()
         {
             return;
@@ -715,10 +771,38 @@ impl KnotDocumentSession {
         }
     }
 
+    fn reload(&mut self) {
+        if matches!(
+            self.runner.state().status,
+            AuthoringStatus::Saving | AuthoringStatus::Reloading | AuthoringStatus::Revoked
+        ) {
+            return;
+        }
+        if self
+            .hub
+            .commands
+            .send(HubCommand::Reload {
+                registration: self.registration,
+            })
+            .is_ok()
+        {
+            self.runner.update(|state| {
+                state.status = AuthoringStatus::Reloading;
+                state.detail.clear();
+            });
+        } else {
+            self.runner.update(|state| {
+                state.status = AuthoringStatus::Rejected;
+                state.detail = "Knot worker stopped".into();
+            });
+        }
+    }
+
     fn drain_events(&mut self) {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 HubEvent::Remote(binding) => {
+                    self.revision_refreshes += 1;
                     if binding.editable.base_token == self.base_token {
                         continue;
                     }
@@ -737,6 +821,16 @@ impl KnotDocumentSession {
                             state.detail.clear();
                         });
                     }
+                }
+                HubEvent::Reloaded(binding) => {
+                    self.base_token = binding.editable.base_token;
+                    let source = binding.editable.source;
+                    let address = self.address.clone();
+                    self.runner.update(|state| {
+                        state.editor = KnotEditor::scratch(address, source);
+                        state.status = AuthoringStatus::Current;
+                        state.detail.clear();
+                    });
                 }
                 HubEvent::Saved { source, binding } => {
                     self.base_token = binding.editable.base_token;
@@ -813,6 +907,10 @@ impl DocumentSession<Scene> for KnotDocumentSession {
         if self.runner.state().save_requested {
             self.runner.update(|state| state.save_requested = false);
             self.save();
+        }
+        if self.runner.state().reload_requested {
+            self.runner.update(|state| state.reload_requested = false);
+            self.reload();
         }
         SessionClick::Handled
     }
@@ -911,6 +1009,18 @@ mod tests {
         }
     }
 
+    fn wait_for_refresh(session: &mut KnotDocumentSession, previous: u64) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.revision_refreshes == previous {
+            session.drain_events();
+            assert!(
+                Instant::now() < deadline,
+                "endpoint revision bell did not reach the dirty editor"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn type_text(session: &mut KnotDocumentSession, text: &str) {
         assert!(session.dispatch_key(KeyEvent::new(Key::Character(text.into()))));
     }
@@ -961,6 +1071,15 @@ mod tests {
                 .unwrap();
 
             focus_editor(first);
+            type_text(first, "discard");
+            assert!(first.dispatch_key(KeyEvent::with_mods(
+                Key::Character("z".into()),
+                Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+            )));
+            assert_eq!(first.runner.state().editor.source(), "# Field\n");
             type_text(first, "First ");
             let before_preedit = first.runner.state().editor.source().to_string();
             assert!(first.dispatch_key(KeyEvent::new(Key::Composition(
@@ -992,6 +1111,26 @@ mod tests {
                 "# Field\nFirst 仮名",
                 "the stale local buffer must not overwrite the accepted save"
             );
+
+            second.reload();
+            wait_for_status(second, "saved");
+            assert_eq!(second.runner.state().editor.source(), "# Field\nFirst 仮名");
+            focus_editor(second);
+            type_text(second, " after churn");
+            let previous_refreshes = second.revision_refreshes;
+            fs::write(root.join("other.knot"), "# Other\n").unwrap();
+            wait_for_refresh(second, previous_refreshes);
+            assert_eq!(
+                second.status(),
+                "unsaved",
+                "an unrelated revision must retain the local buffer"
+            );
+            save_shortcut(second);
+            wait_for_status(second, "saved");
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                "# Field\nFirst 仮名 after churn"
+            );
         }
 
         {
@@ -1004,7 +1143,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 reopened.runner.state().editor.source(),
-                "# Field\nFirst 仮名"
+                "# Field\nFirst 仮名 after churn"
             );
         }
 
