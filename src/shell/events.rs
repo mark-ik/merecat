@@ -172,6 +172,10 @@ impl ApplicationHandler for Shell {
             // rides directly on state and only the commit lowers to an
             // Action (`OmnibarInsert`, the same path a future paste takes).
             WindowEvent::Ime(ime) => {
+                if !self.app.omnibar.open && self.deliver_knot_ime(&ime) {
+                    self.request_redraw();
+                    return;
+                }
                 if !self.app.omnibar.open {
                     return;
                 }

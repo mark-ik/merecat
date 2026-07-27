@@ -278,6 +278,15 @@ impl Shell {
         content_engines.register(Box::new(genet_documents::LiverySessionEngine::new(
             LocalFetcher,
         )));
+        let knot_proxy = proxy.clone();
+        let knot_wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = knot_proxy.send_event(());
+        });
+        match crate::knot_authoring::KnotAuthoringEngine::from_env(knot_wake) {
+            Ok(Some(engine)) => content_engines.register(Box::new(engine)),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "Knot authoring is unavailable"),
+        }
 
         let mut shell = Self {
             app,
@@ -680,7 +689,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-
 
 
 

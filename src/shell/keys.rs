@@ -34,6 +34,43 @@ fn content_scroll_key(key: &WinitKey, shift: bool) -> Option<SessionScrollKey> {
 }
 
 impl Shell {
+    fn deliver_knot_key(&mut self, key: &WinitKey) -> bool {
+        let crate::surface::FocusTarget::Content(node) = self.app.focus else {
+            return false;
+        };
+        let Some(session) = self.content_sessions.get_mut(&node) else {
+            return false;
+        };
+        let Some(editor) = session
+            .as_any()
+            .downcast_mut::<crate::knot_authoring::KnotDocumentSession>()
+        else {
+            return false;
+        };
+        let modifiers = cambium::Modifiers {
+            shift: self.shift,
+            ctrl: self.ctrl,
+            alt: self.alt,
+            meta: false,
+        };
+        cambium_winit::key_event_from_winit(key, modifiers)
+            .is_some_and(|event| editor.dispatch_key(event))
+    }
+
+    pub(super) fn deliver_knot_ime(&mut self, ime: &winit::event::Ime) -> bool {
+        let crate::surface::FocusTarget::Content(node) = self.app.focus else {
+            return false;
+        };
+        self.content_sessions
+            .get_mut(&node)
+            .and_then(|session| {
+                session
+                    .as_any()
+                    .downcast_mut::<crate::knot_authoring::KnotDocumentSession>()
+            })
+            .is_some_and(|editor| editor.dispatch_key(cambium_winit::ime_event_from_winit(ime)))
+    }
+
     /// Deliver an ephemeral key to the FOCUSED content session (the gesture
     /// law, exactly as the wheel does): scroll keys scroll the page, Escape
     /// blurs back to the canvas. Returns whether the key was consumed here, so
@@ -79,6 +116,10 @@ impl Shell {
     /// otherwise. Ephemeral content keys (scroll, blur) are delivered inline
     /// and consumed; everything else lowers to an Action through the spine.
     pub(super) fn on_key(&mut self, key: &WinitKey) {
+        if !self.app.omnibar.open && self.deliver_knot_key(key) {
+            self.request_redraw();
+            return;
+        }
         // Content-focused ephemeral keys take priority and never become
         // Actions (the gesture law). When one is consumed, no Action is
         // computed — the canvas view hotkeys stay suspended while a page reads.

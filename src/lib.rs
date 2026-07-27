@@ -18,6 +18,7 @@ mod denizen;
 mod identity;
 mod inspector_pane;
 mod inspector_view;
+mod knot_authoring;
 pub mod observe;
 mod overmap;
 mod pane;

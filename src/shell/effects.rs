@@ -98,6 +98,18 @@ impl Shell {
                 // failure — unroutable id, spawn error — surfaces as
                 // ContentFailed; a Requested node never silently spins.
                 Effect::SpawnContent { node, url } => {
+                    let pinned = self
+                        .app
+                        .browser
+                        .get(node)
+                        .and_then(|b| b.viewer_override.clone())
+                        .or_else(|| {
+                            (self
+                                .content_engines
+                                .contains(crate::knot_authoring::ENGINE_ID)
+                                && crate::knot_authoring::is_knot_address(&url))
+                            .then(|| crate::knot_authoring::ENGINE_ID.to_string())
+                        });
                     let request = inker::EngineRouteRequest {
                         workspace_id: inker::WorkspaceRouteId::new("turnstone"),
                         view: None,
@@ -106,11 +118,7 @@ impl Shell {
                         content_type: None,
                         // The settings row: a sidecar viewer override pins the
                         // route, so a respawn lands on the chosen lane.
-                        pinned_engine: self
-                            .app
-                            .browser
-                            .get(node)
-                            .and_then(|b| b.viewer_override.clone()),
+                        pinned_engine: pinned,
                     };
                     let decision = self.route_policy.route(&request);
                     let spawn = SessionSpawnRequest::new(&url)
