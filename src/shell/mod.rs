@@ -165,6 +165,9 @@ pub struct Shell {
     /// ContentStates tracks. Ports own handles; App holds data.
     content_engines: SessionRegistry<netrender::Scene>,
     content_sessions: std::collections::HashMap<uuid::Uuid, Box<dyn DocumentSession<netrender::Scene>>>,
+    /// Configured Knot destination for typed Inspector clips. The handle owns
+    /// neither file authority nor vault keys; it only queues endpoint intents.
+    knot_clip: Option<crate::knot_authoring::KnotClipHandle>,
     /// Mere's routing vocabulary over inker's engine rules: address -> engine id.
     route_policy: inker::EngineRoutePolicy,
     /// Monotonic epoch for the sessions' pump clock.
@@ -282,8 +285,12 @@ impl Shell {
         let knot_wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             let _ = knot_proxy.send_event(());
         });
+        let mut knot_clip = None;
         match crate::knot_authoring::KnotAuthoringEngine::from_env(knot_wake) {
-            Ok(Some(engine)) => content_engines.register(Box::new(engine)),
+            Ok(Some(engine)) => {
+                knot_clip = engine.clip_handle();
+                content_engines.register(Box::new(engine));
+            }
             Ok(None) => {}
             Err(error) => tracing::warn!(%error, "Knot authoring is unavailable"),
         }
@@ -309,6 +316,7 @@ impl Shell {
             height: 600,
             content_engines,
             content_sessions: std::collections::HashMap::new(),
+            knot_clip,
             route_policy: mere::routing::route_policy(),
             epoch: std::time::Instant::now(),
             pending_fetches: browse::PendingFetches::default(),
@@ -568,9 +576,43 @@ impl Shell {
                     }
                 }
             }
+            PaneContent::Inspector => {
+                if let Some(pane) = self.inspector_pane.as_mut()
+                    && pane
+                        .click(lx, ly, rw, rh)
+                        .into_iter()
+                        .any(|intent| {
+                            matches!(
+                                intent,
+                                crate::inspector_pane::InspectorIntent::ClipToKnot
+                            )
+                        })
+                {
+                    self.clip_focused_document_to_knot();
+                }
+            }
             _ => {}
         }
         out
+    }
+
+    fn clip_focused_document_to_knot(&mut self) {
+        let Some(handle) = self.knot_clip.clone() else {
+            return;
+        };
+        let Some(member) = self.app.canvas.focused_member() else {
+            return;
+        };
+        let Some(clip) = self
+            .content_sessions
+            .get(&member)
+            .and_then(|session| session.clip())
+        else {
+            return;
+        };
+        if let Err(error) = handle.insert(clip) {
+            tracing::warn!(%error, "Knot clip could not be queued");
+        }
     }
 
 
@@ -689,6 +731,5 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-
 
 

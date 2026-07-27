@@ -8,10 +8,10 @@
 
 use std::path::Path;
 
+use genet_winit_host::SurfaceHost;
 use image::ImageEncoder;
 use netrender::external_texture::ExternalTexturePlacement;
 use netrender::{ColorLoad, Scene};
-use genet_winit_host::SurfaceHost;
 
 use crate::panes::PaneContent;
 use crate::surface::SurfaceKind;
@@ -21,8 +21,6 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use super::{CompositeLayer, PlannedScene, Shell, pane_display_label};
 
 impl Shell {
-
-
     /// One pane's scene by kind, at `(rw, rh)`, through the shared retained
     /// runners — used by the primary render AND every lens window (rung 7
     /// depth: windows are pane hosts). The runner being shared is what makes
@@ -30,7 +28,12 @@ impl Shell {
     /// keeps its DOM, widget state, and scroll because the runner never moves.
     /// Trail renders real rows off graph truth (slice D); kinds without real
     /// content are labeled placeholders (slice C), honestly.
-    pub(super) fn pane_scene_by_kind(&mut self, content: Option<&PaneContent>, rw: u32, rh: u32) -> Scene {
+    pub(super) fn pane_scene_by_kind(
+        &mut self,
+        content: Option<&PaneContent>,
+        rw: u32,
+        rh: u32,
+    ) -> Scene {
         match content {
             Some(PaneContent::Trail) => {
                 let pane = self
@@ -55,21 +58,41 @@ impl Shell {
                 // section registry (unknown ids are ignored, so a config from
                 // a newer build degrades instead of failing).
                 let providers = crate::sections::resolve(&cfg.sections);
-                let pane = self
-                    .gloss_pane
-                    .get_or_insert_with(|| {
-                        crate::swatch_pane::SwatchPane::new(crate::swatch_pane::GLOSS_MINIMAP)
-                    });
+                let pane = self.gloss_pane.get_or_insert_with(|| {
+                    crate::swatch_pane::SwatchPane::new(crate::swatch_pane::GLOSS_MINIMAP)
+                });
                 pane.set_sections(providers);
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
             Some(PaneContent::Inspector) => {
-                // Detail sections over app truth; inert content.
+                let clip_source_available = self
+                    .app
+                    .canvas
+                    .focused_member()
+                    .and_then(|member| self.content_sessions.get(&member))
+                    .and_then(|session| session.clip())
+                    .is_some();
+                let clip_target = self
+                    .knot_clip
+                    .as_ref()
+                    .map(|handle| handle.target().to_string());
+                let clip_status = self
+                    .knot_clip
+                    .as_ref()
+                    .map(|handle| handle.status().label())
+                    .unwrap_or_else(|| "unconfigured".into());
                 let pane = self
                     .inspector_pane
                     .get_or_insert_with(crate::inspector_pane::InspectorPane::new);
-                pane.sync(&self.app, rw as f32, rh as f32);
+                pane.sync(
+                    &self.app,
+                    rw as f32,
+                    rh as f32,
+                    clip_target.as_deref(),
+                    clip_source_available,
+                    &clip_status,
+                );
                 pane.scene(rw, rh)
             }
             Some(PaneContent::Workbench) => {
@@ -99,11 +122,9 @@ impl Shell {
                 // Gloss does, off ITS OWN leaf: one renderer, one config shape,
                 // so the second host cost a resolve and a setter.
                 let providers = crate::sections::resolve(&cfg.sections);
-                let pane = self
-                    .overmap_pane
-                    .get_or_insert_with(|| {
-                        crate::swatch_pane::SwatchPane::new(crate::swatch_pane::OVERMAP_LINEAGE)
-                    });
+                let pane = self.overmap_pane.get_or_insert_with(|| {
+                    crate::swatch_pane::SwatchPane::new(crate::swatch_pane::OVERMAP_LINEAGE)
+                });
                 pane.set_sections(providers);
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
@@ -164,7 +185,10 @@ impl Shell {
         let mut scenes: Vec<PlannedScene> = Vec::with_capacity(surfaces.len());
         for surface in &surfaces {
             let rect = surface.rect;
-            let (rw, rh) = (rect.w.round().max(1.0) as u32, rect.h.round().max(1.0) as u32);
+            let (rw, rh) = (
+                rect.w.round().max(1.0) as u32,
+                rect.h.round().max(1.0) as u32,
+            );
             let (scene, clear) = match surface.kind {
                 crate::surface::SurfaceKind::Canvas => {
                     // Analytic layout strategies project through the host loop
@@ -199,9 +223,11 @@ impl Shell {
                     // One sync rebuilds every window's chrome projection (the
                     // one-state contract); this window paints ITS root.
                     let mut sizes = vec![(0usize, rw as f32, rh as f32)];
-                    sizes.extend(self.lens_windows.values().map(|lens| {
-                        (lens.ordinal + 1, lens.width as f32, lens.height as f32)
-                    }));
+                    sizes.extend(
+                        self.lens_windows
+                            .values()
+                            .map(|lens| (lens.ordinal + 1, lens.width as f32, lens.height as f32)),
+                    );
                     self.chrome.sync(&self.app, &sizes);
                     let scene = self.chrome.scene(0, rw, rh);
                     (scene, wgpu::Color::TRANSPARENT)
@@ -224,9 +250,13 @@ impl Shell {
         let layers: Vec<CompositeLayer> = scenes
             .iter()
             .map(|s| {
-                let (_tex, view) =
-                    host.core()
-                    .rasterize_for(s.id, &s.scene, s.dims.0, s.dims.1, ColorLoad::Clear(s.clear));
+                let (_tex, view) = host.core().rasterize_for(
+                    s.id,
+                    &s.scene,
+                    s.dims.0,
+                    s.dims.1,
+                    ColorLoad::Clear(s.clear),
+                );
                 CompositeLayer {
                     kind: s.kind,
                     view,
@@ -284,7 +314,6 @@ impl Shell {
             lens.window.request_redraw();
         }
     }
-
 }
 
 /// Decode a dropped image file into a face-sized PNG data-URI plus its traced
@@ -294,7 +323,10 @@ impl Shell {
 /// meerkat-harvest promotion), so the node collides at its picture.
 pub(super) fn decode_sprite(path: &Path) -> Option<(String, Vec<(f32, f32)>)> {
     const SPRITE_MAX: u32 = 256;
-    let rgba = image::open(path).ok()?.thumbnail(SPRITE_MAX, SPRITE_MAX).to_rgba8();
+    let rgba = image::open(path)
+        .ok()?
+        .thumbnail(SPRITE_MAX, SPRITE_MAX)
+        .to_rgba8();
     let (w, h) = rgba.dimensions();
     let hull = mere::canvas::sprite_hull::trace_sprite_hull(rgba.as_raw(), w, h);
     let mut png = Vec::new();
@@ -315,7 +347,13 @@ pub(super) fn decode_sprite(path: &Path) -> Option<(String, Vec<(f32, f32)>)> {
 /// target, read the pixels back, and encode a PNG at `path`. Composes the same
 /// layer list, each at its own placement, that the presented frame did, so the
 /// receipt matches what was shown (occlusion and all).
-pub(super) fn capture_composed(host: &SurfaceHost, layers: &[CompositeLayer], w: u32, h: u32, path: &Path) -> bool {
+pub(super) fn capture_composed(
+    host: &SurfaceHost,
+    layers: &[CompositeLayer],
+    w: u32,
+    h: u32,
+    path: &Path,
+) -> bool {
     let target = host.device().create_texture(&wgpu::TextureDescriptor {
         label: Some("turnstone scenario capture"),
         size: wgpu::Extent3d {

@@ -37,6 +37,9 @@ fetch = { package = "mere-fetch", git = "https://github.com/mark-ik/mere.git", b
 # root (session_graph_store's blessed single-session shape). App-side
 # material that moves here with the port, like fetch.
 session-runtime = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Host-neutral semantic clip lowering. Knot still owns mutation and recorded
+# provenance.
+mere-import = { package = "import", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen residency (participant gate B1): the authority gate over a denizen's
 # nested chartulary graph, plus the substrate types the host speaks to it in.
 servitor = { git = "https://github.com/mark-ik/mere.git", branch = "main" }

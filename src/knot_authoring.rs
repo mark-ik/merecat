@@ -10,9 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cambium::{
@@ -23,8 +23,9 @@ use genet_layout::{IncrementalLayout, ScrollOffsets};
 use genet_scripted_dom::{NodeId, ScriptedDom};
 use graphshell::client::{ResolvedContent, ResolvedPresentation};
 use graphshell::protocol::{
-    AdvertisedAction, CapabilityProfile, EDITABLE_TEXT_SAVE_INTENT, EditableTextV1, IntentResult,
-    PresentationCapability, ProjectionSession, SaveTextV1,
+    AdvertisedAction, CapabilityProfile, EDITABLE_TEXT_SAVE_INTENT, EditableTextV1,
+    InsertKnotClipV1, IntentResult, KNOT_CLIP_INSERT_INTENT, PresentationCapability,
+    ProjectionSession, SaveTextV1,
 };
 use graphshell::sessions::RetainedEndpointSession;
 use inker::{
@@ -71,7 +72,8 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 struct DocumentBinding {
     target: InstanceId,
-    action: AdvertisedAction,
+    save_action: AdvertisedAction,
+    clip_action: AdvertisedAction,
     editable: EditableTextV1,
 }
 
@@ -92,6 +94,11 @@ enum HubCommand {
         registration: u64,
         base_token: Vec<u8>,
         source: String,
+    },
+    InsertClip {
+        address: String,
+        clip: PendingClip,
+        status: Arc<Mutex<KnotClipStatus>>,
     },
     Reload {
         registration: u64,
@@ -122,6 +129,82 @@ struct Subscriber {
 struct KnotHub {
     commands: Sender<HubCommand>,
     next_registration: AtomicU64,
+}
+
+#[derive(Clone)]
+struct PendingClip {
+    source_url: String,
+    title: Option<String>,
+    selector: Option<String>,
+    knot_body: String,
+}
+
+/// Last known result of the configured Inspector clip destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KnotClipStatus {
+    Ready,
+    Sending,
+    Saved,
+    Stale,
+    Rejected(String),
+}
+
+impl KnotClipStatus {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Ready => "ready".into(),
+            Self::Sending => "clipping".into(),
+            Self::Saved => "clip saved".into(),
+            Self::Stale => "clip target changed; retry".into(),
+            Self::Rejected(reason) => reason.clone(),
+        }
+    }
+}
+
+/// UI-thread handle for the endpoint-owned clip action.
+#[derive(Clone)]
+pub struct KnotClipHandle {
+    hub: Arc<KnotHub>,
+    target: String,
+    status: Arc<Mutex<KnotClipStatus>>,
+}
+
+impl KnotClipHandle {
+    pub fn insert(&self, clip: inker::DocumentClip) -> Result<(), String> {
+        let fragment = mere_import::web_clip::fragment_from_text(
+            clip.source_url.clone(),
+            clip.title.clone(),
+            clip.text,
+            clip.selector.clone(),
+            clip.links,
+        );
+        let pending = PendingClip {
+            source_url: clip.source_url,
+            title: clip.title,
+            selector: clip.selector,
+            knot_body: mere_import::web_clip::fragment_to_knot_body(&fragment),
+        };
+        *self.status.lock().map_err(|_| "clip status poisoned")? = KnotClipStatus::Sending;
+        self.hub
+            .commands
+            .send(HubCommand::InsertClip {
+                address: self.target.clone(),
+                clip: pending,
+                status: self.status.clone(),
+            })
+            .map_err(|_| "Knot authoring worker is unavailable".to_string())
+    }
+
+    pub fn status(&self) -> KnotClipStatus {
+        self.status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_else(|_| KnotClipStatus::Rejected("clip status unavailable".into()))
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
 }
 
 impl KnotHub {
@@ -183,6 +266,7 @@ impl KnotHub {
 /// One configured endpoint shared by every open Knot document.
 pub struct KnotAuthoringEngine {
     hub: Arc<KnotHub>,
+    clip_target: Option<String>,
 }
 
 impl KnotAuthoringEngine {
@@ -229,7 +313,18 @@ impl KnotAuthoringEngine {
             }
         };
         let hub = KnotHub::connect(program, args, wake)?;
-        Ok(Some(Self { hub }))
+        let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
+            .ok()
+            .filter(|target| !target.trim().is_empty());
+        Ok(Some(Self { hub, clip_target }))
+    }
+
+    pub fn clip_handle(&self) -> Option<KnotClipHandle> {
+        self.clip_target.as_ref().map(|target| KnotClipHandle {
+            hub: self.hub.clone(),
+            target: target.clone(),
+            status: Arc::new(Mutex::new(KnotClipStatus::Ready)),
+        })
     }
 
     #[cfg(test)]
@@ -248,6 +343,7 @@ impl KnotAuthoringEngine {
                 ],
                 Arc::new(|| {}),
             )?,
+            clip_target: None,
         })
     }
 }
@@ -340,6 +436,22 @@ fn run_hub(mut retained: RetainedEndpointSession, commands: Receiver<HubCommand>
                     &wake,
                 );
             }
+            Ok(HubCommand::InsertClip {
+                address,
+                clip,
+                status,
+            }) => {
+                insert_clip(
+                    &mut retained,
+                    &mut mounted,
+                    &mut bindings,
+                    &subscribers,
+                    &address,
+                    clip,
+                    &status,
+                    &wake,
+                );
+            }
             Ok(HubCommand::Reload { registration }) => {
                 reload_subscriber(
                     &mut retained,
@@ -428,14 +540,22 @@ fn binding_from_presentation(
     if editable.address != address {
         return None;
     }
-    let action = presentation
+    let save_action = presentation
         .semantics
         .actions
-        .into_iter()
-        .find(|action| action.intent.0 == EDITABLE_TEXT_SAVE_INTENT)?;
+        .iter()
+        .find(|action| action.intent.0 == EDITABLE_TEXT_SAVE_INTENT)?
+        .clone();
+    let clip_action = presentation
+        .semantics
+        .actions
+        .iter()
+        .find(|action| action.intent.0 == KNOT_CLIP_INSERT_INTENT)?
+        .clone();
     Some(DocumentBinding {
         target,
-        action,
+        save_action,
+        clip_action,
         editable,
     })
 }
@@ -473,7 +593,7 @@ fn save_from_subscriber(
     let result = retained.invoke(
         session,
         binding.target,
-        &binding.action,
+        &binding.save_action,
         &SaveTextV1 {
             base_token,
             source: source.clone(),
@@ -499,6 +619,63 @@ fn save_from_subscriber(
         }
         Err(error) => send_event(subscriber, HubEvent::Rejected(error), wake),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_clip(
+    retained: &mut RetainedEndpointSession,
+    mounted: &mut Option<ProjectionSession>,
+    bindings: &mut BTreeMap<String, DocumentBinding>,
+    subscribers: &BTreeMap<u64, Subscriber>,
+    address: &str,
+    clip: PendingClip,
+    status: &Arc<Mutex<KnotClipStatus>>,
+    wake: &Wake,
+) {
+    let result = ensure_binding(retained, mounted, bindings, address).and_then(|binding| {
+        retained.invoke(
+            mounted
+                .as_ref()
+                .expect("ensure_binding mounted the session"),
+            binding.target,
+            &binding.clip_action,
+            &InsertKnotClipV1 {
+                base_token: binding.editable.base_token.clone(),
+                source_url: clip.source_url,
+                title: clip.title,
+                selector: clip.selector,
+                knot_body: clip.knot_body,
+            },
+        )
+    });
+    let next = match result {
+        Ok(IntentResult::Accepted) => retained
+            .wait_for_change()
+            .and_then(|_| {
+                resolve_binding(
+                    retained,
+                    mounted.as_ref().expect("session remains mounted"),
+                    address,
+                )
+            })
+            .map(|current| {
+                bindings.insert(address.to_string(), current);
+                KnotClipStatus::Saved
+            })
+            .unwrap_or_else(KnotClipStatus::Rejected),
+        Ok(IntentResult::Stale { .. }) => KnotClipStatus::Stale,
+        Ok(IntentResult::Rejected { reason }) => KnotClipStatus::Rejected(reason),
+        Err(error) => KnotClipStatus::Rejected(error),
+    };
+    if let Ok(mut current) = status.lock() {
+        *current = next;
+    }
+    if matches!(status.lock().as_deref(), Ok(KnotClipStatus::Saved))
+        && let Some(session) = mounted.as_ref()
+    {
+        refresh_subscribers(retained, session, bindings, subscribers, wake);
+    }
+    wake();
 }
 
 fn reload_subscriber(
@@ -1054,6 +1231,21 @@ mod tests {
         )));
     }
 
+    fn wait_for_clip_status(handle: &KnotClipHandle, expected: KnotClipStatus) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let actual = handle.status();
+            if actual == expected {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "expected clip status {expected:?}, found {actual:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn knot_addresses_are_selected_without_claiming_other_files() {
         assert!(is_knot_address("file:///C:/notes/one.knot"));
@@ -1166,6 +1358,45 @@ mod tests {
                 "# Field\nFirst 仮名 after churn"
             );
         }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "receipt: set KNOT_ENDPOINT_TEST_BIN to a built Mere knot_endpoint"]
+    fn inspector_clip_crosses_the_typed_endpoint_action() {
+        let program = std::env::var_os("KNOT_ENDPOINT_TEST_BIN")
+            .expect("KNOT_ENDPOINT_TEST_BIN must name the real Knot endpoint");
+        let root =
+            std::env::temp_dir().join(format!("turnstone-knot-clip-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("field.knot");
+        fs::write(&path, "# Field\n").unwrap();
+        let address = file_address(&path);
+
+        let engine = KnotAuthoringEngine::connect_directory(program, &root, 4096).unwrap();
+        let handle = KnotClipHandle {
+            hub: engine.hub.clone(),
+            target: address,
+            status: Arc::new(Mutex::new(KnotClipStatus::Ready)),
+        };
+        handle
+            .insert(inker::DocumentClip {
+                source_url: "https://example.test/report".into(),
+                title: Some("The report".into()),
+                text: "A useful finding.".into(),
+                selector: None,
+                links: vec!["https://example.test/source".into()],
+            })
+            .unwrap();
+        wait_for_clip_status(&handle, KnotClipStatus::Saved);
+
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("```knot.clip.provenance"));
+        assert!(saved.contains(r#""source_url":"https://example.test/report""#));
+        assert!(saved.contains("# The report"));
+        assert!(saved.contains("A useful finding."));
+        assert!(saved.contains("https://example.test/source"));
 
         fs::remove_dir_all(root).unwrap();
     }

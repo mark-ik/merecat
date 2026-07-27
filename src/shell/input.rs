@@ -6,7 +6,6 @@
 //! input (scroll, hover, blur) rides state directly per the gesture law;
 //! durable intent becomes an `Action`.
 
-
 use winit::event::MouseButton;
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
 
@@ -73,8 +72,8 @@ impl Shell {
     /// as `data-key`, so the driver selects on it — unique where the display
     /// label (two "Example Domain" pages) is not.
     pub(super) fn click_pane_node(&mut self, substr: &str) {
-        let sel = genet_probe::Selector::class("graph-canvas-swatch-node")
-            .with_attr("data-key", substr);
+        let sel =
+            genet_probe::Selector::class("graph-canvas-swatch-node").with_attr("data-key", substr);
         if !self.click(&sel) {
             self.app.note(crate::observe::AppEvent::InteractionMissed {
                 what: "click-node",
@@ -104,7 +103,6 @@ impl Shell {
         }
     }
 
-
     /// Route a pointer press to the surface under `(x, y)` and capture it until
     /// release (rung 5 slice B). A press on content focuses it and delivers the
     /// click: a link resolves to a durable navigation and goes through
@@ -116,7 +114,9 @@ impl Shell {
         if self.app.omnibar.open {
             // A press on a suggestion row COMMITS it (the retained chrome's
             // row handlers); anywhere else is the click-away dismiss.
-            let intents = self.chrome.click(0, x, y, self.width.max(1), self.height.max(1));
+            let intents = self
+                .chrome
+                .click(0, x, y, self.width.max(1), self.height.max(1));
             if let Some(crate::chrome_view::ChromeIntent::CommitRow(index)) =
                 intents.into_iter().next()
             {
@@ -171,10 +171,12 @@ impl Shell {
                         match self.pane_content(id) {
                             Some(PaneContent::Trail) => {
                                 // The same cambium round trip as the Roster.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
                                 let actions = match (dims, self.trail_pane.as_mut()) {
                                     (Some((rw, rh)), Some(pane)) => {
                                         pane.click(hit.local.0, hit.local.1, rw, rh)
@@ -200,9 +202,7 @@ impl Shell {
                                             // node's ORIGINAL uuid; recovery
                                             // restores that identity.
                                             match id.parse::<uuid::Uuid>() {
-                                                Ok(id) => self.act(
-                                                    Action::RecoverDeletedNode(id),
-                                                ),
+                                                Ok(id) => self.act(Action::RecoverDeletedNode(id)),
                                                 Err(_) => self.app.note(
                                                     crate::observe::AppEvent::InteractionMissed {
                                                         what: "recover",
@@ -220,10 +220,12 @@ impl Shell {
                                 // whatever the view emitted through the spine —
                                 // the same path a keypress takes. This is the
                                 // general cambium pane-event round trip.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
                                 let actions = match (dims, self.roster_grid.as_mut()) {
                                     (Some((rw, rh)), Some(grid)) => {
                                         let actions = grid.click(hit.local.0, hit.local.1, rw, rh);
@@ -248,10 +250,12 @@ impl Shell {
                                 // Same hit-test round trip; the outcome arrives
                                 // as drained intents (the swatch mutates state
                                 // rather than bubbling), lowered here.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
                                 let intents = match (dims, self.gloss_pane.as_mut()) {
                                     (Some((rw, rh)), Some(pane)) => {
                                         pane.click(hit.local.0, hit.local.1, rw, rh)
@@ -272,20 +276,44 @@ impl Shell {
                                             crate::swatch_pane::SwatchActivate::Recover(id),
                                         ) => self.act(Action::RecoverDeletedNode(id)),
                                         crate::swatch_pane::SwatchIntent::Expand => {
-                                            self.app.focus =
-                                                crate::surface::FocusTarget::Canvas;
+                                            self.app.focus = crate::surface::FocusTarget::Canvas;
                                         }
                                     }
+                                }
+                            }
+                            Some(PaneContent::Inspector) => {
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
+                                let clip = match (dims, self.inspector_pane.as_mut()) {
+                                    (Some((rw, rh)), Some(pane)) => pane
+                                        .click(hit.local.0, hit.local.1, rw, rh)
+                                        .into_iter()
+                                        .any(|intent| {
+                                            matches!(
+                                                intent,
+                                                crate::inspector_pane::InspectorIntent::ClipToKnot
+                                            )
+                                        }),
+                                    _ => false,
+                                };
+                                if clip {
+                                    self.clip_focused_document_to_knot();
                                 }
                             }
                             Some(PaneContent::Apparatus) => {
                                 // The same cambium round trip: the radio's own
                                 // selection moves, and the diff lowers as the
                                 // typed viewer Action for the FOCUSED node.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
                                 let intents = match (dims, self.apparatus_pane.as_mut()) {
                                     (Some((rw, rh)), Some(pane)) => {
                                         pane.click(hit.local.0, hit.local.1, rw, rh)
@@ -294,10 +322,10 @@ impl Shell {
                                 };
                                 for intent in intents {
                                     match intent {
-                                        crate::apparatus_pane::ApparatusIntent::SetViewer(viewer) => {
-                                            if let Some(member) =
-                                                self.app.canvas.focused_member()
-                                            {
+                                        crate::apparatus_pane::ApparatusIntent::SetViewer(
+                                            viewer,
+                                        ) => {
+                                            if let Some(member) = self.app.canvas.focused_member() {
                                                 self.act(Action::SetViewerOverride {
                                                     member,
                                                     viewer,
@@ -311,10 +339,12 @@ impl Shell {
                                 // A session-node click adopts that session:
                                 // navigating to a container IS the switch
                                 // (overmap v0), through the ordinary spine.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
                                 let intents = match (dims, self.overmap_pane.as_mut()) {
                                     (Some((rw, rh)), Some(pane)) => {
                                         pane.click(hit.local.0, hit.local.1, rw, rh)
@@ -335,8 +365,7 @@ impl Shell {
                                             crate::swatch_pane::SwatchActivate::Recover(id),
                                         ) => self.act(Action::RecoverDeletedNode(id)),
                                         crate::swatch_pane::SwatchIntent::Expand => {
-                                            self.app.focus =
-                                                crate::surface::FocusTarget::Canvas;
+                                            self.app.focus = crate::surface::FocusTarget::Canvas;
                                         }
                                     }
                                 }
@@ -347,17 +376,21 @@ impl Shell {
                                 // onto another cell stacks; a seam drag
                                 // re-weights) — so record what was pressed and
                                 // decide in deliver_release / deliver_move.
-                                let dims = plan
-                                    .iter()
-                                    .find(|s| s.id == hit.id)
-                                    .map(|s| (s.rect, (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32)));
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect,
+                                        (
+                                            s.rect.w.round().max(1.0) as u32,
+                                            s.rect.h.round().max(1.0) as u32,
+                                        ),
+                                    )
+                                });
                                 if let (Some((rect, (rw, rh))), Some(pane)) =
                                     (dims, self.workbench_pane.as_mut())
                                 {
                                     let (lx, ly) = hit.local;
                                     if let Some(div) = pane.tiling().divider_at(lx, ly).cloned() {
-                                        self.wb_divider_drag =
-                                            Some((div, (rect.x, rect.y)));
+                                        self.wb_divider_drag = Some((div, (rect.x, rect.y)));
                                     } else if let Some(member) = pane.tab_at(lx, ly, rw, rh) {
                                         self.wb_tab_drag = Some(member);
                                     }
@@ -373,10 +406,7 @@ impl Shell {
                     let area = Rect::full(self.width.max(1), self.height.max(1));
                     let tiling =
                         crate::pane::place_panes(&self.app.frisket, area, self.app.maximized);
-                    self.divider_drag = tiling
-                        .dividers
-                        .into_iter()
-                        .find(|d| d.index == index);
+                    self.divider_drag = tiling.dividers.into_iter().find(|d| d.index == index);
                     self.request_redraw();
                     return;
                 }
@@ -432,10 +462,12 @@ impl Shell {
         }
         self.hovered_pane = pane_hit;
         if let (Some(hit), Some(id)) = (hit, pane_hit) {
-            let dims = plan
-                .iter()
-                .find(|s| s.id == hit.id)
-                .map(|s| (s.rect.w.round().max(1.0) as u32, s.rect.h.round().max(1.0) as u32));
+            let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                (
+                    s.rect.w.round().max(1.0) as u32,
+                    s.rect.h.round().max(1.0) as u32,
+                )
+            });
             if let Some((rw, rh)) = dims {
                 redraw |= match self.pane_content(id) {
                     Some(PaneContent::Gloss(_)) => self
@@ -460,11 +492,8 @@ impl Shell {
         // pointer (host math over platen's N-ary fractions), lowered as an
         // ordinary Action. The walk is pane-local; the origin converts.
         if let Some((div, origin)) = self.wb_divider_drag.clone() {
-            let fractions = crate::workbench_tiling::drag_fractions(
-                &div,
-                x - origin.0,
-                y - origin.1,
-            );
+            let fractions =
+                crate::workbench_tiling::drag_fractions(&div, x - origin.0, y - origin.1);
             self.act(Action::WorkbenchSetFractions {
                 path: div.path,
                 fractions,
@@ -475,12 +504,7 @@ impl Shell {
             return;
         };
         let split = crate::pane::cambium_split(drag.axis, drag.ratio);
-        let ratio = split.ratio_at(
-            drag.area.w,
-            drag.area.h,
-            x - drag.area.x,
-            y - drag.area.y,
-        );
+        let ratio = split.ratio_at(drag.area.w, drag.area.h, x - drag.area.x, y - drag.area.y);
         self.act(Action::SetSplitRatio {
             space: crate::action::SpaceRef::Primary,
             path: drag.path,
@@ -516,5 +540,4 @@ impl Shell {
             self.request_redraw();
         }
     }
-
 }
