@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use cambium::{
     AnyView, DomHandle, GenetAppRunner, GenetCtx, GenetElement, Key, KeyEvent, PointerClick,
@@ -1098,7 +1098,7 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
     let preview = match &state.derived {
         Some(derived) => KnotEditor::scratch("knot:derived", derived.source.clone())
             .preview()
-            .map(|document| format!("{}\n\n{}", derived.summary, document.to_markdown()))
+            .map(|document| format!("{}\n\n{}", derived_status(derived), document.to_markdown()))
             .unwrap_or_else(|error| format!("Derived preview unavailable: {error}")),
         None => state
             .editor
@@ -1179,6 +1179,46 @@ fn authoring_view(state: &AuthoringState) -> AuthoringView {
             format!("width: {}px; height: {}px;", state.width, state.height),
         ),
     )
+}
+
+fn derived_status(derived: &DerivedTextV1) -> String {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    derived_status_at(derived, now_ms)
+}
+
+fn derived_status_at(derived: &DerivedTextV1, now_ms: u64) -> String {
+    let Some(cache) = &derived.cache else {
+        return derived.summary.clone();
+    };
+    let age = format_cache_age(now_ms.saturating_sub(cache.fetched_at_unix_ms));
+    let source_label = if cache.sources.len() == 1 {
+        "source"
+    } else {
+        "sources"
+    };
+    format!(
+        "{}\nFetched: {age} ago; {} {source_label}",
+        derived.summary,
+        cache.sources.len()
+    )
+}
+
+fn format_cache_age(age_ms: u64) -> String {
+    let seconds = age_ms / 1_000;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 60 * 60 {
+        format!("{}m", seconds / 60)
+    } else if seconds < 24 * 60 * 60 {
+        format!("{}h", seconds / (60 * 60))
+    } else {
+        format!("{}d", seconds / (24 * 60 * 60))
+    }
 }
 
 /// The visible editor retained in Turnstone's ordinary content-session map.
@@ -1614,6 +1654,36 @@ mod tests {
     use layout_dom_api::{LayoutDom, NodeKind};
 
     use super::*;
+
+    #[test]
+    fn sealed_cache_age_uses_readable_units() {
+        assert_eq!(format_cache_age(999), "0s");
+        assert_eq!(format_cache_age(59_999), "59s");
+        assert_eq!(format_cache_age(60_000), "1m");
+        assert_eq!(format_cache_age(3_600_000), "1h");
+        assert_eq!(format_cache_age(86_400_000), "1d");
+    }
+
+    #[test]
+    fn sealed_cache_attribution_is_visible_in_the_derived_preview() {
+        let derived = DerivedTextV1 {
+            source: "# Cached".into(),
+            summary: "resolved 1; denied 0; failed 0".into(),
+            cache: Some(graphshell::protocol::DerivedCacheInfoV1 {
+                effect: "resolve".into(),
+                sources: vec!["https://example.test/note".into()],
+                provider_version: "fixture/v1".into(),
+                policy_fingerprint: "policy".into(),
+                fetched_at_unix_ms: 1_000,
+                source_revision: 1,
+            }),
+        };
+
+        assert_eq!(
+            derived_status_at(&derived, 61_000),
+            "resolved 1; denied 0; failed 0\nFetched: 1m ago; 1 source"
+        );
+    }
 
     fn file_address(path: &Path) -> String {
         let path = fs::canonicalize(path).expect("test document should canonicalize");
