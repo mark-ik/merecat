@@ -46,7 +46,7 @@ const DEFAULT_EFFECT_MAX_DEPTH: u8 = 1;
 const DEFAULT_EFFECT_MAX_OPS: u64 = 100_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-const KNOT_SHEET: &str = "\
+pub(crate) const KNOT_SHEET: &str = "\
     .knot-root { background-color: rgb(22, 27, 40); color: rgb(205, 212, 226); } \
     .knot-toolbar { display: flex; background-color: rgb(18, 22, 33); \
                     padding: 6px 10px; } \
@@ -1241,6 +1241,12 @@ impl KnotDocumentSession {
         true
     }
 
+    /// The retained document surface exposed to Genet Probe. The borrow stays
+    /// inside `Automatable::with_surfaces`, matching Turnstone's pane DOMs.
+    pub fn dom_ref(&self) -> std::cell::Ref<'_, ScriptedDom> {
+        self.dom.borrow()
+    }
+
     pub fn status(&mut self) -> &'static str {
         self.drain_events();
         match self.runner.state().status {
@@ -1528,6 +1534,17 @@ impl DocumentSession<Scene> for KnotDocumentSession {
         Vec::new()
     }
 
+    fn settled(&mut self) -> bool {
+        self.drain_events();
+        !matches!(
+            self.runner.state().status,
+            AuthoringStatus::Saving
+                | AuthoringStatus::Resolving
+                | AuthoringStatus::Running
+                | AuthoringStatus::Reloading
+        )
+    }
+
     fn inspect(&self) -> Option<ContentReport> {
         let outline = self
             .runner
@@ -1547,6 +1564,10 @@ impl DocumentSession<Scene> for KnotDocumentSession {
             outline,
             links: Vec::new(),
         })
+    }
+
+    fn as_any_ref(&self) -> &dyn Any {
+        self
     }
 
     fn as_any(&mut self) -> &mut dyn Any {

@@ -29,37 +29,57 @@ impl genet_probe::Automatable for Shell {
             [f32; 4],
             std::cell::Ref<'_, genet_scripted_dom::ScriptedDom>,
         )> = Vec::new();
+        let knot_sheet = format!(
+            "{} {}",
+            crate::ui::CAMBIUM_SHEET,
+            crate::knot_authoring::KNOT_SHEET
+        );
         for surface in &plan {
-            let crate::surface::SurfaceKind::Pane(id) = surface.kind else {
-                continue;
-            };
-            let rect = [surface.rect.x, surface.rect.y, surface.rect.w, surface.rect.h];
-            match self.pane_content(id) {
-                Some(PaneContent::Roster) => {
-                    if let Some(g) = &self.roster_grid {
-                        guards.push(("roster", rect, g.dom_ref()));
+            let rect = [
+                surface.rect.x,
+                surface.rect.y,
+                surface.rect.w,
+                surface.rect.h,
+            ];
+            match surface.kind {
+                crate::surface::SurfaceKind::Content(node) => {
+                    if let Some(session) = self.content_sessions.get(&node)
+                        && let Some(knot) = session
+                            .as_any_ref()
+                            .downcast_ref::<crate::knot_authoring::KnotDocumentSession>(
+                        )
+                    {
+                        guards.push(("knot", rect, knot.dom_ref()));
                     }
                 }
-                Some(PaneContent::Trail) => {
-                    if let Some(pane) = &self.trail_pane {
-                        guards.push(("trail", rect, pane.dom_ref()));
+                crate::surface::SurfaceKind::Pane(id) => match self.pane_content(id) {
+                    Some(PaneContent::Roster) => {
+                        if let Some(g) = &self.roster_grid {
+                            guards.push(("roster", rect, g.dom_ref()));
+                        }
                     }
-                }
-                Some(PaneContent::Gloss(_)) => {
-                    if let Some(pane) = &self.gloss_pane {
-                        guards.push(("gloss", rect, pane.dom_ref()));
+                    Some(PaneContent::Trail) => {
+                        if let Some(pane) = &self.trail_pane {
+                            guards.push(("trail", rect, pane.dom_ref()));
+                        }
                     }
-                }
-                Some(PaneContent::Apparatus) => {
-                    if let Some(pane) = &self.apparatus_pane {
-                        guards.push(("apparatus", rect, pane.dom_ref()));
+                    Some(PaneContent::Gloss(_)) => {
+                        if let Some(pane) = &self.gloss_pane {
+                            guards.push(("gloss", rect, pane.dom_ref()));
+                        }
                     }
-                }
-                Some(PaneContent::Overmap(_)) => {
-                    if let Some(pane) = &self.overmap_pane {
-                        guards.push(("overmap", rect, pane.dom_ref()));
+                    Some(PaneContent::Apparatus) => {
+                        if let Some(pane) = &self.apparatus_pane {
+                            guards.push(("apparatus", rect, pane.dom_ref()));
+                        }
                     }
-                }
+                    Some(PaneContent::Overmap(_)) => {
+                        if let Some(pane) = &self.overmap_pane {
+                            guards.push(("overmap", rect, pane.dom_ref()));
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -69,7 +89,11 @@ impl genet_probe::Automatable for Shell {
                 name,
                 dom: r,
                 rect: *rect,
-                sheet: crate::ui::CAMBIUM_SHEET,
+                sheet: if *name == "knot" {
+                    &knot_sheet
+                } else {
+                    crate::ui::CAMBIUM_SHEET
+                },
             })
             .collect();
         f(&surfaces)

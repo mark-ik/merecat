@@ -1,0 +1,27 @@
+# A real headed Knot document driven through the shared Genet Probe loop.
+# TURNSTONE_KNOT_* selects the rooted endpoint and Ask consent in the harness.
+settle 30
+key escape
+settle 3
+open file:///C:/Users/mark_/Code/repos/turnstone/scenarios/fixtures/knot_authoring/field.knot
+settle 5
+act Toggle live content
+wait
+assert content-live
+assert snap focused ~ field.knot
+assert snap surfaces ~ content
+assert text Authoring receipt
+assert text Resolve
+click .knot-effect Resolve
+wait
+assert text resolved 1; denied 0; failed 0
+assert text Included through Knot
+click .knot-effect Run
+wait
+assert text ran 1; denied 0; failed 0
+assert text 42
+# Keep the headed result visible long enough for an independent OS-window
+# observation; the scenario's own assertions have already completed.
+settle 300
+capture knot_authoring
+log Knot authoring, Resolve, and Run crossed one headed Genet Probe lane
