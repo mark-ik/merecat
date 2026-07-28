@@ -39,7 +39,10 @@ pub fn inspector_sections(app: &App) -> Vec<InspectorSection> {
 
     let node_rows = match focused {
         Some((key, node)) => vec![
-            ("Title".to_string(), display_title(node.title.trim(), node.url())),
+            (
+                "Title".to_string(),
+                display_title(node.title.trim(), node.url()),
+            ),
             ("URL".to_string(), node.url().to_string()),
             ("Node id".to_string(), node.id.to_string()),
             ("Addresses".to_string(), node.addresses.len().to_string()),
@@ -198,7 +201,12 @@ fn summarize_strings<'a>(values: impl Iterator<Item = &'a str>) -> String {
     if values.is_empty() {
         return "none".to_string();
     }
-    let shown = values.iter().take(4).copied().collect::<Vec<_>>().join(", ");
+    let shown = values
+        .iter()
+        .take(4)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
     if values.len() > 4 {
         format!("{shown}, +{}", values.len() - 4)
     } else {
@@ -259,7 +267,10 @@ mod tests {
     fn no_focus_reports_none_honestly() {
         let app = App::test_stub();
         let sections = inspector_sections(&app);
-        assert_eq!(sections[0].rows, vec![("Focused node".to_string(), "none".to_string())]);
+        assert_eq!(
+            sections[0].rows,
+            vec![("Focused node".to_string(), "none".to_string())]
+        );
         assert_eq!(
             sections[1].rows,
             vec![("Content state".to_string(), "none".to_string())]
@@ -318,7 +329,11 @@ mod tests {
             }),
         });
         let lines = inspector_lines(&app);
-        assert!(lines.iter().any(|l| l == "Structural read: none for this lane"));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "Structural read: none for this lane")
+        );
         assert!(!lines.iter().any(|l| l.starts_with("Document structure")));
     }
 

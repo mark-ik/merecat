@@ -182,8 +182,9 @@ pub fn stage_install(path: &Path) -> Result<PendingInstall, String> {
     let body = if is_component {
         PackBody::Component(bytes)
     } else {
-        let source = String::from_utf8(bytes)
-            .map_err(|_| "the pack is not valid UTF-8 (a component must end in .wasm)".to_string())?;
+        let source = String::from_utf8(bytes).map_err(|_| {
+            "the pack is not valid UTF-8 (a component must end in .wasm)".to_string()
+        })?;
         if source.trim().is_empty() {
             return Err("the pack is empty".to_string());
         }
@@ -715,7 +716,11 @@ mod tests {
         let review = review_line(&a);
         assert!(review.contains("grants:"), "the ask is visible: {review}");
         for ring in default_rings() {
-            assert!(review.contains(ring.name()), "the ask names {}: {review}", ring.name());
+            assert!(
+                review.contains(ring.name()),
+                "the ask names {}: {review}",
+                ring.name()
+            );
         }
         assert!(
             review.chars().count() < 96,
@@ -724,7 +729,10 @@ mod tests {
 
         std::fs::write(&path, "mere.open('mere://other')").unwrap();
         let c = stage_install(&path).unwrap();
-        assert_ne!(a.subject, c.subject, "a modified script is a different subject");
+        assert_ne!(
+            a.subject, c.subject,
+            "a modified script is a different subject"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

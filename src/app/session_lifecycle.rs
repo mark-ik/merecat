@@ -202,11 +202,7 @@ impl App {
         // settings donor-container -> fork-container.
         let fork_graph_id = GraphId::new();
         let mut fork_facets = session_runtime::NodeFacetStore::new();
-        session_runtime::copy_node_facets(
-            self.canvas.facets(),
-            &mut fork_facets,
-            &copy.id_remap,
-        );
+        session_runtime::copy_node_facets(self.canvas.facets(), &mut fork_facets, &copy.id_remap);
         if let Some(donor_container) = self.container_id() {
             session_runtime::copy_scene_facets(
                 self.canvas.facets(),
@@ -215,9 +211,8 @@ impl App {
                 *fork_graph_id.as_uuid(),
             );
         }
-        let derivation_facet = chartulary::FacetId::new(
-            mere::kernel::graph::node_facets::PROVENANCE_DERIVATIONS,
-        );
+        let derivation_facet =
+            chartulary::FacetId::new(mere::kernel::graph::node_facets::PROVENANCE_DERIVATIONS);
         let copied_derivations = copy
             .id_remap
             .iter()
@@ -346,9 +341,8 @@ impl App {
         // The removed-sessions cache (overmap O3): derived from the manifest
         // trash, refreshed here and on close/recover.
         self.trash = self.sessions.list_trash();
-        self.canvas.overlay_facets(
-            session::load_node_facets(&sdir).unwrap_or_default(),
-        );
+        self.canvas
+            .overlay_facets(session::load_node_facets(&sdir).unwrap_or_default());
         // A profile saved before the nil-GraphId heal keyed its scene.* facets
         // by the nil uuid; move them onto the healed container id once.
         if let Some(container) = self.container_id() {
@@ -375,7 +369,10 @@ impl App {
         session_runtime::retain_present_nodes(self.canvas.facets_mut(), &present);
         match crate::content_classes::reconcile(&mut self.canvas) {
             Ok(changed) if changed > 0 => {
-                tracing::info!(changed, "founded built-in content classes on restored nodes");
+                tracing::info!(
+                    changed,
+                    "founded built-in content classes on restored nodes"
+                );
                 effects.push(Effect::SaveSession);
             }
             Ok(_) => {}
@@ -402,11 +399,7 @@ impl App {
             if let Some(binding) =
                 session_runtime::read_denizen_binding(self.canvas.facets(), member)
             {
-                session_runtime::write_denizen_binding(
-                    self.canvas.facets_mut(),
-                    member,
-                    &binding,
-                );
+                session_runtime::write_denizen_binding(self.canvas.facets_mut(), member, &binding);
             }
         }
         // The scene's own view settings ride the `scene.*` container facets:
@@ -420,11 +413,8 @@ impl App {
         self.canvas
             .apply_cartography_importance_metric(&scene.importance_metric);
         let sizes = session_runtime::read_arrangement_sizes(self.canvas.facets());
-        self.canvas.apply_cartography_sizing(
-            sizes,
-            scene.size_by_degree,
-            scene.size_by_importance,
-        );
+        self.canvas
+            .apply_cartography_sizing(sizes, scene.size_by_degree, scene.size_by_importance);
         let sprites = session_runtime::read_arrangement_sprites(self.canvas.facets());
         self.canvas
             .apply_cartography_sprites(sprites.iter().map(|(id, uri)| (*id, uri.as_str())));

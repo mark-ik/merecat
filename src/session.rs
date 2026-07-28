@@ -645,9 +645,7 @@ mod tests {
         facets
             .set(
                 node_id,
-                chartulary::FacetId::new(
-                    mere::kernel::graph::node_facets::ARRANGEMENT_PIN,
-                ),
+                chartulary::FacetId::new(mere::kernel::graph::node_facets::ARRANGEMENT_PIN),
                 serde_json::json!(false),
                 &chartulary::AcceptAll,
             )
@@ -671,9 +669,7 @@ mod tests {
         assert_eq!(
             persisted.get(
                 &node_id,
-                &chartulary::FacetId::new(
-                    mere::kernel::graph::node_facets::ARRANGEMENT_PIN,
-                ),
+                &chartulary::FacetId::new(mere::kernel::graph::node_facets::ARRANGEMENT_PIN,),
             ),
             Some(&serde_json::json!(false))
         );

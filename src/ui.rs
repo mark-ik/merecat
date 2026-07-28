@@ -13,12 +13,12 @@
 //! alpha-blends over). The palette is tiny, so the document rebuilds
 //! wholesale per state change rather than diffing.
 
+use genet_layout::{IncrementalLayout, ScrollOffsets};
+use genet_scripted_dom::{NodeId as DomNodeId, ScriptedDom};
 use layout_dom_api::{LayoutDom, LayoutDomMut, LocalName, Namespace, QualName};
 use mere::canvas::Canvas;
 use paint_list_api::{DeviceIntSize, PaintList};
 use paint_list_render::{CompositeLayer, composite_paint_layers};
-use genet_layout::{IncrementalLayout, ScrollOffsets};
-use genet_scripted_dom::{NodeId as DomNodeId, ScriptedDom};
 use uuid::Uuid;
 
 /// How many node matches the find lane shows.
@@ -148,7 +148,9 @@ pub fn recompute_suggestions(
 
     // Rename mode captures the whole line as the new name; no lane matching.
     if matches!(state.mode, OmnibarMode::RenameSession(_)) {
-        state.suggestions.push(Suggestion::Hint("Enter to rename this session"));
+        state
+            .suggestions
+            .push(Suggestion::Hint("Enter to rename this session"));
         state.selected = 0;
         return;
     }
@@ -169,7 +171,9 @@ pub fn recompute_suggestions(
                 .map(|(label, action)| Suggestion::Act { label, action }),
         );
         if state.suggestions.is_empty() {
-            state.suggestions.push(Suggestion::Hint("no matching action"));
+            state
+                .suggestions
+                .push(Suggestion::Hint("no matching action"));
         }
         state.selected = state.selected.min(state.suggestions.len() - 1);
         return;
@@ -238,10 +242,8 @@ pub fn normalize_address(text: &str) -> Option<String> {
     if text.contains("://") {
         return Some(text.to_string());
     }
-    let host_like = !text.contains(' ')
-        && text.contains('.')
-        && !text.starts_with('.')
-        && !text.ends_with('.');
+    let host_like =
+        !text.contains(' ') && text.contains('.') && !text.starts_with('.') && !text.ends_with('.');
     host_like.then(|| format!("https://{text}"))
 }
 
@@ -279,7 +281,10 @@ pub(crate) const CHROME_SHEET: &str = "\
 pub fn ime_cursor_area(state: &OmnibarState, w: u32) -> ((f32, f32), (f32, f32)) {
     let left = ((w as f32 - CARD_W) / 2.0).max(8.0);
     let chars_before = state.text[..state.cursor].chars().count();
-    ((left + 16.0 + chars_before as f32 * 8.0, CARD_TOP + 10.0), (2.0, 28.0))
+    (
+        (left + 16.0 + chars_before as f32 * 8.0, CARD_TOP + 10.0),
+        (2.0, 28.0),
+    )
 }
 
 /// Whether the chrome layer has anything to show (the shell skips the
@@ -522,7 +527,10 @@ mod tests {
             let layout = IncrementalLayout::new(&dom, &[CHROME_SHEET], 1024.0, 600.0);
             let scroll = ScrollOffsets::<DomNodeId>::default();
             let viewport = DeviceIntSize::new(1024, 600);
-            layout.emit_paint_list(&dom, &scroll, viewport).commands().len()
+            layout
+                .emit_paint_list(&dom, &scroll, viewport)
+                .commands()
+                .len()
         };
         let two_absolutes = {
             let mut dom = ScriptedDom::new();
@@ -549,7 +557,10 @@ mod tests {
             let layout = IncrementalLayout::new(&dom, &[CHROME_SHEET], 1024.0, 600.0);
             let scroll = ScrollOffsets::<DomNodeId>::default();
             let viewport = DeviceIntSize::new(1024, 600);
-            layout.emit_paint_list(&dom, &scroll, viewport).commands().len()
+            layout
+                .emit_paint_list(&dom, &scroll, viewport)
+                .commands()
+                .len()
         };
         let chip_alone = count("transform: translate(232px, 96px); width: 560px;", false);
         let card_alone = count("transform: translate(232px, 96px); width: 560px;", true);

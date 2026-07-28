@@ -73,7 +73,6 @@
 //! snapshot/event pair the a11y and automation lanes consume — so a green
 //! scenario certifies the surface those lanes will stand on.
 
-
 /// One parsed scenario step. `TURNSTONE_SCENARIO` runs on the shared
 /// `genet_probe::Scenario` loop; the generic verbs (act/settle/capture/log,
 /// assert text/event/snap) it owns, and these app-specific steps reach the Shell
@@ -81,7 +80,9 @@
 #[derive(Debug)]
 pub enum Step {
     Open(String),
-    Omnibar { command: bool },
+    Omnibar {
+        command: bool,
+    },
     Type(String),
     Insert(String),
     Key(EditKey),
@@ -494,9 +495,12 @@ mod tests {
 
     #[test]
     fn parse_errors_name_their_line() {
-        let err = parse("open mere://x
+        let err = parse(
+            "open mere://x
 frobnicate
-").unwrap_err();
+",
+        )
+        .unwrap_err();
         assert!(err.contains("line 2"), "{err}");
     }
 }

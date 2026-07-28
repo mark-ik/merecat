@@ -75,7 +75,6 @@ pub fn roster_rows(app: &App) -> Vec<RosterViewRow> {
     out
 }
 
-
 /// One flat node row for the cambium `data_grid` (rung 5 slice D toolkit
 /// adoption). The grid is columned, not sectioned — the content-type buckets
 /// `roster_rows` renders as headers become a grid column instead — so this drops
