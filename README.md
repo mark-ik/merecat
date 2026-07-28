@@ -40,6 +40,13 @@ restart restore). Every capability carries a self-driving scenario receipt
 The live plan is `design_docs/2026-07-10_turnstone_architecture_plan.md`; the
 founding brief is `design_docs/2026-07-08_turnstone_founding.md`.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/content-browser.png" alt="Turnstone rendering an IANA page beside the graph" width="900"><br>
+  <sub>A graph workspace with an HTML document rendered beside its selected node.</sub>
+</p>
+
 ## Graphshell endpoint
 
 Turnstone exposes its first local Graphshell projection through the library's
