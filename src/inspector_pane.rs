@@ -79,7 +79,7 @@ fn inspector_pane_view(state: &InspectorState) -> InspectorView {
     Box::new(
         el::<_, InspectorState, InspectorIntent>(
             "div",
-            (detail_panel(&sections), clip_status, clip_button),
+            (clip_status, clip_button, detail_panel(&sections)),
         )
         .attr("class", "pane")
         .attr(
@@ -144,6 +144,11 @@ impl InspectorPane {
         crate::ui::scene_from_dom(&self.dom.borrow(), crate::ui::CAMBIUM_SHEET, w, h)
     }
 
+    /// Borrow the retained DOM for Genet Probe target resolution.
+    pub fn dom_ref(&self) -> std::cell::Ref<'_, ScriptedDom> {
+        self.dom.borrow()
+    }
+
     pub fn click(&mut self, x: f32, y: f32, w: u32, h: u32) -> Vec<InspectorIntent> {
         let hit = {
             let dom = self.dom.borrow();
@@ -186,7 +191,8 @@ mod tests {
             .flat_map(|&n| dom.dom_children(n))
             .filter_map(|c| dom.text(c).map(str::to_string))
             .collect();
-        assert_eq!(text, "https://example.test/");
+        assert!(text.contains("https://example.test/"));
+        assert!(text.contains("Knot clip: ready"));
     }
 
     #[test]
@@ -213,6 +219,46 @@ mod tests {
         };
         assert_eq!(
             pane.click(x, y, 400, 600),
+            vec![InspectorIntent::ClipToKnot]
+        );
+    }
+
+    #[test]
+    fn probe_resolved_clip_button_reaches_the_pane_at_receipt_size() {
+        let mut pane = InspectorPane::new();
+        pane.runner.update(|state| {
+            state.sections = vec![InspectorSection {
+                title: "Node".to_string(),
+                rows: (0..14)
+                    .map(|index| (format!("Field {index}"), format!("Value {index}")))
+                    .collect(),
+            }];
+            state.clip_target = Some("clip_target_receipt.knot".into());
+            state.clip_source_available = true;
+            state.clip_status = "ready".into();
+            state.viewport_w = 509.0;
+            state.viewport_h = 576.0;
+        });
+        let (x, y) = {
+            let dom = pane.dom.borrow();
+            genet_probe::resolve(
+                &[genet_probe::ProbeSurface {
+                    name: "inspector",
+                    dom: &dom,
+                    rect: [0.0, 0.0, 509.0, 576.0],
+                    sheet: crate::ui::CAMBIUM_SHEET,
+                }],
+                &genet_probe::Selector::role("button").containing("Clip document"),
+            )
+            .expect("Probe must resolve the configured clip button")
+            .point
+        };
+        assert!(
+            (0.0..509.0).contains(&x) && (0.0..576.0).contains(&y),
+            "Probe resolved the clip button outside its pane: ({x}, {y})"
+        );
+        assert_eq!(
+            pane.click(x, y, 509, 576),
             vec![InspectorIntent::ClipToKnot]
         );
     }

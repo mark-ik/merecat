@@ -153,7 +153,7 @@ impl Shell {
                     if button == MouseButton::Left
                         && let Some(session) = self.content_sessions.get_mut(&node)
                         && let SessionClick::Navigate(url) =
-                            session.click_at(hit.local.0, hit.local.1)
+                            session.pointer_down(hit.local.0, hit.local.1)
                     {
                         self.act(Action::OpenAddress(url));
                     }
@@ -488,6 +488,21 @@ impl Shell {
     }
 
     pub(super) fn deliver_move(&mut self, x: f32, y: f32) {
+        if let Some(crate::surface::SurfaceKind::Content(node)) = self.pointer_capture {
+            let local = self.surface_plan().into_iter().find_map(|surface| {
+                (surface.kind == crate::surface::SurfaceKind::Content(node))
+                    .then_some((x - surface.rect.x, y - surface.rect.y))
+            });
+            if let Some((local_x, local_y)) = local
+                && self
+                    .content_sessions
+                    .get_mut(&node)
+                    .is_some_and(|session| session.pointer_move(local_x, local_y))
+            {
+                self.request_redraw();
+            }
+            return;
+        }
         // A workbench divider drag: the band's pair re-weights toward the
         // pointer (host math over platen's N-ary fractions), lowered as an
         // ordinary Action. The walk is pane-local; the origin converts.
@@ -513,11 +528,27 @@ impl Shell {
     }
 
     pub(super) fn deliver_release(&mut self, x: f32, y: f32, button: MouseButton) {
-        let to_canvas = matches!(
-            self.pointer_capture,
-            Some(crate::surface::SurfaceKind::Canvas)
-        );
+        let captured = self.pointer_capture;
+        let to_canvas = matches!(captured, Some(crate::surface::SurfaceKind::Canvas));
         self.pointer_capture = None;
+        if button == MouseButton::Left
+            && let Some(crate::surface::SurfaceKind::Content(node)) = captured
+        {
+            let local = self.surface_plan().into_iter().find_map(|surface| {
+                (surface.kind == crate::surface::SurfaceKind::Content(node))
+                    .then_some((x - surface.rect.x, y - surface.rect.y))
+            });
+            let outcome = local.and_then(|(local_x, local_y)| {
+                self.content_sessions
+                    .get_mut(&node)
+                    .map(|session| session.pointer_up(local_x, local_y))
+            });
+            if let Some(SessionClick::Navigate(url)) = outcome {
+                self.act(Action::OpenAddress(url));
+            }
+            self.request_redraw();
+            return;
+        }
         if self.wb_divider_drag.take().is_some() {
             // Like the frisket seam: moves rode Redraw; persist on release.
             self.act(Action::SaveSession);

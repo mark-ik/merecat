@@ -1,10 +1,10 @@
 //! The automation surface: what a scenario drives turnstone through.
 //!
-//! `Automatable` grants the shared `resolve` / `click` verbs for free, so the
-//! app implements only what it alone knows: its DOMs (via a visitor, since
-//! they sit behind `RefCell`), its snapshot, its labelled actions, and whether
-//! it is still busy. `Driveable` adds the two the generic loop cannot do — a
-//! screenshot and turnstone's own verbs.
+//! `Automatable` grants the shared `resolve`, `click`, and `select-text` verbs,
+//! so the app implements only what it alone knows: its DOMs (via a visitor,
+//! since they sit behind `RefCell`), its retained text targets, its snapshot,
+//! its labelled actions, and whether it is still busy. `Driveable` adds the two
+//! the generic loop cannot do: a screenshot and turnstone's own verbs.
 
 use winit::event::MouseButton;
 use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
@@ -63,6 +63,11 @@ impl genet_probe::Automatable for Shell {
                             guards.push(("trail", rect, pane.dom_ref()));
                         }
                     }
+                    Some(PaneContent::Inspector) => {
+                        if let Some(pane) = &self.inspector_pane {
+                            guards.push(("inspector", rect, pane.dom_ref()));
+                        }
+                    }
                     Some(PaneContent::Gloss(_)) => {
                         if let Some(pane) = &self.gloss_pane {
                             guards.push(("gloss", rect, pane.dom_ref()));
@@ -97,6 +102,33 @@ impl genet_probe::Automatable for Shell {
             })
             .collect();
         f(&surfaces)
+    }
+
+    fn text_target(&self, text: &str) -> Result<Option<genet_probe::TextTarget>, String> {
+        let plan = self.surface_plan();
+        let mut matches = plan.iter().filter_map(|surface| {
+            let crate::surface::SurfaceKind::Content(node) = surface.kind else {
+                return None;
+            };
+            self.content_sessions
+                .get(&node)
+                .and_then(|session| session.text_target(text))
+                .map(|target| genet_probe::TextTarget {
+                    anchor: (
+                        surface.rect.x + target.anchor[0],
+                        surface.rect.y + target.anchor[1],
+                    ),
+                    focus: (
+                        surface.rect.x + target.focus[0],
+                        surface.rect.y + target.focus[1],
+                    ),
+                })
+        });
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err("more than one live content surface matched".into());
+        }
+        Ok(first)
     }
 
     fn snapshot(&self) -> genet_probe::ProbeSnapshot {
@@ -320,7 +352,7 @@ impl Shell {
                 }
                 None => {
                     return Err(
-                        "assert scrolled: no content scroll key has been delivered".to_string(),
+                        "assert scrolled: no content scroll key has been delivered".to_string()
                     );
                 }
             },
@@ -347,7 +379,10 @@ impl Shell {
             Step::AssertSurface(kind) => {
                 let snap = crate::observe::snapshot(&self.app);
                 if !snap.surfaces.iter().any(|s| s == kind) {
-                    return Err(format!("assert surface '{kind}': the plan is {:?}", snap.surfaces));
+                    return Err(format!(
+                        "assert surface '{kind}': the plan is {:?}",
+                        snap.surfaces
+                    ));
                 }
             }
             Step::AssertFocus(kind) => {
@@ -359,7 +394,10 @@ impl Shell {
             Step::AssertPane(tag) => {
                 let snap = crate::observe::snapshot(&self.app);
                 if !snap.panes.iter().any(|p| p == tag) {
-                    return Err(format!("assert pane '{tag}': the tree holds {:?}", snap.panes));
+                    return Err(format!(
+                        "assert pane '{tag}': the tree holds {:?}",
+                        snap.panes
+                    ));
                 }
             }
             Step::AssertMaximized(want) => {
@@ -504,11 +542,7 @@ impl Shell {
             }
             Step::AssertSession(substr) => {
                 let snap = crate::observe::snapshot(&self.app);
-                if !snap
-                    .session
-                    .to_lowercase()
-                    .contains(&substr.to_lowercase())
-                {
+                if !snap.session.to_lowercase().contains(&substr.to_lowercase()) {
                     return Err(format!(
                         "assert session '{substr}': the live session is '{}'",
                         snap.session
@@ -555,8 +589,7 @@ impl Shell {
                         "capture-lens '{name}': no lens window is open to capture"
                     ));
                 }
-                self.pending_lens_capture =
-                    Some(self.shared_out_dir.join(format!("{name}.png")));
+                self.pending_lens_capture = Some(self.shared_out_dir.join(format!("{name}.png")));
                 // The lens presents on its own redraw; nudge every window so
                 // the pending capture lands this pump.
                 self.request_redraw();
@@ -622,5 +655,4 @@ impl Shell {
         self.request_redraw();
         Ok(())
     }
-
 }

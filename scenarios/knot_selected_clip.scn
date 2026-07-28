@@ -1,0 +1,24 @@
+# Selected-range Knot clipping through the real static Genet session.
+#
+# The harness serves scenarios/fixtures/knot_authoring on 127.0.0.1:18765 and
+# configures TURNSTONE_KNOT_ROOT plus TURNSTONE_KNOT_CLIP_TARGET with the
+# target's advertised file:/// address for a writable directory endpoint.
+# Genet resolves the phrase to retained caret geometry;
+# Probe then drives the ordinary press/move/release route before Inspector sends
+# the resulting typed range clip through Knot.
+settle 10
+key escape
+open http://127.0.0.1:18765/clip_source.html
+settle 20
+act Toggle live content
+settle 20
+assert content-live
+select-text only this linked finding
+act Open Inspector pane
+settle 5
+assert text Knot clip: ready
+click role:button Clip document
+settle 300
+assert text Knot clip: clip saved
+capture knot_selected_clip
+log Selected-range clipping crossed Genet Probe, Inspector, and Knot authority
