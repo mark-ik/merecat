@@ -456,6 +456,35 @@ impl KnotAuthoringEngine {
             auto_run: run == "auto",
         })
     }
+
+    #[cfg(test)]
+    fn connect_communal_fixture_effects(
+        program: impl Into<PathBuf>,
+        root: impl Into<PathBuf>,
+        max_source_bytes: u64,
+        run: &str,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            hub: KnotHub::connect(
+                program.into(),
+                vec![
+                    "communal-fixture-effects".into(),
+                    root.into().into_os_string(),
+                    max_source_bytes.to_string().into(),
+                    "never".into(),
+                    run.into(),
+                    "".into(),
+                    "rhai".into(),
+                    "1".into(),
+                    "10000".into(),
+                ],
+                Arc::new(|| {}),
+            )?,
+            clip_target: None,
+            auto_resolve: false,
+            auto_run: run == "auto",
+        })
+    }
 }
 
 impl SessionEngine<Scene> for KnotAuthoringEngine {
@@ -1683,6 +1712,19 @@ mod tests {
         )));
     }
 
+    fn tree_contains(root: &Path, needle: &[u8]) -> bool {
+        fs::read_dir(root).unwrap().flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                tree_contains(&path, needle)
+            } else {
+                fs::read(path)
+                    .ok()
+                    .is_some_and(|bytes| bytes.windows(needle.len()).any(|part| part == needle))
+            }
+        })
+    }
+
     fn wait_for_clip_status(handle: &KnotClipHandle, expected: KnotClipStatus) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -1926,6 +1968,56 @@ mod tests {
             assert_eq!(fs::read_to_string(&path).unwrap(), authored);
         }
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "receipt: set KNOT_ENDPOINT_TEST_BIN to a built Mere knot_endpoint"]
+    fn received_communal_auto_run_waits_for_explicit_confirmation() {
+        let program = std::env::var_os("KNOT_ENDPOINT_TEST_BIN")
+            .expect("KNOT_ENDPOINT_TEST_BIN must name the real Knot endpoint");
+        let root =
+            std::env::temp_dir().join(format!("turnstone-knot-commons-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let authored = "\
+# Received calculation
+
+```rhai eval
+40 + 2
+```
+";
+
+        {
+            let engine =
+                KnotAuthoringEngine::connect_communal_fixture_effects(program, &root, 4096, "auto")
+                    .unwrap();
+            let request = SessionSpawnRequest::new("knot://vault/received").with_viewport(900, 600);
+            let mut session = engine.spawn(&request).unwrap();
+            let session = session
+                .as_any()
+                .downcast_mut::<KnotDocumentSession>()
+                .unwrap();
+            assert!(session.runner.state().run_available);
+            assert_eq!(session.runner.state().editor.source(), authored);
+
+            wait_for_status(session, "rejected");
+            assert_eq!(
+                session.runner.state().detail,
+                "received Commons documents require explicit effect confirmation"
+            );
+            assert!(session.runner.state().derived.is_none());
+
+            session.invoke_effect(KnotEffectKind::Run);
+            let ran = wait_for_derived(session, "ran 1");
+            assert!(ran.source.contains("42"));
+            assert_eq!(session.runner.state().editor.source(), authored);
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !tree_contains(&root, authored.as_bytes()),
+            "received source must remain sealed in the process fixture root"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
