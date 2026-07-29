@@ -412,6 +412,19 @@ pub enum Effect {
     StoreImage { hex: String, bytes: Vec<u8> },
     /// Persist the session through the persistence port.
     SaveSession,
+    /// Open this session's retained place domains through the shell-owned
+    /// worker. `generation` makes every later answer session-specific.
+    OpenPlace {
+        session: crate::panes::SessionId,
+        generation: u64,
+        binding: crate::place::PlaceBindingV1,
+    },
+    /// Release any retained place handles. The shell waits for acknowledgement
+    /// on switch, trash, and shutdown before touching the session directory.
+    ClosePlace {
+        session: crate::panes::SessionId,
+        generation: u64,
+    },
     /// Spawn a live document session for `node` at `url` through the
     /// content port (registry-dispatched once genet-documents lands;
     /// until then the port answers with an honest ContentFailed).
@@ -481,6 +494,13 @@ pub enum Update {
     /// The bin store failed (open / record / list) — loud and attributable,
     /// never an empty list masquerading as "nothing deleted".
     BinFailed { error: String },
+    /// One retained-place open completed. The app accepts it only while both
+    /// the session and generation still match its active opening.
+    PlaceOpened {
+        session: crate::panes::SessionId,
+        generation: u64,
+        result: Result<crate::place::OfflinePlaceSnapshot, String>,
+    },
 }
 
 /// A successfully fetched page document, in app-owned terms.

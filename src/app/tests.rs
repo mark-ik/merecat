@@ -3,6 +3,201 @@
 
 use super::*;
 
+#[test]
+fn place_binding_survives_switch_and_restart_as_a_worker_open() {
+    let root = std::env::temp_dir().join(format!("turnstone-place-adopt-{}", uuid::Uuid::new_v4()));
+    let mut app = App::test_stub();
+    app.data_root = root.clone();
+
+    let personal = crate::panes::SessionId::new();
+    std::fs::create_dir_all(session::session_dir(&root, personal)).unwrap();
+    app.adopt_session(personal);
+    assert_eq!(app.place, crate::place::PlaceState::Personal);
+    assert!(
+        !session::place_binding_path(&app.session_dir()).exists(),
+        "adopting a personal session does not invent a place sidecar"
+    );
+
+    let target = crate::panes::SessionId::new();
+    let sdir = session::session_dir(&root, target);
+    let binding = crate::place::PlaceBindingV1::new(
+        crate::place::PlaceId([0x11; 32]),
+        crate::place::SharedContainerId([0x22; 32]),
+        crate::place::ChatSpaceId([0x33; 32]),
+        "commons",
+    )
+    .unwrap();
+    session::save_place_binding(&sdir, &binding).unwrap();
+    let key = app.canvas.visit("https://shared.example");
+    let shared_node = app.canvas.graph().get_node(key).unwrap().id;
+    session::save_session_graph(&sdir, app.canvas.graph());
+
+    let effects = app.adopt_session(target);
+    assert!(
+        matches!(
+            &app.place,
+            crate::place::PlaceState::Opening {
+                binding: actual,
+                generation: 2,
+            } if actual == &binding
+        ),
+        "the app exposes the worker open instead of presenting the cache as current"
+    );
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::OpenPlace {
+                session,
+                generation: 2,
+                binding: actual,
+            } if *session == target && actual == &binding
+        )),
+        "adoption asks the shell-owned worker to materialize the retained domains"
+    );
+    assert!(
+        app.canvas.graph().get_node_by_id(shared_node).is_some(),
+        "the cached graph remains immediately available"
+    );
+
+    let mut reopened = App::test_stub();
+    reopened.data_root = root.clone();
+    let effects = reopened.adopt_session(target);
+    assert!(
+        matches!(
+            &reopened.place,
+            crate::place::PlaceState::Opening {
+                binding: actual,
+                generation: 1,
+            } if actual == &binding
+        ),
+        "a fresh app state requests the same durable binding"
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::OpenPlace {
+            session,
+            generation: 1,
+            binding: actual,
+        } if *session == target && actual == &binding
+    )));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn stale_place_update_from_a_departed_session_is_ignored() {
+    let root = std::env::temp_dir().join(format!("turnstone-place-stale-{}", uuid::Uuid::new_v4()));
+    let mut app = App::test_stub();
+    app.data_root = root.clone();
+    let first = crate::panes::SessionId::new();
+    let second = crate::panes::SessionId::new();
+    let first_binding = crate::place::PlaceBindingV1::new(
+        crate::place::PlaceId([0x11; 32]),
+        crate::place::SharedContainerId([0x12; 32]),
+        crate::place::ChatSpaceId([0x13; 32]),
+        "first",
+    )
+    .unwrap();
+    let second_binding = crate::place::PlaceBindingV1::new(
+        crate::place::PlaceId([0x21; 32]),
+        crate::place::SharedContainerId([0x22; 32]),
+        crate::place::ChatSpaceId([0x23; 32]),
+        "second",
+    )
+    .unwrap();
+    session::save_place_binding(&session::session_dir(&root, first), &first_binding).unwrap();
+    session::save_place_binding(&session::session_dir(&root, second), &second_binding).unwrap();
+
+    app.adopt_session(first);
+    app.adopt_session(second);
+    assert_eq!(app.session_id, second);
+    let stale = crate::place::OfflinePlaceSnapshot {
+        graph: crate::place::GraphCache {
+            nodes: 99,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(
+        app.apply_update(Update::PlaceOpened {
+            session: first,
+            generation: 1,
+            result: Ok(stale),
+        })
+        .is_empty(),
+        "a stale worker answer produces no follow-up effect"
+    );
+    assert!(
+        matches!(
+            &app.place,
+            crate::place::PlaceState::Opening {
+                binding,
+                generation: 2,
+            } if binding == &second_binding
+        ),
+        "the stale answer cannot replace the active session's opening"
+    );
+
+    let current = crate::place::OfflinePlaceSnapshot {
+        graph: crate::place::GraphCache {
+            nodes: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert_eq!(
+        app.apply_update(Update::PlaceOpened {
+            session: second,
+            generation: 2,
+            result: Ok(current.clone()),
+        }),
+        vec![Effect::Redraw]
+    );
+    assert_eq!(
+        app.place,
+        crate::place::PlaceState::Offline {
+            binding: second_binding,
+            generation: 2,
+            snapshot: current,
+        }
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn malformed_place_binding_is_visible_without_hiding_cached_graph() {
+    let root =
+        std::env::temp_dir().join(format!("turnstone-place-failure-{}", uuid::Uuid::new_v4()));
+    let mut app = App::test_stub();
+    app.data_root = root.clone();
+    let target = crate::panes::SessionId::new();
+    let sdir = session::session_dir(&root, target);
+    std::fs::create_dir_all(&sdir).unwrap();
+    std::fs::write(session::place_binding_path(&sdir), b"{ not valid JSON").unwrap();
+    let key = app.canvas.visit("https://cached.example");
+    let cached_node = app.canvas.graph().get_node(key).unwrap().id;
+    session::save_session_graph(&sdir, app.canvas.graph());
+
+    app.adopt_session(target);
+    assert!(
+        matches!(
+            &app.place,
+            crate::place::PlaceState::Failed { error }
+                if error.contains("place sidecar JSON")
+        ),
+        "the malformed binding is product-visible: {:?}",
+        app.place
+    );
+    assert!(
+        app.canvas.graph().get_node_by_id(cached_node).is_some(),
+        "a binding fault does not discard the cached graph"
+    );
+    assert!(
+        session::place_binding_path(&sdir).exists(),
+        "adoption preserves the malformed sidecar for repair"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The layout round-trip through the facet store: a session saved as
 /// graph.json + `arrangement.*` facets (per-node) + `scene.*` facets (on
 /// the container id) re-adopts with each node back at its saved position

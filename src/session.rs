@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::panes::{FrisketLayout, SessionId};
+use crate::place::{PlaceBindingError, PlaceBindingV1};
 use image::ImageEncoder;
 // The frame-sidecar store is frisket's own since meerkat's deletion (it moved
 // out of session-runtime with the pane model).
@@ -90,15 +91,102 @@ pub fn load_manifests(data_root: &Path) -> ManifestStore {
 /// The sidecar files a session owns (the flat layout's file set, and each
 /// session directory's).
 const PROJECTION_SCORE_FILE: &str = "projection-score.json";
+pub const PLACE_FILE: &str = "place.json";
 
-const SESSION_FILES: [&str; 6] = [
+const SESSION_FILES: [&str; 7] = [
     session_graph_store::GRAPH_FILE,
     frisket_store::FRAME_FILE,
     WORKBENCH_FILE,
     session_runtime::browser_node_state::BROWSER_NODES_FILE,
     frisket_store::WINDOWS_FILE,
     PROJECTION_SCORE_FILE,
+    PLACE_FILE,
 ];
+
+/// A strict `place.json` read or write failure. Unlike optional view sidecars,
+/// an invalid binding must remain visible because silently treating it as a
+/// personal session would change the session's authority model.
+#[derive(Debug)]
+pub enum PlaceSidecarError {
+    Io(std::io::Error),
+    Json(serde_json::Error),
+    Binding(PlaceBindingError),
+}
+
+impl std::fmt::Display for PlaceSidecarError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "place sidecar I/O: {error}"),
+            Self::Json(error) => write!(formatter, "place sidecar JSON: {error}"),
+            Self::Binding(error) => write!(formatter, "place sidecar binding: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PlaceSidecarError {}
+
+impl From<std::io::Error> for PlaceSidecarError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<serde_json::Error> for PlaceSidecarError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
+impl From<PlaceBindingError> for PlaceSidecarError {
+    fn from(error: PlaceBindingError) -> Self {
+        Self::Binding(error)
+    }
+}
+
+pub fn place_binding_path(session_dir: &Path) -> PathBuf {
+    session_dir.join(PLACE_FILE)
+}
+
+/// Persist the public binding through an adjacent temporary file. Group
+/// secrets, welcome material, and live rendezvous state have no representation
+/// in this sidecar.
+pub fn save_place_binding(
+    session_dir: &Path,
+    binding: &PlaceBindingV1,
+) -> Result<(), PlaceSidecarError> {
+    binding.validate()?;
+    std::fs::create_dir_all(session_dir)?;
+    let target = place_binding_path(session_dir);
+    let temporary = target.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(binding)?;
+    if let Err(error) = (|| -> std::io::Result<()> {
+        std::fs::write(&temporary, bytes)?;
+        if target.exists() {
+            std::fs::remove_file(&target)?;
+        }
+        std::fs::rename(&temporary, &target)
+    })() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Load and validate this session's public shared-place binding. Absence means
+/// a personal session; malformed or unsupported content is an explicit error.
+pub fn load_place_binding(
+    session_dir: &Path,
+) -> Result<Option<PlaceBindingV1>, PlaceSidecarError> {
+    let path = place_binding_path(session_dir);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let binding: PlaceBindingV1 = serde_json::from_slice(&bytes)?;
+    binding.validate()?;
+    Ok(Some(binding))
+}
 
 /// The persisted product-free score for this session's active analytic view.
 pub fn projection_score_path(session_dir: &Path) -> PathBuf {
@@ -619,6 +707,52 @@ mod tests {
         assert!(
             !root.join(session_graph_store::GRAPH_FILE).exists(),
             "the score remains a view sidecar"
+        );
+    }
+
+    #[test]
+    fn place_binding_round_trips_as_a_distinct_public_sidecar() {
+        let root = temp_root("place-binding");
+        let binding = PlaceBindingV1::new(
+            crate::place::PlaceId([0x11; 32]),
+            crate::place::SharedContainerId([0x22; 32]),
+            crate::place::ChatSpaceId([0x33; 32]),
+            "commons",
+        )
+        .unwrap();
+
+        assert_eq!(load_place_binding(&root).unwrap(), None);
+        save_place_binding(&root, &binding).unwrap();
+        assert_eq!(load_place_binding(&root).unwrap(), Some(binding));
+        assert!(
+            !root.join(session_graph_store::GRAPH_FILE).exists(),
+            "the place binding remains beside graph truth"
+        );
+    }
+
+    #[test]
+    fn unsupported_place_binding_stays_a_visible_error() {
+        let root = temp_root("place-version");
+        let binding = PlaceBindingV1::new(
+            crate::place::PlaceId([0x11; 32]),
+            crate::place::SharedContainerId([0x22; 32]),
+            crate::place::ChatSpaceId([0x33; 32]),
+            "commons",
+        )
+        .unwrap();
+        let mut value = serde_json::to_value(binding).unwrap();
+        value["version"] = serde_json::json!(99);
+        std::fs::write(
+            place_binding_path(&root),
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let error = load_place_binding(&root).unwrap_err();
+        assert!(error.to_string().contains("unsupported place binding version 99"));
+        assert!(
+            place_binding_path(&root).exists(),
+            "a failed load does not erase the evidence"
         );
     }
 

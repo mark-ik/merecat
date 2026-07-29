@@ -131,6 +131,11 @@ pub struct Shell {
     bin_handle: armillary::ActorHandle<crate::recycle::BinCommand>,
     /// The bin's answers (BinListed / BinFailed), drained beside the fetches.
     bin_rx: Receiver<Update>,
+    /// The retained-place worker. It owns every Gemot, Commons, chat, group,
+    /// and redb handle for the active session.
+    place_handle: armillary::ActorHandle<crate::place::worker::PlaceWorkerCommand>,
+    /// Generation-tagged app-owned answers from the place worker.
+    place_rx: Receiver<Update>,
     /// Last cursor position in physical px. winit's `MouseInput` carries no
     /// position, so the shell tracks it from `CursorMoved`.
     cursor: (f32, f32),
@@ -269,6 +274,16 @@ impl Shell {
         let (bin_handle, bin_rx) =
             crate::recycle::spawn_bin(bin_wake, crate::recycle::bin_dir(&app.session_dir()));
 
+        let place_proxy = proxy.clone();
+        let place_wake: armillary::Wake = Arc::new(move || {
+            let _ = place_proxy.send_event(());
+        });
+        let (place_handle, place_rx) = crate::place::worker::spawn_place_worker(
+            place_wake,
+            app.identity.clone(),
+            crate::place::worker::PlaceWorkerSettings::default(),
+        );
+
         // The content port's engines: the static lane (genet.web) with the
         // shell-owned fetcher (netfetch: https + data:). Scripted/smolweb
         // rungs join by registration, not new dispatch code.
@@ -302,6 +317,8 @@ impl Shell {
             fetch_rx,
             bin_handle,
             bin_rx,
+            place_handle,
+            place_rx,
             cursor: (0.0, 0.0),
             ctrl: false,
             alt: false,

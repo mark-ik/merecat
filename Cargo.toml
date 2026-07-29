@@ -5,9 +5,9 @@ name = "turnstone"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "The cat that lives on the mere: a graph-workspace browser and reference host for the mere library. Turnstone is the English calque of meerkat (Dutch meer + kat, lake-cat); the app is named for the lake it works over."
+description = "A local-first browser for shared, addressable places, built on the Mere graph platform."
 repository = "https://github.com/mark-ik/turnstone"
-keywords = ["browser", "graph", "workspace", "canvas"]
+keywords = ["browser", "peer-to-peer", "graph", "collaboration", "local-first"]
 categories = ["gui"]
 
 [[bin]]
@@ -47,6 +47,14 @@ servitor = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # personae master key (capability-model OQ2). The sealed vault implements the
 # same IdentityProvider trait, so it swaps in without touching consumers.
 identity = { package = "personae", git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Shared-place domains. Turnstone owns their worker composition while Gemot,
+# Commons, Stickleback, and Muniment retain their own wire, authority, crypto,
+# and durable-store contracts.
+commons = { package = "commons-spine", git = "https://github.com/mark-ik/mere.git", branch = "main" }
+gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+stickleback = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+muniment = { git = "https://github.com/mark-ik/mere.git", branch = "main", features = ["redb"] }
+proofs = { package = "mere-proofs", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 chartulary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 codicil = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Denizen subjects are content-derived: blake3(source) is the 32-byte keyholder.

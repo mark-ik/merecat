@@ -55,6 +55,8 @@ impl App {
             sessions,
             session_id,
             content: ContentStates::default(),
+            place: crate::place::PlaceState::default(),
+            next_place_generation: 0,
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
             history: chrome::nav::History::new(String::new()),
@@ -319,6 +321,41 @@ impl App {
         }
         let sdir = self.session_dir();
         let mut effects = Vec::new();
+        self.next_place_generation = self.next_place_generation.wrapping_add(1);
+        let place_generation = self.next_place_generation;
+        // A shared session opens its private graph cache immediately while the
+        // worker materializes the retained Gemot, Commons, chat, and group
+        // state. The worker answer is accepted only for this generation.
+        self.place = match session::load_place_binding(&sdir) {
+            Ok(Some(binding)) => {
+                effects.push(Effect::OpenPlace {
+                    session: id,
+                    generation: place_generation,
+                    binding: binding.clone(),
+                });
+                crate::place::PlaceState::Opening {
+                    binding,
+                    generation: place_generation,
+                }
+            }
+            Ok(None) => {
+                effects.push(Effect::ClosePlace {
+                    session: id,
+                    generation: place_generation,
+                });
+                crate::place::PlaceState::Personal
+            }
+            Err(error) => {
+                tracing::warn!(%error, "place binding failed to load");
+                effects.push(Effect::ClosePlace {
+                    session: id,
+                    generation: place_generation,
+                });
+                crate::place::PlaceState::Failed {
+                    error: error.to_string(),
+                }
+            }
+        };
         // The graph: restored, else fresh — swapped IN PLACE through the
         // canvas's own session-switch seam (mere's MG2 `set_graph`: physics
         // actor and node pool stay alive, every node parks at the origin and

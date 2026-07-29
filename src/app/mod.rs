@@ -80,6 +80,13 @@ pub struct App {
     /// Per-node content lifecycle (rung 4). Data only: the live session
     /// handles live in the shell's content port, keyed by the same ids.
     pub content: ContentStates,
+    /// This session's public shared-place binding and product-visible status.
+    /// Domain stores, joined lanes, transport handles, and key state belong to
+    /// the shell-owned place worker; this field remains data only.
+    pub place: crate::place::PlaceState,
+    /// Monotonic identity for place-worker opens. It is never reset on a
+    /// session switch, so a late answer cannot alias a later visit.
+    pub(crate) next_place_generation: u64,
     /// Which surface receives semantic input (rung 5 slice A). The explicit
     /// replacement for the old `omnibar.open` routing boolean: a third surface
     /// class (panes) joins by adding a `FocusTarget` variant rather than

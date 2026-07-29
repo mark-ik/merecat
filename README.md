@@ -1,11 +1,18 @@
 # turnstone
 
-Turnstone is a graph-workspace browser: an infinite canvas of nodes, panes, and
-web surfaces over a semantically related content graph. It is the reference
-host for [mere](https://github.com/mark-ik/mere), the library that composes
-the graph substrate (chartulary, stemma, scholia), persistence (muniment,
-codicil), retrieval and inference (sibylla, vates), and identity (personae)
-into one lake of content.
+Turnstone is a local-first browser for shared, addressable places where people
+talk, author, publish, and bring other webs into view. Its canvas relates
+people, conversations, shared places, documents, services, and remote
+resources in one durable graph. HTTP and the smolweb protocols are resource
+and exchange lanes within that peer web rather than the product's boundary.
+
+Turnstone is the reference host for
+[mere](https://github.com/mark-ik/mere), the offline graph library and
+repository home of the peer-domain packages it composes. Mere supplies graph
+truth and portable projections; Murm supplies invited exchange; Gemot governs
+durable moots; the Commons profile supplies shared graph and channel
+convergence; Knot owns authored documents; and Genet presents local and remote
+content.
 
 The name is the English calque of *meerkat*: Dutch *meer* + *kat*, lake-cat.
 Mere is the lake; turnstone is the animal you meet at it.
@@ -36,6 +43,12 @@ platen-tiled Workbench; multi-window lenses with identity-preserving pane and
 tile tear-out; and multi-session (`sessions/<id>/` with a switcher and
 restart restore). Every capability carries a self-driving scenario receipt
 (the shared genet-probe driver) plus an accessibility projection.
+
+The peer-web product spine is not yet wired end to end. Personae identity,
+Murm, Gemot, shared graph/chat convergence, Knot communal sync, and Retinue
+carriage have separate executable receipts; Turnstone still lacks the live
+place port that composes them. The bounded integration plan is the
+[peer-web reframe](design_docs/2026-07-28_turnstone_peer_web_reframe.md).
 
 The live plan is `design_docs/2026-07-10_turnstone_architecture_plan.md`; the
 founding brief is `design_docs/2026-07-08_turnstone_founding.md`.

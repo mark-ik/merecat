@@ -7,6 +7,13 @@
 > [2026-07-10_turnstone_architecture_plan.md](./2026-07-10_turnstone_architecture_plan.md);
 > the naming, sequencing, and done-conditions story here still stands. Rung 5 is scoped in
 > [2026-07-14_turnstone_rung5_panes_plan.md](./2026-07-14_turnstone_rung5_panes_plan.md).
+>
+> **Product note, 2026-07-28.** The structural role swap remains current, but
+> "reference host" no longer carries the whole product thesis. The
+> [peer-web reframe](./2026-07-28_turnstone_peer_web_reframe.md) defines
+> Turnstone as the local-first browser and authoring client for personal and
+> shared addressed places. Web rendering is one content lane inside that
+> product.
 
 2026-07-08. Turnstone is the promotion target for mere's `meerkat` app crate,
 and the other half of a role swap: **mere becomes a library** (the lake: a

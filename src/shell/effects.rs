@@ -26,6 +26,20 @@ impl Shell {
             }
             match effect {
                 Effect::SaveSession => self.save_session(),
+                Effect::OpenPlace {
+                    session,
+                    generation,
+                    binding,
+                } => {
+                    self.place_handle
+                        .command(crate::place::worker::PlaceWorkerCommand::Open {
+                            session,
+                            generation,
+                            directory: session::session_dir(&self.app.data_root, session),
+                            binding,
+                        });
+                }
+                Effect::ClosePlace { .. } => self.release_place_worker(),
                 Effect::StoreImage { hex, bytes } => {
                     session::save_image_blob(&self.app.session_dir(), &hex, &bytes);
                 }
@@ -51,6 +65,7 @@ impl Shell {
                 // WITHOUT the departing save — a post-trash save would
                 // resurrect the closed session as a zombie directory.
                 Effect::TrashSession { closing, next } => {
+                    self.release_place_worker();
                     let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
                     self.bin_handle
                         .command(crate::recycle::BinCommand::Release(ack_tx));
@@ -77,6 +92,7 @@ impl Shell {
                 }
                 Effect::SwitchSession { id } => {
                     self.save_session();
+                    self.release_place_worker();
                     self.content_sessions.clear();
                     self.lens_windows.clear();
                     self.pending_lens_capture = None;
@@ -182,12 +198,31 @@ impl Shell {
         }
     }
 
+    /// Release retained place handles before a session directory is switched,
+    /// moved, or left at shutdown.
+    pub(super) fn release_place_worker(&mut self) {
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        self.place_handle
+            .command(crate::place::worker::PlaceWorkerCommand::Release(ack_tx));
+        if ack_rx
+            .recv_timeout(std::time::Duration::from_millis(1500))
+            .is_err()
+        {
+            tracing::warn!("place worker release ack timed out");
+        }
+    }
+
     /// Persist the live session's whole sidecar set under ITS directory
     /// (`sessions/<id>/`) — the SaveSession effect's body, shared by the
     /// session switch (which must save the DEPARTING session first).
     pub(super) fn save_session(&mut self) {
         let sdir = self.app.session_dir();
         session::save_session_graph(&sdir, self.app.canvas.graph());
+        if let Some(binding) = self.app.place.binding()
+            && let Err(error) = session::save_place_binding(&sdir, binding)
+        {
+            tracing::warn!(%error, "failed to persist place binding");
+        }
         let swept = session::gc_orphan_image_blobs(&sdir, self.app.canvas.graph());
         if swept > 0 {
             tracing::info!(swept, "reclaimed orphaned session image blobs");

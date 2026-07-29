@@ -88,6 +88,10 @@ impl ApplicationHandler for Shell {
             let effects = self.app.apply_update(update);
             self.run_effects(effects);
         }
+        while let Ok(update) = self.place_rx.try_recv() {
+            let effects = self.app.apply_update(update);
+            self.run_effects(effects);
+        }
         self.drain_pending_windows(event_loop);
         self.request_redraw();
     }
@@ -110,6 +114,7 @@ impl ApplicationHandler for Shell {
         match event {
             WindowEvent::CloseRequested => {
                 self.act(Action::SaveSession);
+                self.release_place_worker();
                 event_loop.exit();
             }
             // A dropped file lands at the last tracked cursor position (winit

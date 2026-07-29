@@ -25,6 +25,8 @@ impl App {
             sessions: session_runtime::ManifestStore::new(),
             session_id: crate::panes::SessionId::new(),
             content: ContentStates::default(),
+            place: crate::place::PlaceState::default(),
+            next_place_generation: 0,
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
             history: chrome::nav::History::new(""),

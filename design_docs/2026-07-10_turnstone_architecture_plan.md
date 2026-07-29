@@ -1,11 +1,13 @@
 # Turnstone architecture: obviating meerkat
 
-2026-07-10, refreshed 2026-07-14. The founding doc set the role swap (mere =
+2026-07-10, refreshed 2026-07-28. The founding doc set the role swap (mere =
 library, turnstone = the reference host); the boundary pass sharpened what mere
 keeps. This plan is the other half: what turnstone IS, structurally, and the
 ladder by which meerkat becomes unnecessary. Companion to
 [2026-07-08_turnstone_founding.md](./2026-07-08_turnstone_founding.md),
 [2026-07-14_turnstone_rung5_panes_plan.md](./2026-07-14_turnstone_rung5_panes_plan.md),
+the
+[2026-07-28 peer-web reframe](./2026-07-28_turnstone_peer_web_reframe.md),
 and mere's 2026-07-09 boundary pass plan (its decisions are assumed here, as
 amended: canvas stays mere; platen is the node-tiling home inside the workbench
 pane and arrives with the port; the pane model itself is mere's `frisket` crate,
@@ -19,6 +21,12 @@ is `mere/crates/shell/frisket`. See the rung-5 plan.
 
 ## Doctrine
 
+0. **The peer web is the product spine.** Turnstone browses personal and
+   shared addressed places: people, murmurs, moots, channels, documents,
+   services, and remote resources. Gemot, the Commons profile, and Knot do not
+   form another named application beside Turnstone. HTTP and smolweb engines
+   present resources inside this address space. Protocol identity and
+   provenance survive composition.
 1. **Composition, not migration.** Turnstone is assembled from the promoted
    libraries. Meerkat is the donor and the behavioral reference; its modules
    are read for technique and product decisions, never copied wholesale. (The
@@ -135,6 +143,8 @@ them in the meantime:
 | `content` | per-node document lifecycle (`NodeContent` / `ContentStates`) | landed (rung 4, d1e6234; 109 LOC) | feature isolation changes the dep graph |
 | `session` | persistence port: graph.json now; browser_nodes.json, view intent, multi-session later | landed | multi-session lands |
 | `settings` | engine/viewer settings as app truth; retention, transport-preference, export-profile (assigned to turnstone by three mere plans) | absent | it exists at all |
+| `place` | active Moot binding, shared graph/channel snapshots, sync and authority status, and lowering to the shell-owned peer services | absent; planned by the 2026-07-28 peer-web reframe | first two-peer Turnstone receipt |
+| `comms` | direct Murm scope plus the active place's channels; drafts and user-visible backend failures | pane kind only; Mere has an unwired host-neutral model | first live Murm or Commons conversation |
 | `shell` | winit + SurfaceHost + layered present + input routing + effect runner | landed (696 LOC, 0 tests; over the 600 ceiling) | a second host (wasm) appears, or desktop/web shells share the core |
 | `surface` | surface list, rect math, hit-test, focus resolution | absent | rung 5 slice A births it |
 | `pane` | `FrisketLayout` in app truth, summon/close/divider Actions | absent | rung 5 slice C, if `frisket` is adopted |
@@ -360,31 +370,30 @@ daily-driver value, not by meerkat's module sizes.
    Receipt `rung7_lens_session_switch.scn`, which is also the first to drive
    rung 6 and rung 7 together (the switch's port teardown and the bin's
    Release/Reopen handshake happening while a lens holds live pane runners).
-8. **The long tail**. Comms and community services (Murm direct exchange +
-   Moot over `murm-replication`), intel (embed/infer glue), import/crawl,
-   scripting (Piccolo app-control plus Vano/Boa document-host lanes), theming (register-theme/tinct). Each is a
-   port + Actions. A11y projection is NOT here: it is rung 5 (see this plan's own
-   "recorded for later", which pulled it out of the long tail; the 2026-07-10 text
-   contradicted itself by leaving it in this row). Gate, which this rung lacked:
-   Murm and Moot are **not** promoted libraries. `murm-replication` lives at
-   `mere/crates/murm/replication`, inside mere's workspace; there is no repos/murm and
-   no repos/moot; the mere facade re-exports none of comms, murm, moot, or mesh; and
-   the only workspace consumer of `comms` is meerkat. Promotion is the peer-runtime
-   plan's Phase G, gated on Phases A through F. Until Phase G lands, turnstone cannot name
-   Murm or Moot in Cargo.toml at any rung. The founding doc says turnstone's Cargo.toml
-   "should read like the ecosystem map: mere, personae, murm, moot, genet"; two of those
-   five cannot be written today.
+8. **The peer-web spine.** Murm direct exchange, Gemot-governed places, the
+   Commons shared graph/chat profile, and Knot authoring are central product
+   services, each entering through a port and typed Actions. The bounded order
+   and receipt are in the
+   [2026-07-28 peer-web reframe](./2026-07-28_turnstone_peer_web_reframe.md).
+   Calls keep their separate milestone plan. Intel (embed/infer glue),
+   import/crawl, scripting beyond the landed Piccolo host seam, and theming
+   remain the long tail.
 
    **REVISED 2026-07-23 by the repo consolidation.** The gate above is now wrong
    in its premise, not just its detail: promotion to sibling repos was
    *withdrawn*, so "wait for Phase G to make murm/moot libraries" no longer names
-   a thing that will happen. Mere is the platform and murm/moot stay inside it, so
-   the real gate is narrower — mere's facade re-exporting the comms vocabulary.
-   The founding doc's "reads like the ecosystem map" sentence is superseded the
-   same way: `personae` also lives in mere now, so turnstone reaches it (and
-   murm/moot when they surface) THROUGH mere rather than as peers in the manifest.
+   a thing that will happen. Mere is the repository home for the platform
+   packages and Murm/Moot stay inside it.
    See `project_repo_consolidation` and mere's
    `2026-07-23_repo_consolidation_plan.md`.
+
+   **REVISED 2026-07-28 by the peer-web reframe.** Repository home does not
+   imply facade ownership. Turnstone already names Personae, Chartulary,
+   Codicil, Graphshell, and other packages directly from `mere.git`. It may do
+   the same for Murm, Gemot, Comms, transport, and the promoted Commons package.
+   The default `mere` facade remains an offline graph library. The actual gate
+   is a promoted Commons package plus a Gemot-backed authority adapter, followed
+   by one Turnstone place port.
 
 **Meerkat's deletion condition** (the founding doc's done-condition 2 made
 concrete; behavioral receipts, not a subjective trial — 2026-07-10 review

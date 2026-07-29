@@ -52,6 +52,34 @@ impl App {
                 self.events.push(AppEvent::BinFailed(error));
                 vec![Effect::Redraw]
             }
+            Update::PlaceOpened {
+                session,
+                generation,
+                result,
+            } => {
+                if session != self.session_id || self.place.generation() != Some(generation) {
+                    return Vec::new();
+                }
+                let Some(binding) = self.place.binding().cloned() else {
+                    return Vec::new();
+                };
+                self.place = match result {
+                    Ok(snapshot) => crate::place::PlaceState::Offline {
+                        binding,
+                        generation,
+                        snapshot,
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, "place cache failed to open");
+                        crate::place::PlaceState::Degraded {
+                            binding,
+                            generation,
+                            error,
+                        }
+                    }
+                };
+                vec![Effect::Redraw]
+            }
         }
     }
 }
