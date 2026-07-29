@@ -7,7 +7,7 @@ resources in one durable graph. HTTP and the smolweb protocols are resource
 and exchange lanes within that peer web rather than the product's boundary.
 
 Turnstone is the reference host for
-[mere](https://github.com/mark-ik/mere), the offline graph library and
+[mere](https://github.com/merely-made/mere), the offline graph library and
 repository home of the peer-domain packages it composes. Mere supplies graph
 truth and portable projections; Murm supplies invited exchange; Gemot governs
 durable moots; the Commons profile supplies shared graph and channel
