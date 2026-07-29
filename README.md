@@ -43,8 +43,13 @@ founding brief is `design_docs/2026-07-08_turnstone_founding.md`.
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshots/content-browser.png" alt="Turnstone rendering an IANA page beside the graph" width="900"><br>
-  <sub>A graph workspace with an HTML document rendered beside its selected node.</sub>
+  <img src="assets/screenshots/gloss-minimap.png" alt="Turnstone graph canvas beside its Gloss minimap" width="900"><br>
+  <sub>Gloss keeps the graph's wider shape visible while the canvas stays focused on the current node.</sub>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/workbench-split.png" alt="Turnstone Workbench with two graph nodes rendered as tiled web documents" width="900"><br>
+  <sub>The Workbench tiles graph nodes into live document surfaces beside the canvas.</sub>
 </p>
 
 ## Graphshell endpoint
