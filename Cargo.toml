@@ -127,14 +127,14 @@ genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-probe = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
-paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+paint_list_api = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
+paint_list_render = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
 # Suggestion rows key node identity by the graph's stable UUIDs.
 uuid = "1"
 # Resolve a declared icon href (or the /favicon.ico fallback) against the page URL.
 url = "2.5"
 # Rasterize + composite the canvas Scene through the shared present stack.
-netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+netrender = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
 genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # The view toolkit (rung 5 slice D, the toolkit adoption): cambium (the xilem
 # fork) + sprigging (its custom-paint leaves, incl. the data_grid and GraphCanvas
