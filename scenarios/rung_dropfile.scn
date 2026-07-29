@@ -6,10 +6,10 @@
 settle 30
 key escape
 
-drop-file 100 100 C:\Users\mark_\Code\repos\turnstone\scenarios\rung_dropfile.scn
+drop-file 100 100 scenarios/rung_dropfile.scn
 settle 5
 assert focused rung_dropfile.scn
-assert event address-opened file:///C:/Users/mark_/Code/repos/turnstone/scenarios/rung_dropfile.scn
+assert event address-opened file://
 capture 01_file_node
 
 log file-drop receipt complete

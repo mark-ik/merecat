@@ -1,6 +1,6 @@
 # Authoring receipt
 
-```include file:///C:/Users/mark_/Code/repos/turnstone/scenarios/fixtures/knot_authoring/included.md
+```include file://fixture/included.md
 The authored fallback remains visible if resolution is unavailable.
 ```
 

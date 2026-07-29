@@ -3,7 +3,7 @@
 settle 30
 key escape
 settle 3
-open file:///C:/Users/mark_/Code/repos/turnstone/scenarios/fixtures/knot_authoring/field.knot
+open scenarios/fixtures/knot_authoring/field.knot
 settle 5
 act Toggle live content
 wait
