@@ -220,6 +220,8 @@ pub struct ChatCache {
     pub messages: usize,
     pub deleted_messages: usize,
     pub pending_causality: usize,
+    pub pending_authority: usize,
+    pub revoked_authority: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
