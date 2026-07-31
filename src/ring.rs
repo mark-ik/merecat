@@ -172,8 +172,15 @@ pub fn emit_allowed(
 ) -> Result<(), String> {
     let ring = ring_of(action);
     let Some(cap) = ring.cap() else {
+        // One ring, two reasons. They deny identically, so the attribution
+        // belongs in the message rather than in a second enum variant that
+        // would behave the same. Split the ring only if the policies diverge.
+        let what = match action {
+            Action::JoinPlace(_) => "joining a place",
+            _ => "gate management",
+        };
         return Err(format!(
-            "{}: gate management is host-only; no grantable capability exists",
+            "{}: {what} is host-only; no grantable capability exists",
             ring.name()
         ));
     };

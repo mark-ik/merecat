@@ -19,8 +19,8 @@ use identity::{IdentityProvider, SealedRecordStorage};
 use muniment::RedbBackend;
 use proofs::Digest;
 use stickleback::{
-    DataKeyring, DropLimits, GroupControlFrame, GroupDirectFrame, GroupPrekeyBundle, GroupSession,
-    GroupSessionId,
+    DataKeyring, DropExportProfile, DropLimits, GroupControlFrame, GroupDirectFrame,
+    GroupPrekeyBundle, GroupSession, GroupSessionId,
 };
 
 use crate::action::Update;
@@ -218,6 +218,163 @@ pub fn prepare_group_identity(
     Ok(bundle)
 }
 
+/// Author an invitation to this profile's own place for one published pre-key.
+///
+/// The counterpart to [`admit_invitation`], and deliberately the same shape in
+/// reverse: it reads only retained domain state, mints no authority, and every
+/// field it fills is one the recipient re-derives and checks independently.
+///
+/// The caller supplies `joiner_prekey` out of band. Which channel carried it is
+/// not this function's concern and must never become evidence: the bundle
+/// carries its own Personae attestation, which is what binds it to a person.
+pub fn author_invitation(
+    directory: &Path,
+    binding: &PlaceBindingV1,
+    identity: &dyn IdentityProvider,
+    joiner_prekey: &[u8],
+    not_after_ms: u64,
+    settings: &PlaceWorkerSettings,
+) -> Result<PlaceInviteV1, String> {
+    binding
+        .validate()
+        .map_err(|error| format!("place binding: {error}"))?;
+    let prekey = GroupPrekeyBundle::from_bytes(joiner_prekey)
+        .map_err(|error| format!("decode joiner pre-key: {error}"))?;
+    if prekey.group != GroupSessionId(binding.moot.0) {
+        return Err("joiner pre-key belongs to another group".to_string());
+    }
+    let joiner_root = prekey
+        .personae_root()
+        .map_err(|error| format!("verify joiner pre-key: {error}"))?;
+
+    let stores = place_store_dir(directory);
+    let moot = pollster::block_on(MootFile::open_existing(
+        stores.join("gemot"),
+        MootId(binding.moot.0),
+        settings.retention.clone(),
+    ))
+    .map_err(|error| format!("open Gemot store: {error}"))?;
+    let snapshot = pollster::block_on(moot.snapshot())
+        .map_err(|error| format!("materialize Gemot: {error}"))?;
+    // The recipient must already be a governed member. Inviting someone the
+    // Moot has not admitted would mint an envelope that can only ever be
+    // refused, and refusing here names the real reason instead.
+    if !snapshot
+        .membership
+        .members
+        .iter()
+        .any(|member| member.member == joiner_root)
+    {
+        return Err("Gemot membership does not contain the invited root".to_string());
+    }
+
+    let mut evidence = Vec::new();
+    pollster::block_on(moot.export_plain_drop(
+        &mut evidence,
+        DropExportProfile::default(),
+        DropLimits::default(),
+    ))
+    .map_err(|error| format!("export Gemot evidence: {error}"))?;
+
+    // Welcome the recipient into the crypto group, then persist: the epoch this
+    // mints is the one the envelope names, so losing it would strand a welcome
+    // this profile can no longer follow.
+    let mut group = load_group_session(directory, identity, binding.moot.0)?;
+    group
+        .register_prekey(&prekey)
+        .map_err(|error| format!("register joiner pre-key: {error}"))?;
+    let dispatch = group
+        .add(prekey.recipient)
+        .map_err(|error| format!("welcome the joiner: {error}"))?;
+    let direct = dispatch
+        .direct_for(prekey.recipient)
+        .ok_or_else(|| "welcome carries no frame for the invited recipient".to_string())?;
+    let expected_epoch = group
+        .current_epoch()
+        .ok_or_else(|| "welcoming a member installed no epoch".to_string())?;
+    save_group_session(directory, identity, &group)?;
+
+    Ok(PlaceInviteV1 {
+        version: crate::place::invite::PLACE_INVITE_VERSION,
+        binding: binding.clone(),
+        founder: snapshot.governance.founder,
+        inviter: identity.master_public_key().to_bytes(),
+        inviter_prekey: inline_artifact(
+            &sealed_prekey_bytes(directory, identity, binding.moot.0)?,
+        ),
+        governance: inline_artifact(&evidence),
+        key_welcome: inline_artifact(
+            &dispatch
+                .control
+                .to_bytes()
+                .map_err(|error| format!("encode welcome control: {error}"))?,
+        ),
+        key_direct: inline_artifact(
+            &direct
+                .to_bytes()
+                .map_err(|error| format!("encode welcome frame: {error}"))?,
+        ),
+        expected_epoch,
+        membership_heads: snapshot.membership.auth_heads,
+        not_after_ms,
+        rendezvous: Vec::new(),
+    })
+}
+
+/// This profile's own published pre-key bundle for one Moot.
+fn sealed_prekey_bytes(
+    directory: &Path,
+    identity: &dyn IdentityProvider,
+    moot: [u8; 32],
+) -> Result<Vec<u8>, String> {
+    sealed_group_store(directory, identity, moot)?
+        .load_record(GROUP_PREKEY_RECORD)
+        .map_err(|error| format!("load sealed group pre-key: {error}"))?
+        .ok_or_else(|| "this profile has no prepared group identity".to_string())
+}
+
+/// Wrap bytes as a digest-checked inline artifact.
+fn inline_artifact(bytes: &[u8]) -> crate::place::invite::ArtifactRefV1 {
+    crate::place::invite::ArtifactRefV1::Inline {
+        media_type: "application/vnd.mere.place-artifact".into(),
+        digest: *Digest::blake3(bytes)
+            .bytes
+            .first_chunk::<32>()
+            .expect("blake3 produces 32 bytes"),
+        bytes: bytes.to_vec(),
+    }
+}
+
+/// Create this place's crypto group with this profile as its first member.
+///
+/// The founding counterpart to [`prepare_group_identity`]. A Moot's governance
+/// fold and its DCGKA group are founded separately and neither implies the
+/// other: Gemot decides who belongs, Stickleback decides who can read. Until
+/// this runs, the founder holds a group identity but is not an active member
+/// of any group, so it cannot welcome anyone.
+///
+/// Idempotent. A group that already has members is left exactly as it is
+/// rather than re-created, since re-creating would strand every epoch already
+/// handed out.
+pub fn found_place_group(
+    directory: &Path,
+    identity: &dyn IdentityProvider,
+    moot: [u8; 32],
+) -> Result<(), String> {
+    prepare_group_identity(directory, identity, moot)?;
+    let mut group = load_group_session(directory, identity, moot)?;
+    let members = group
+        .members()
+        .map_err(|error| format!("read group membership: {error}"))?;
+    if !members.is_empty() {
+        return Ok(());
+    }
+    group
+        .create(&[])
+        .map_err(|error| format!("create place group: {error}"))?;
+    save_group_session(directory, identity, &group)
+}
+
 /// Reopen the sealed group session established by [`prepare_group_identity`].
 fn load_group_session(
     directory: &Path,
@@ -238,9 +395,16 @@ fn load_group_session(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmittedPlace {
     pub binding: PlaceBindingV1,
+    /// Governance membership: Gemot's converged fold.
     pub moot: MootCache,
-    /// Members of the converged Gemot fold at admission time.
-    pub members: usize,
+    /// Crypto membership: the DCGKA group this welcome joined.
+    ///
+    /// Deliberately not the same number as `moot.members`, and not asserted
+    /// equal to it. They are different folds and can legitimately disagree the
+    /// moment a join completes, because the joiner has processed exactly one
+    /// welcome while Gemot's evidence may already carry later membership. A
+    /// lasting divergence is worth surfacing; an immediate one is normal.
+    pub group_members: usize,
 }
 
 fn admit_inner(
@@ -405,7 +569,10 @@ fn admit_inner(
             delegated_certificates: receipt.snapshot.delegated_certificates,
             tessera_operations: receipt.snapshot.tessera_operations,
         },
-        members: members.len(),
+        group_members: group
+            .members()
+            .map_err(|error| format!("materialize group membership: {error}"))?
+            .len(),
     })
 }
 
@@ -1045,7 +1212,8 @@ mod tests {
         let admitted =
             admit_invitation(&joined, &invite, &joiner, &settings()).expect("valid invitation");
         assert_eq!(admitted.binding, binding);
-        assert_eq!(admitted.members, 2);
+        assert_eq!(admitted.moot.members, 2, "Gemot's governance fold");
+        assert_eq!(admitted.group_members, 2, "Stickleback's crypto fold");
         assert_eq!(residue(&joined), (true, true, true));
 
         // A tampered artifact never reaches a domain, and leaves no store.
@@ -1121,6 +1289,118 @@ mod tests {
         assert_eq!(residue(&aliased_dir), (false, false, false));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_authored_invitation_admits_on_the_other_side() {
+        let root =
+            std::env::temp_dir().join(format!("turnstone-place-author-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let founder = InMemoryProvider::from_seed([0xc1; 32]);
+        let joiner = RootIdentity::Unsealed(InMemoryProvider::from_seed([0xc2; 32]));
+        let outsider = RootIdentity::Unsealed(InMemoryProvider::from_seed([0xc3; 32]));
+        let binding = binding(0x71);
+        let host = root.join("host");
+        let guest = root.join("guest");
+
+        // Both sides prepare a durable group identity before any envelope
+        // exists. This is the precondition, not a step in the flow.
+        let joiner_prekey = prepare_group_identity(&guest, &joiner, binding.moot.0).unwrap();
+        found_place_for_authoring(
+            &host,
+            &binding,
+            &founder,
+            joiner.master_public_key().to_bytes(),
+        );
+        // The host founds its crypto group; the guest only prepares an
+        // identity. Different preconditions for different roles.
+        found_place_group(&host, &founder, binding.moot.0).unwrap();
+        assert!(
+            found_place_group(&host, &founder, binding.moot.0).is_ok(),
+            "founding twice must not strand the epochs already handed out"
+        );
+
+        // Someone the Moot never admitted cannot be invited, and the refusal
+        // names the real reason rather than minting an envelope that could
+        // only ever be refused on arrival.
+        let outsider_prekey =
+            prepare_group_identity(&root.join("outsider"), &outsider, binding.moot.0).unwrap();
+        let error = author_invitation(
+            &host,
+            &binding,
+            &founder,
+            &outsider_prekey,
+            AUTHORITY_AT_MS + 1_000,
+            &settings(),
+        )
+        .unwrap_err();
+        assert!(error.contains("does not contain the invited root"), "{error}");
+
+        let invite = author_invitation(
+            &host,
+            &binding,
+            &founder,
+            &joiner_prekey,
+            AUTHORITY_AT_MS + 1_000,
+            &settings(),
+        )
+        .unwrap();
+
+        // The product path produced it and the product path accepts it: no
+        // test fixture stands between the two sides.
+        let admitted = admit_invitation(&guest, &invite, &joiner, &settings())
+            .expect("an authored invitation admits");
+        assert_eq!(admitted.binding, binding);
+        assert_eq!(admitted.moot.members, 2);
+        assert_eq!(admitted.group_members, 2);
+        assert_eq!(residue(&guest), (true, true, true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Found a Moot with both roots in its membership fold, as the authoring
+    /// side would already have.
+    fn found_place_for_authoring(
+        directory: &Path,
+        binding: &PlaceBindingV1,
+        founder: &InMemoryProvider,
+        joiner_root: [u8; 32],
+    ) {
+        let founder_id = founder.master_public_key().to_bytes();
+        let stores = place_store_dir(directory);
+        std::fs::create_dir_all(&stores).unwrap();
+        let moot = pollster::block_on(MootFile::open(
+            stores.join("gemot"),
+            MootId(binding.moot.0),
+            founder_id,
+            settings().retention,
+        ))
+        .unwrap();
+        pollster::block_on(moot.found(
+            founder.master_keypair().to_seed(),
+            None,
+            None,
+            place_rules(founder_id),
+            1,
+        ))
+        .unwrap();
+        pollster::block_on(moot.membership_store().author_for_identity(
+            founder,
+            MootMembershipAction::Create {
+                initial_members: vec![MootMember {
+                    member: founder_id,
+                    access: MootAccessLevel::Manage,
+                }],
+            },
+        ))
+        .unwrap();
+        pollster::block_on(moot.membership_store().author_for_identity(
+            founder,
+            MootMembershipAction::Add {
+                member: joiner_root,
+                access: MootAccessLevel::Write,
+            },
+        ))
+        .unwrap();
     }
 
     #[test]
