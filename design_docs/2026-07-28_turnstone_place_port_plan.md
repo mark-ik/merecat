@@ -473,10 +473,25 @@ invitation would let any stranger destroy the key material a pending welcome is
 already addressed to, so refusal now removes only a Gemot store this attempt
 created and never touches sealed secrets.
 
-**Still unproved:** check 4, that Gemot binds the produced epoch to the same
-membership heads. The envelope names no expected epoch, and adding one needs a
-key-typed field in a module whose whole discipline is to hold no key types.
-Decide the representation before claiming this check.
+**Check 4 now holds.** The earlier worry about key types was misplaced: a
+`GroupSecretId` is the SHA-256 *of* a secret, not the secret, so `expected_epoch`
+names an epoch without disclosing anything and the no-key-types discipline is
+intact.
+
+The substantive half is `membership_heads`. Pinning the epoch alone would not
+be enough: an epoch minted before a removal still decrypts, so a welcome could
+hand a joiner a key a since-departed member also holds while every other check
+passed. Admission requires the pinned heads to equal the heads Gemot itself
+converged to from the imported evidence.
+
+**Delivery is not evidence.** An invitation may reasonably arrive over a Murm
+thread with someone already trusted, over a pasted link, or over a carrier.
+Admission is identical in every case and a trusted sender shortcuts nothing.
+This is structural rather than a rule: `admit_invitation` takes no channel,
+peer, or session argument, so there is nowhere for delivery trust to enter.
+Keep it that way when Murm becomes a real delivery path, and when a Murm
+rendezvous carrier is added it goes in the `rendezvous` list, which already
+tolerates unknown tags without refusing the envelope.
 
 Done when a malformed, expired, or foreign-recipient invitation leaves no
 `place.json` and no sealed secret behind, and a valid one joins all three

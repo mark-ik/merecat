@@ -350,8 +350,26 @@ fn admit_inner(
     group
         .process(invite.inviter, &control, Some(&direct))
         .map_err(|error| format!("process group welcome: {error}"))?;
-    if group.current_epoch().is_none() {
-        return Err("group welcome produced no current epoch".to_string());
+    // 4. Gemot binds that epoch to the same membership heads.
+    //
+    // The epoch must be the one the invitation describes, and it must have been
+    // minted against the membership state Gemot itself converged to from the
+    // imported evidence. Without the second half, a welcome minted before a
+    // removal would hand the joiner a key the departed member still holds, and
+    // every other check would still pass.
+    match group.current_epoch() {
+        None => return Err("group welcome produced no current epoch".to_string()),
+        Some(epoch) if epoch != invite.expected_epoch => {
+            return Err("group welcome installed an epoch the invitation does not name".to_string());
+        }
+        Some(_) => {}
+    }
+    // `auth_heads()` returns sorted heads, and the envelope's are bounded and
+    // compared as given: a reordered or padded list is a different claim.
+    if receipt.snapshot.membership.auth_heads != invite.membership_heads {
+        return Err(
+            "invitation pins membership heads that Gemot did not converge to".to_string(),
+        );
     }
 
     // Every domain has answered. Only now does anything durable exist.
@@ -851,6 +869,10 @@ mod tests {
             DropLimits::default(),
         ))
         .unwrap();
+        let membership_heads = pollster::block_on(moot.snapshot())
+            .unwrap()
+            .membership
+            .auth_heads;
         drop(moot);
 
         // The joiner's group identity already exists and its pre-key is
@@ -874,6 +896,10 @@ mod tests {
             governance: inline_artifact(&drop_bytes),
             key_welcome: inline_artifact(&dispatch.control.to_bytes().unwrap()),
             key_direct: inline_artifact(&direct.to_bytes().unwrap()),
+            expected_epoch: founder_group
+                .current_epoch()
+                .expect("adding a member installs an epoch"),
+            membership_heads,
             rendezvous: Vec::new(),
         }
     }
@@ -888,6 +914,27 @@ mod tests {
                 .unwrap(),
             bytes: bytes.to_vec(),
         }
+    }
+
+    /// A joiner directory with a prepared identity, plus an invitation whose
+    /// welcome is genuinely addressed to it.
+    fn matched_case(
+        root: &Path,
+        name: &str,
+        binding: &PlaceBindingV1,
+        founder: &InMemoryProvider,
+        joiner: &RootIdentity,
+    ) -> (PathBuf, PlaceInviteV1) {
+        let directory = root.join(name);
+        let published = prepare_group_identity(&directory, joiner, binding.moot.0).unwrap();
+        let invite = real_invitation(
+            &root.join(format!("{name}-founder")),
+            binding,
+            founder,
+            published,
+            joiner.master_public_key().to_bytes(),
+        );
+        (directory, invite)
     }
 
     fn residue(directory: &Path) -> (bool, bool) {
@@ -960,6 +1007,29 @@ mod tests {
         let error = admit_invitation(&forged_dir, &forged, &joiner, &settings()).unwrap_err();
         assert!(error.contains("outside Gemot membership"), "{error}");
         assert_eq!(residue(&forged_dir), (false, false));
+
+        // Check 4's two refusals need a welcome genuinely addressed to the
+        // directory under test, since every prepared identity draws a fresh
+        // random recipient. Each gets its own matched invitation.
+        //
+        // An epoch other than the one the invitation names is refused even
+        // though the welcome itself is genuine and processes cleanly.
+        let (wrong_epoch_dir, mut wrong_epoch) =
+            matched_case(&root, "wrong-epoch", &binding, &founder, &joiner);
+        wrong_epoch.expected_epoch = [0xee; 32];
+        let error =
+            admit_invitation(&wrong_epoch_dir, &wrong_epoch, &joiner, &settings()).unwrap_err();
+        assert!(error.contains("does not name"), "{error}");
+
+        // Membership heads the inviter pinned but Gemot did not converge to.
+        // This is what stops a welcome minted before a removal from handing the
+        // joiner a key a departed member still holds.
+        let (stale_heads_dir, mut stale_heads) =
+            matched_case(&root, "stale-heads", &binding, &founder, &joiner);
+        stale_heads.membership_heads = vec![[0xaa; 32]];
+        let error =
+            admit_invitation(&stale_heads_dir, &stale_heads, &joiner, &settings()).unwrap_err();
+        assert!(error.contains("did not converge"), "{error}");
 
         // Aliased Commons scopes are refused before any store is created.
         let aliased_dir = root.join("aliased");

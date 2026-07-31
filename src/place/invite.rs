@@ -7,6 +7,14 @@
 //!
 //! Everything here is data and bounds. The admission decision lives in the
 //! worker, where Gemot and Stickleback can actually answer.
+//!
+//! **Delivery is not evidence.** An invitation may reasonably arrive over a
+//! Murm thread with someone the user already knows and trusts, over a pasted
+//! link, or over a radio carrier. None of that changes admission: the five
+//! checks are identical, and a trusted sender shortcuts none of them. This is
+//! structural rather than a rule to remember, because `admit_invitation` takes
+//! no channel, peer, or session argument. There is nowhere for delivery trust
+//! to enter it, and there should remain nowhere.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +34,7 @@ const MAX_INLINE_ARTIFACT_BYTES: usize = 1024 * 1024;
 const MAX_MEDIA_TYPE_LEN: usize = 128;
 const MAX_ADDRESS_LEN: usize = 2048;
 const MAX_RENDEZVOUS: usize = 16;
+const MAX_MEMBERSHIP_HEADS: usize = 256;
 const MAX_CARRIER_LEN: usize = 128;
 const MAX_HINT_LEN: usize = 4096;
 
@@ -174,6 +183,21 @@ pub struct PlaceInviteV1 {
     /// separately means a peer-supplied welcome is parsed by its own domain
     /// instead of by a raw CBOR decode into a struct with private fields.
     pub key_direct: ArtifactRefV1,
+    /// The group epoch this welcome must install.
+    ///
+    /// A `GroupSecretId` is the SHA-256 of the secret, not the secret, so
+    /// naming one discloses nothing and this module keeps its no-key-types
+    /// discipline. It is carried so admission can refuse a welcome that
+    /// installs some *other* epoch than the one the inviter is describing.
+    pub expected_epoch: [u8; 32],
+    /// The Gemot membership heads the epoch was minted against, sorted.
+    ///
+    /// This is the fifth check's substance: an epoch minted before a removal
+    /// still decrypts, so without pinning the membership state it was minted
+    /// at, a welcome could hand a joiner a key that a since-departed member
+    /// also holds. Admission requires these to equal the heads Gemot itself
+    /// converged to from the imported evidence.
+    pub membership_heads: Vec<[u8; 32]>,
     pub rendezvous: Vec<RendezvousV1>,
 }
 
@@ -188,6 +212,16 @@ impl PlaceInviteV1 {
             return Err(InviteError::UnsupportedVersion(self.version));
         }
         self.binding.validate().map_err(InviteError::Binding)?;
+        if self.membership_heads.is_empty() {
+            return Err(InviteError::NoMembershipHeads);
+        }
+        if self.membership_heads.len() > MAX_MEMBERSHIP_HEADS {
+            return Err(InviteError::FieldTooLong {
+                field: "membership heads",
+                length: self.membership_heads.len(),
+                maximum: MAX_MEMBERSHIP_HEADS,
+            });
+        }
         if self.rendezvous.len() > MAX_RENDEZVOUS {
             return Err(InviteError::TooManyRendezvous {
                 count: self.rendezvous.len(),
@@ -253,6 +287,7 @@ pub enum InviteError {
         maximum: usize,
     },
     EmptyCarrier,
+    NoMembershipHeads,
     FieldTooLong {
         field: &'static str,
         length: usize,
@@ -283,6 +318,10 @@ impl std::fmt::Display for InviteError {
                 "invitation carries {count} rendezvous entries; maximum is {maximum}"
             ),
             Self::EmptyCarrier => write!(formatter, "rendezvous carrier tag is empty"),
+            Self::NoMembershipHeads => write!(
+                formatter,
+                "invitation pins no membership heads for its group epoch"
+            ),
             Self::FieldTooLong {
                 field,
                 length,
@@ -341,6 +380,8 @@ mod tests {
             governance: inline(b"gemot native drop"),
             key_welcome: inline(b"group control frame"),
             key_direct: inline(b"recipient-bound direct frame"),
+            expected_epoch: [4; 32],
+            membership_heads: vec![[5; 32]],
             rendezvous: vec![RendezvousV1 {
                 carrier: P2PANDA_ENDPOINT_TICKET.into(),
                 hint: "ticket".into(),
