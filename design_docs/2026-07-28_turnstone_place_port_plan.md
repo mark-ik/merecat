@@ -414,13 +414,23 @@ delegation windows are absolute and the pending/revoked distinction depends on
 it. Tests pin it. A clock error reads as 0, under which nothing has opened yet,
 so unreadable time withholds content rather than admitting it.
 
-#### T3a. Invitation and admitted join
+#### T3a. Invitation and admitted join - envelope landed 2026-07-31, admission open
 
-- Parse and bound `PlaceInviteV1`; verify the Gemot governance artifact and the
-  recipient-bound Stickleback welcome.
-- Persist the binding only after admission succeeds, never on parse.
-- Join the Gemot, Commons graph, and Commons chat lanes from the invitation's
-  rendezvous tag.
+- ~~Parse and bound `PlaceInviteV1`~~ done: `src/place/invite.rs`. Digests
+  checked against bytes, inline artifacts and rendezvous lists bounded before
+  they are trusted. An `Addressed` artifact returns `UnfetchedArtifact` rather
+  than an empty slice, so an admission step cannot read "not fetched" as
+  "verified empty". An unknown carrier survives parsing and never appears in
+  `dialable()`, so adding a carrier is not a breaking change.
+- **Open:** verify the Gemot governance artifact and the recipient-bound
+  Stickleback welcome. This is the whole five-check list above, and it needs
+  Gemot drop import plus `GroupSession::process` against a registered prekey.
+  Structural validation is explicitly not admission; the module says so.
+- **Open:** persist the binding only after admission succeeds, never on parse.
+  Today `place.json` and the sealed group session are written by a path that
+  predates the envelope.
+- **Open:** join the Gemot, Commons graph, and Commons chat lanes from the
+  invitation's rendezvous tag.
 
 Done when a malformed, expired, or foreign-recipient invitation leaves no
 `place.json` and no sealed secret behind, and a valid one joins all three
