@@ -93,6 +93,12 @@ pub enum PlaceWorkerCommand {
         directory: PathBuf,
         binding: PlaceBindingV1,
     },
+    Join {
+        session: SessionId,
+        generation: u64,
+        directory: PathBuf,
+        invite: Box<PlaceInviteV1>,
+    },
     Release(std::sync::mpsc::SyncSender<()>),
 }
 
@@ -553,6 +559,48 @@ pub fn spawn_place_worker(
                                 });
                             }
                             Err(error) => out.emit(Update::PlaceOpened {
+                                session,
+                                generation,
+                                result: Err(error),
+                            }),
+                        }
+                    }
+                    PlaceWorkerCommand::Join {
+                        session,
+                        generation,
+                        directory,
+                        invite,
+                    } => {
+                        // Admission first, then the ordinary cached open. The
+                        // second step is not a formality: it proves the place
+                        // admission just established actually reopens through
+                        // the same path every later boot will use.
+                        live = None;
+                        let joined = admit_invitation(
+                            &directory,
+                            &invite,
+                            identity.as_ref(),
+                            &settings,
+                        )
+                        .and_then(|admitted| {
+                            open_cached_place(
+                                &directory,
+                                &admitted.binding,
+                                identity.as_ref(),
+                                &settings,
+                            )
+                            .map(|(opened, snapshot)| (admitted.binding, opened, snapshot))
+                        });
+                        match joined {
+                            Ok((binding, opened, snapshot)) => {
+                                live = Some(opened);
+                                out.emit(Update::PlaceJoined {
+                                    session,
+                                    generation,
+                                    result: Ok((binding, snapshot)),
+                                });
+                            }
+                            Err(error) => out.emit(Update::PlaceJoined {
                                 session,
                                 generation,
                                 result: Err(error),

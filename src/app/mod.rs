@@ -408,6 +408,7 @@ impl App {
             }
             Action::ToggleSizeByRecency => self.toggle_size_by_recency(),
             Action::SaveSession => vec![Effect::SaveSession],
+            Action::JoinPlace(invite) => self.join_place(invite),
             // Multi-session (rung 6's second half). Both lower to the shell's
             // SwitchSession effect: the PORT saves the departing session and
             // tears down its live handles before the app adopts the target —

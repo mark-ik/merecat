@@ -240,6 +240,15 @@ pub struct GroupCache {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaceState {
     Personal,
+    /// An invitation is being admitted.
+    ///
+    /// Deliberately carries no binding. The envelope names one, but until every
+    /// admission check has answered there is no admitted place, and app state
+    /// claiming a binding here would be the same conflation the persistence
+    /// ordering exists to prevent.
+    Joining {
+        generation: u64,
+    },
     Opening {
         binding: PlaceBindingV1,
         generation: u64,
@@ -271,13 +280,14 @@ impl PlaceState {
             Self::Opening { binding, .. }
             | Self::Offline { binding, .. }
             | Self::Degraded { binding, .. } => Some(binding),
-            Self::Personal | Self::Failed { .. } => None,
+            Self::Personal | Self::Joining { .. } | Self::Failed { .. } => None,
         }
     }
 
     pub fn generation(&self) -> Option<u64> {
         match self {
-            Self::Opening { generation, .. }
+            Self::Joining { generation }
+            | Self::Opening { generation, .. }
             | Self::Offline { generation, .. }
             | Self::Degraded { generation, .. } => Some(*generation),
             Self::Personal | Self::Failed { .. } => None,

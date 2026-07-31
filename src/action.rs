@@ -105,6 +105,12 @@ pub enum Action {
     ToggleSizeByRecency,
     /// Persist the session now (close path; enrichment saves ride effects).
     SaveSession,
+    /// Admit an invitation into the current session, then open the place.
+    ///
+    /// The envelope carries no authority. Nothing durable exists for this place
+    /// until every admission check has answered, so this is a request to try,
+    /// not a statement that the session now belongs to a place.
+    JoinPlace(Box<crate::place::invite::PlaceInviteV1>),
     /// Flip the focused node's live content: spawn a document session for it
     /// through the content port, or close the one it has (rung 4; the
     /// session-engines plan's phase-4 consumer intent).
@@ -419,6 +425,15 @@ pub enum Effect {
         generation: u64,
         binding: crate::place::PlaceBindingV1,
     },
+    /// Admit one invitation, then open the place it names.
+    ///
+    /// Boxed because the envelope carries inline artifacts and every `Effect`
+    /// would otherwise pay for the largest variant.
+    JoinPlace {
+        session: crate::panes::SessionId,
+        generation: u64,
+        invite: Box<crate::place::invite::PlaceInviteV1>,
+    },
     /// Release any retained place handles. The shell waits for acknowledgement
     /// on switch, trash, and shutdown before touching the session directory.
     ClosePlace {
@@ -500,6 +515,24 @@ pub enum Update {
         session: crate::panes::SessionId,
         generation: u64,
         result: Result<crate::place::OfflinePlaceSnapshot, String>,
+    },
+    /// One invitation admission completed.
+    ///
+    /// Distinct from [`Update::PlaceOpened`] because the failure means
+    /// something different: an open that fails leaves a degraded but real
+    /// place, while an admission that fails means there is no place at all.
+    /// The binding travels in the success arm because until admission returns
+    /// it, the app has no admitted binding to name.
+    PlaceJoined {
+        session: crate::panes::SessionId,
+        generation: u64,
+        result: Result<
+            (
+                crate::place::PlaceBindingV1,
+                crate::place::OfflinePlaceSnapshot,
+            ),
+            String,
+        >,
     },
 }
 

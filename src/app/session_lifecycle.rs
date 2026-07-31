@@ -305,6 +305,26 @@ impl App {
         (!label.trim().is_empty()).then_some(label)
     }
 
+    /// Ask the worker to admit `invite` into the current session.
+    ///
+    /// The app claims nothing while it waits. `Joining` carries a generation
+    /// and no binding, because the envelope naming a place is not the same as
+    /// the place having admitted this profile, and a refusal must leave the
+    /// session exactly as personal as it was.
+    pub fn join_place(
+        &mut self,
+        invite: Box<crate::place::invite::PlaceInviteV1>,
+    ) -> Vec<Effect> {
+        self.next_place_generation = self.next_place_generation.wrapping_add(1);
+        let generation = self.next_place_generation;
+        self.place = crate::place::PlaceState::Joining { generation };
+        vec![Effect::JoinPlace {
+            session: self.session_id,
+            generation,
+            invite,
+        }]
+    }
+
     /// Adopt `id`'s persisted state wholesale — the load half of a boot and
     /// the whole of a switch. Rebuilds canvas / panes / workbench / browser /
     /// content from `sessions/<id>/` (missing files start fresh), reseeds

@@ -39,6 +39,19 @@ impl Shell {
                             binding,
                         });
                 }
+                Effect::JoinPlace {
+                    session,
+                    generation,
+                    invite,
+                } => {
+                    self.place_handle
+                        .command(crate::place::worker::PlaceWorkerCommand::Join {
+                            session,
+                            generation,
+                            directory: session::session_dir(&self.app.data_root, session),
+                            invite,
+                        });
+                }
                 Effect::ClosePlace { .. } => self.release_place_worker(),
                 Effect::StoreImage { hex, bytes } => {
                     session::save_image_blob(&self.app.session_dir(), &hex, &bytes);

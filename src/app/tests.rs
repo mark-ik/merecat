@@ -164,6 +164,95 @@ fn stale_place_update_from_a_departed_session_is_ignored() {
 }
 
 #[test]
+fn a_refused_invitation_leaves_no_binding_in_app_state() {
+    let mut app = App::test_stub();
+    let invite = Box::new(crate::place::invite::PlaceInviteV1 {
+        version: crate::place::invite::PLACE_INVITE_VERSION,
+        binding: crate::place::PlaceBindingV1::new(
+            crate::place::PlaceId([0x71; 32]),
+            crate::place::SharedContainerId([0x72; 32]),
+            crate::place::ChatSpaceId([0x73; 32]),
+            "hall",
+        )
+        .unwrap(),
+        founder: [0x74; 32],
+        inviter: [0x75; 32],
+        inviter_prekey: inline_artifact(b"prekey"),
+        governance: inline_artifact(b"drop"),
+        key_welcome: inline_artifact(b"control"),
+        key_direct: inline_artifact(b"direct"),
+        expected_epoch: [0x76; 32],
+        membership_heads: vec![[0x77; 32]],
+        rendezvous: Vec::new(),
+    });
+
+    let effects = app.join_place(invite);
+    let generation = match &app.place {
+        // While admission runs the app names a generation and nothing else.
+        // The envelope names a place; that is not the same as belonging to one.
+        crate::place::PlaceState::Joining { generation } => *generation,
+        other => panic!("join must begin in Joining, got {other:?}"),
+    };
+    assert!(app.place.binding().is_none());
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::JoinPlace { generation: g, .. }] if *g == generation
+    ));
+
+    assert_eq!(
+        app.apply_update(Update::PlaceJoined {
+            session: app.session_id,
+            generation,
+            result: Err("Gemot membership does not contain this Personae root".into()),
+        }),
+        vec![Effect::Redraw]
+    );
+    // Failed, not Degraded: a refusal means there is no place, so nothing may
+    // carry a binding that admission never granted.
+    assert!(matches!(app.place, crate::place::PlaceState::Failed { .. }));
+    assert!(app.place.binding().is_none());
+}
+
+#[test]
+fn a_stale_join_answer_cannot_bind_a_session() {
+    let mut app = App::test_stub();
+    let binding = crate::place::PlaceBindingV1::new(
+        crate::place::PlaceId([0x81; 32]),
+        crate::place::SharedContainerId([0x82; 32]),
+        crate::place::ChatSpaceId([0x83; 32]),
+        "hall",
+    )
+    .unwrap();
+    app.place = crate::place::PlaceState::Joining { generation: 7 };
+
+    assert!(
+        app.apply_update(Update::PlaceJoined {
+            session: app.session_id,
+            generation: 6,
+            result: Ok((binding, crate::place::OfflinePlaceSnapshot::default())),
+        })
+        .is_empty(),
+        "an answer from an earlier join produces no effect"
+    );
+    assert!(matches!(
+        app.place,
+        crate::place::PlaceState::Joining { generation: 7 }
+    ));
+}
+
+fn inline_artifact(bytes: &[u8]) -> crate::place::invite::ArtifactRefV1 {
+    crate::place::invite::ArtifactRefV1::Inline {
+        media_type: "application/vnd.mere.place-artifact".into(),
+        digest: proofs::Digest::blake3(bytes)
+            .bytes
+            .as_slice()
+            .try_into()
+            .unwrap(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
 fn malformed_place_binding_is_visible_without_hiding_cached_graph() {
     let root =
         std::env::temp_dir().join(format!("turnstone-place-failure-{}", uuid::Uuid::new_v4()));

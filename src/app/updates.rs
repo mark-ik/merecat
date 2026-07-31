@@ -52,6 +52,30 @@ impl App {
                 self.events.push(AppEvent::BinFailed(error));
                 vec![Effect::Redraw]
             }
+            Update::PlaceJoined {
+                session,
+                generation,
+                result,
+            } => {
+                if session != self.session_id || self.place.generation() != Some(generation) {
+                    return Vec::new();
+                }
+                self.place = match result {
+                    Ok((binding, snapshot)) => crate::place::PlaceState::Offline {
+                        binding,
+                        generation,
+                        snapshot,
+                    },
+                    // A refused invitation is not a degraded place, it is no
+                    // place. Landing in `Degraded` would leave app state
+                    // holding a binding admission never granted.
+                    Err(error) => {
+                        tracing::warn!(%error, "invitation refused");
+                        crate::place::PlaceState::Failed { error }
+                    }
+                };
+                vec![Effect::Redraw]
+            }
             Update::PlaceOpened {
                 session,
                 generation,

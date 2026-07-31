@@ -145,7 +145,19 @@ pub fn ring_of(action: &Action) -> Ring {
 
         // Gate management: never emittable in effect, whatever the grant.
         InstallDenizen { .. } | ConfirmInstallDenizen | CancelInstallDenizen
-        | UninstallDenizen { .. } | RunDenizen { .. } => Ring::HostOnly,
+        | UninstallDenizen { .. } | RunDenizen { .. }
+        // Joining a place is a trust act, not a session act, so it sits at the
+        // structural floor beside gate management rather than in `Session`
+        // with `NewSession` and `SwitchSession`.
+        //
+        // Admission publishes this profile's Personae root into a foreign
+        // membership fold and seals durable group key material under it. A
+        // denizen holding an ordinary `session` grant must not be able to
+        // federate the user with a community of its choosing, and no grant
+        // should be able to: this mirrors the calls plan's rule that accepting
+        // always requires a local gesture. Every admission check still runs
+        // afterwards; this only decides who may ask.
+        | JoinPlace(_) => Ring::HostOnly,
     }
 }
 
