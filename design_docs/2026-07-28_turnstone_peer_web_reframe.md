@@ -58,28 +58,35 @@ shared responsibility rather than duplicate those proofs.
 
 ## Live boundary map
 
+*Refreshed 2026-07-31, after P1 and the T0/T2 rungs of the place-port plan.*
+
 The substrate is further along than the product:
 
 - Turnstone already uses the user's Personae root and has a real Knot
   authoring surface with typed effects and headed receipts.
-- Turnstone reserves a Comms pane, but `App` contains no conversation, place,
-  membership, channel, presence, or sync state. The pane has no live port.
+- Turnstone binds one session to one place. `PlaceBindingV1` and `PlaceState`
+  are data-only app state, a shell-owned worker opens the retained domains
+  under a generation tag, and `place-secrets` seals the Stickleback group
+  session behind a Personae-derived key. What `App` still lacks is *live*
+  conversation, membership, presence, and sync state: the worker reads cached
+  state and emits summaries, and the Comms pane has no live port.
 - `mere/crates/shell/comms` has a host-neutral inbox model and a working Murm
   adapter. Its Graphshell/Meerkat descriptions are stale, and it has no
   Turnstone consumer.
 - Gemot exposes a high-level single-Moot aggregate with commands, snapshots,
   authorization, durable storage, drops, and outbound operations.
 - the Commons graph and chat implementations have Memory, Redb, LogSync,
-  authority, encryption, native-drop, Reticulum, and direct-PHY receipts, but
-  `commons-spine` still lives under `crates/probes` outside Mere's workspace.
+  authority, encryption, native-drop, Reticulum, and direct-PHY receipts.
+  `commons-spine` is promoted into Mere's workspace at `crates/moot/commons`.
+  Both domains project through a caller-supplied authority view: the graph
+  since the delegation fold landed, chat since 2026-07-31.
 - Knot already consumes the neutral causal machinery from Stickleback. It
   remains the document authority and must not be translated through the graph
   merely to share a replication lane.
-- Turnstone sessions are durable local graph workspaces. Nothing yet binds a
-  session to a Moot and its shared root container.
 
-The missing work is product composition and one real authority adapter. It is
-not another replication design.
+The missing work is live lanes and product composition. It is not another
+replication design, and no longer an authority adapter: that seam exists on
+both Commons domains and the place worker folds through it.
 
 ## Target host shape
 
@@ -151,7 +158,7 @@ Receipt: the product is described as a peer-addressed authoring browser,
 Murm/Moot are no longer classified as generic long-tail features, and the
 current lack of a Turnstone place port remains explicit.
 
-### P1. Admit the shared-place packages
+### P1. Admit the shared-place packages - DONE 2026-07-31
 
 Move `commons-spine`, rather than copying it, from `mere/crates/probes` into
 Mere's workspace under the Moot family. Preserve its graph, chat, call-control,
@@ -164,11 +171,23 @@ default `mere` facade remains peer-free.
 
 Done when:
 
-- the old probe path is gone;
+- the old probe path is gone: it is, `crates/moot/commons` is the home;
 - the promoted package passes the existing test corpus unchanged;
 - a Commons write authorized by a live Gemot delegation becomes effective;
-- revocation withdraws the projection without deleting the retained fact;
-- Turnstone compiles with peer support feature-gated and disabled by default.
+- revocation withdraws the projection without deleting the retained fact. This
+  held for the graph on promotion and for chat from 2026-07-31, when
+  `ChatReplica` gained `projection_with_authority`. Until then chat had a
+  classifier and no filter, so the claim covered half the place.
+
+**Amended 2026-07-31.** This rung originally also required that "Turnstone
+compiles with peer support feature-gated and disabled by default". The
+implementation went the other way: `commons`, `gemot`, `stickleback`, and
+`muniment` are unconditional dependencies and `[features] default = []` gates
+only `wasm` and `piccolo`. The code made the better call and the plan is
+amended to match. The peer web is the product spine, not an add-on, and a
+build-time split would have to be maintained through every place surface.
+Local-only is a runtime session state (`PlaceState::Personal`), not a Cargo
+feature. Reopen this only if build footprint becomes a measured problem.
 
 ### P2. One place port
 
@@ -207,9 +226,16 @@ Bind existing surfaces instead of founding a new shell:
 - Steward shows sync, carrier, retention, and rejected-operation status.
 
 Done when one self-driving two-process scenario produces the headed and
-machine-readable receipt defined above. At that point peer support becomes a
-default Turnstone capability while local-only sessions and offline startup
-remain available.
+machine-readable receipt defined above. Peer support is already a default
+Turnstone capability per the P1 amendment; what this rung earns is the right
+to show shared content on a surface, with local-only sessions and offline
+startup still available.
+
+Shared *graph* content is not confidential. Chat is sealed under the
+Stickleback group epoch; Commons graph operations are signed and authority
+filtered but not encrypted to the group. No place surface may imply otherwise
+until a graph confidentiality receipt exists. Steward is the honest place to
+say which domain is sealed and which is merely governed.
 
 ### P4. Live co-browsing
 
@@ -239,7 +265,7 @@ adapter starts only after the prior one has a headed receipt.
 
 | Repository | Seam |
 | --- | --- |
-| `mere` | promote `crates/probes/commons-spine`; add Gemot authority adapter; keep Stickleback and Knot ownership unchanged |
+| `mere` | `crates/moot/commons` (promoted); Gemot authority adapter on both Commons domains; keep Stickleback and Knot ownership unchanged |
 | `turnstone/src/action.rs` | place and comms intents, effects, and typed updates |
 | `turnstone/src/app/mod.rs` | data-only active-place and direct-comms snapshots |
 | `turnstone/src/place.rs` | Turnstone lowering between domain services and app vocabulary |

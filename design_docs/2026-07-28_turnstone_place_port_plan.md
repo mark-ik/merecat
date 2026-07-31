@@ -217,6 +217,12 @@ for the Moot, Commons-root, and chat-space LogSync overlays. The worker uses
 `JoinedSpace`; it does not hand-build p2panda `LogSync` sessions or duplicate
 domain folds.
 
+Ticket-based joining is also the only lane that works everywhere today.
+macOS Local Network policy blocks multicast discovery for unsigned resident
+binaries, so mDNS-style automatic discovery cannot carry the first proof and
+must not become an implicit dependency of T3a. Automatic discovery needs its
+own signed-app receipt before it is claimed on any platform.
+
 Opening is staged and reported:
 
 1. validate the binding and invitation bounds;
@@ -367,16 +373,71 @@ chat, governance, and group snapshots for two local profiles.
 session id and opening generation guard app adoption.
 `worker_releases_files_before_reopen_and_advances_generation` waits for a
 worker release acknowledgement, moves the session directory, and reopens it
-under the next generation. The fresh Turnstone library binary passes 154
-tests, with 4 ignored external-endpoint receipts.
+under the next generation. The Turnstone library passed 154 tests with 4
+ignored external-endpoint receipts at T2, and 155 with the same 4 ignored as
+of 2026-07-31 after T3.0.
+
+One correction from T3.0, recorded because it invalidated a reading of this
+rung: the T2 fixture founded its Moot and then granted the profile nothing, so
+every fact it authored classified as pending the moment real authority was
+applied. The `(1, 1)` and `(2, 2)` assertions above held only because the
+worker was projecting unfiltered. The fixture now issues a real founder
+delegation. A cached-state test that never admits anyone cannot tell an
+authority regression from a working filter.
 
 ### T3. Live graph and chat
 
-- Join the Gemot, Commons graph, and Commons chat lanes.
-- Add authority preflight, `ShareFocusedNode`, `SendPlaceMessage`, and
-  `ResyncPlace`.
-- Add `src/place/projection.rs` and reconcile into Canvas.
+Split into three rungs on 2026-07-31. The original single rung said "join"
+without giving invitation validation its own gate, even though `PlaceInviteV1`
+is specified above and only `PlaceBindingV1` exists in code. Admission is where
+a place either is or is not governed, so it earns a rung.
+
+#### T3.0 Authority-correct projection - DONE 2026-07-31
+
+Prerequisite to everything below, because it decides what a surface is even
+allowed to show.
+
+`ChatReplica` gained `projection_with_authority`; it previously had no
+authority-filtered projection at all, only a classifier proven in a test. The
+place worker now folds Gemot's own delegations and constitution rules into one
+`GemotAuthorityView` and projects both Commons domains through it. `ChatCache`
+reports pending and revoked counts alongside the graph's.
+
+Receipt: `a_revoked_member_reaches_no_projected_place_state`. An admitted
+member projects 2 nodes and 2 messages; after a signed revocation on the
+retained Gemot lane, 0 nodes, 0 edges, 0 messages, 0 channels, with the
+withheld operations counted as revoked and the certificate still retained.
+Withheld, not erased.
+
+Authority evaluation time is a host input (`AuthorityClock`), because
+delegation windows are absolute and the pending/revoked distinction depends on
+it. Tests pin it. A clock error reads as 0, under which nothing has opened yet,
+so unreadable time withholds content rather than admitting it.
+
+#### T3a. Invitation and admitted join
+
+- Parse and bound `PlaceInviteV1`; verify the Gemot governance artifact and the
+  recipient-bound Stickleback welcome.
+- Persist the binding only after admission succeeds, never on parse.
+- Join the Gemot, Commons graph, and Commons chat lanes from the invitation's
+  rendezvous tag.
+
+Done when a malformed, expired, or foreign-recipient invitation leaves no
+`place.json` and no sealed secret behind, and a valid one joins all three
+lanes.
+
+#### T3b. Effective graph and chat
+
+- Add `ShareFocusedNode`, `SendPlaceMessage`, and `ResyncPlace` with authority
+  preflight.
+- Add `src/place/projection.rs` and reconcile into Canvas without overwriting
+  the private local overlay.
 - Persist key changes only through the sealed secret store.
+
+Done when authored facts converge between two peers and the T3.0 filter still
+holds on live lanes, not only on cached opens.
+
+#### T3c. Render-free two-peer receipt
 
 Done when the render-free two-peer test covers join, message, shared HTTPS
 node, partition, restart catch-up, and an unauthorized graph write that never
@@ -400,7 +461,13 @@ document after convergence.
 - Drive two actual Turnstone processes and capture both presented windows.
 
 Done when the machine-readable receipt and both captures satisfy the seven-step
-proof in the peer-web reframe. Only then may `peer` become a default feature.
+proof in the peer-web reframe.
+
+This rung previously ended "only then may `peer` become a default feature".
+There is no `peer` feature and there will not be one: see the P1 amendment in
+the reframe. What T5 gates instead is showing shared place content on a
+product surface at all, and it is the gate the Commons calls plan's A1 waits
+on.
 
 ## File seams
 
@@ -426,8 +493,9 @@ proof in the peer-web reframe. Only then may `peer` become a default feature.
 - Do not persist a raw group key, DCGKA state, or welcome in `place.json`.
 - Do not treat an endpoint ticket, relay identity, invite envelope, or local
   session as content authority.
-- Do not show `Replica::projection()` as shared truth; use the
-  authority-filtered materialization.
+- Do not show `Replica::projection()` or `ChatReplica::projection()` as shared
+  truth; both route through `AllowAllAuthority` and exist for local authoring
+  and admission, not for display. Use `projection_with_authority` on each.
 - Do not overwrite the private local overlay when shared state converges.
 - Do not route Knot edits through Commons graph batches.
 - Do not call a chat channel Murm or merge their grammars.
