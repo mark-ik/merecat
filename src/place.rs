@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod invite;
 pub mod worker;
 
 /// The only binding version this Turnstone build understands.
