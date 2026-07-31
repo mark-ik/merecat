@@ -483,6 +483,25 @@ reject what does not decode as its own extension. Verify that with two lanes
 before building five. If it does not hold, the fix is domain-side topic
 separation, not a Turnstone workaround.
 
+**Resolved 2026-07-31: the check found a real defect, and it is fixed.** Two
+lanes on one endpoint could not coexist at all: every LogSync session
+registered the same hardcoded protocol id (ALPN), the endpoint keeps one
+handler per id, and the last-joined lane silently received all inbound sync.
+Topic separation was tried and is NOT the fix; routing happens at the ALPN
+before any topic is read, and the store's topic registration pins the sync
+topic to the Moot id anyway. The fix is fork-side
+(`LogSync::builder().protocol_id(...)`, p2panda `c880761`) surfaced as a
+required `lane` argument on `JoinedSpace::join` (mere `6300d0da`), with lane
+ids scoped to kind plus space. Both join orders now converge in ~6s.
+**Push order matters: the fork commit must reach mark-ik/p2panda before mere
+is pushed**, since mere's manifest tracks that branch and its stickleback now
+calls the new builder method.
+
+The same investigation confirmed the publish requirement from below: freshly
+authored operations reach live peers through `JoinedSpace::publish`, not
+through implicit re-sync. Initial sync covers retained state for a late
+joiner; the product paths must push what they author.
+
 **Most of the ceremony belongs in mere, not here.** The stop rule already says
 Turnstone does not assemble p2panda sessions, and the domains mostly agree:
 
