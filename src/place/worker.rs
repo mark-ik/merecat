@@ -372,8 +372,12 @@ fn admit_inner(
         );
     }
 
-    // Every domain has answered. Only now does anything durable exist.
+    // Every domain has answered. Only now does anything durable exist, and the
+    // binding is written last so the presence of `place.json` implies the whole
+    // check list ran, not merely that an envelope parsed.
     save_group_session(directory, identity, &group)?;
+    crate::session::save_place_binding(directory, binding)
+        .map_err(|error| format!("persist place binding: {error}"))?;
     Ok(AdmittedPlace {
         binding: binding.clone(),
         moot: MootCache {
@@ -937,10 +941,12 @@ mod tests {
         (directory, invite)
     }
 
-    fn residue(directory: &Path) -> (bool, bool) {
+    /// (Gemot store, sealed secrets, admitted binding).
+    fn residue(directory: &Path) -> (bool, bool, bool) {
         (
             place_store_dir(directory).exists(),
             place_secrets_dir(directory).exists(),
+            crate::session::place_binding_path(directory).exists(),
         )
     }
 
@@ -977,7 +983,7 @@ mod tests {
             admit_invitation(&joined, &invite, &joiner, &settings()).expect("valid invitation");
         assert_eq!(admitted.binding, binding);
         assert_eq!(admitted.members, 2);
-        assert_eq!(residue(&joined), (true, true));
+        assert_eq!(residue(&joined), (true, true, true));
 
         // A tampered artifact never reaches a domain, and leaves no store.
         let tampered_dir = root.join("tampered");
@@ -989,7 +995,7 @@ mod tests {
         let error =
             admit_invitation(&tampered_dir, &tampered, &joiner, &settings()).unwrap_err();
         assert!(error.contains("declared digest"), "{error}");
-        assert_eq!(residue(&tampered_dir), (false, false));
+        assert_eq!(residue(&tampered_dir), (false, false, false));
 
         // A stranger holding the same envelope is refused by Gemot membership,
         // not by anything the envelope says about itself.
@@ -997,7 +1003,7 @@ mod tests {
         let error =
             admit_invitation(&stranger_dir, &invite, &stranger, &settings()).unwrap_err();
         assert!(error.contains("membership does not contain"), "{error}");
-        assert_eq!(residue(&stranger_dir), (false, false));
+        assert_eq!(residue(&stranger_dir), (false, false, false));
 
         // An envelope naming a non-member as its author is refused even though
         // the welcome frames themselves are genuine.
@@ -1006,7 +1012,7 @@ mod tests {
         forged.inviter = stranger.master_public_key().to_bytes();
         let error = admit_invitation(&forged_dir, &forged, &joiner, &settings()).unwrap_err();
         assert!(error.contains("outside Gemot membership"), "{error}");
-        assert_eq!(residue(&forged_dir), (false, false));
+        assert_eq!(residue(&forged_dir), (false, false, false));
 
         // Check 4's two refusals need a welcome genuinely addressed to the
         // directory under test, since every prepared identity draws a fresh
@@ -1037,7 +1043,7 @@ mod tests {
         aliased.binding.chat = ChatSpaceId(aliased.binding.root.0);
         let error = admit_invitation(&aliased_dir, &aliased, &joiner, &settings()).unwrap_err();
         assert!(error.contains("same scope"), "{error}");
-        assert_eq!(residue(&aliased_dir), (false, false));
+        assert_eq!(residue(&aliased_dir), (false, false, false));
 
         let _ = std::fs::remove_dir_all(&root);
     }

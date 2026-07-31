@@ -218,10 +218,18 @@ impl Shell {
     pub(super) fn save_session(&mut self) {
         let sdir = self.app.session_dir();
         session::save_session_graph(&sdir, self.app.canvas.graph());
-        if let Some(binding) = self.app.place.binding()
-            && let Err(error) = session::save_place_binding(&sdir, binding)
-        {
-            tracing::warn!(%error, "failed to persist place binding");
+        if let Some(binding) = self.app.place.binding() {
+            match session::update_place_binding(&sdir, binding) {
+                Ok(true) => {}
+                // Loud rather than silent: app state holding a binding with no
+                // admitted sidecar means something bound a place without going
+                // through admission, which is the exact ordering T3a inverts.
+                Ok(false) => tracing::warn!(
+                    "place state carries a binding with no admitted place.json; \
+                     refusing to create one outside admission"
+                ),
+                Err(error) => tracing::warn!(%error, "failed to persist place binding"),
+            }
         }
         let swept = session::gc_orphan_image_blobs(&sdir, self.app.canvas.graph());
         if swept > 0 {

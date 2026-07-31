@@ -172,6 +172,24 @@ pub fn save_place_binding(
     Ok(())
 }
 
+/// Update a binding that admission already established.
+///
+/// Returns `Ok(false)` when none is present. Routine session saves use this
+/// rather than [`save_place_binding`] so that saving can never *mint* a
+/// `place.json` for a session that was never admitted. Creating one is
+/// admission's job alone, and keeping that structural means the ordering
+/// survives someone adding a new save path later.
+pub fn update_place_binding(
+    session_dir: &Path,
+    binding: &PlaceBindingV1,
+) -> Result<bool, PlaceSidecarError> {
+    if !place_binding_path(session_dir).exists() {
+        return Ok(false);
+    }
+    save_place_binding(session_dir, binding)?;
+    Ok(true)
+}
+
 /// Load and validate this session's public shared-place binding. Absence means
 /// a personal session; malformed or unsupported content is an explicit error.
 pub fn load_place_binding(
@@ -728,6 +746,31 @@ mod tests {
             !root.join(session_graph_store::GRAPH_FILE).exists(),
             "the place binding remains beside graph truth"
         );
+    }
+
+    #[test]
+    fn a_routine_save_updates_a_binding_but_never_mints_one() {
+        let root = temp_root("place-binding-update");
+        let binding = PlaceBindingV1::new(
+            crate::place::PlaceId([0x11; 32]),
+            crate::place::SharedContainerId([0x22; 32]),
+            crate::place::ChatSpaceId([0x33; 32]),
+            "commons",
+        )
+        .unwrap();
+
+        // No admitted place yet: a save reports that it wrote nothing rather
+        // than creating a binding admission never granted.
+        assert_eq!(update_place_binding(&root, &binding).unwrap(), false);
+        assert!(!place_binding_path(&root).exists());
+        assert_eq!(load_place_binding(&root).unwrap(), None);
+
+        // Once admission has established one, ordinary saves may update it.
+        save_place_binding(&root, &binding).unwrap();
+        let mut renamed = binding.clone();
+        renamed.default_channel = "hall".into();
+        assert_eq!(update_place_binding(&root, &renamed).unwrap(), true);
+        assert_eq!(load_place_binding(&root).unwrap(), Some(renamed));
     }
 
     #[test]

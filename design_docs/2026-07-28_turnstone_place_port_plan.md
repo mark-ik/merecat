@@ -433,10 +433,17 @@ so unreadable time withholds content rather than admitting it.
   which is written on the last line of the admitted path and nowhere else. A
   refusal removes the store and secrets directories, so a partial import cannot
   be reopened later as a retained place.
-- **Open:** `place.json` is still written by the T0/T2 session path, which has
-  no admission to wait on. `AdmittedPlace` is the value that should gate it.
+- ~~Persist `place.json` only after admission~~ done, and made structural
+  rather than a rule. `save_place_binding` now has one caller in the product
+  path: admission's last line, after the group session is sealed, so the file's
+  existence implies the whole check list ran. Routine session saves use
+  `update_place_binding`, which writes only when a binding is already present
+  and otherwise reports that it wrote nothing. A save can update an admitted
+  binding; it can never mint one. App state holding a binding with no admitted
+  sidecar is logged as the anomaly it is rather than silently repaired.
 - **Open:** join the three lanes from the rendezvous tag. Everything above is
-  render-free and offline; nothing dials yet.
+  render-free and offline; nothing dials yet. This is the remainder of T3a and
+  the first part that leaves the offline envelope.
 
 **Four spec corrections found by implementing it.** `PlaceInviteV1` as drafted
 could not be admitted at all.
