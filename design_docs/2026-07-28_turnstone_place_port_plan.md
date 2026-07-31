@@ -422,15 +422,61 @@ so unreadable time withholds content rather than admitting it.
   than an empty slice, so an admission step cannot read "not fetched" as
   "verified empty". An unknown carrier survives parsing and never appears in
   `dialable()`, so adding a carrier is not a breaking change.
-- **Open:** verify the Gemot governance artifact and the recipient-bound
-  Stickleback welcome. This is the whole five-check list above, and it needs
-  Gemot drop import plus `GroupSession::process` against a registered prekey.
-  Structural validation is explicitly not admission; the module says so.
-- **Open:** persist the binding only after admission succeeds, never on parse.
-  Today `place.json` and the sealed group session are written by a path that
-  predates the envelope.
-- **Open:** join the Gemot, Commons graph, and Commons chat lanes from the
-  invitation's rendezvous tag.
+- ~~Verify the Gemot governance artifact and the recipient-bound Stickleback
+  welcome~~ done: `admit_invitation`. The drop is imported into the place's own
+  Gemot store, so the fold is Gemot's rather than a claim the envelope makes;
+  membership must contain the local root; the welcome's control and direct
+  frames must name this group, pair with each other, and address this
+  recipient's registered crypto identity; and the DCGKA transition must produce
+  a current epoch.
+- ~~Persist only after admission succeeds~~ done for the sealed group session,
+  which is written on the last line of the admitted path and nowhere else. A
+  refusal removes the store and secrets directories, so a partial import cannot
+  be reopened later as a retained place.
+- **Open:** `place.json` is still written by the T0/T2 session path, which has
+  no admission to wait on. `AdmittedPlace` is the value that should gate it.
+- **Open:** join the three lanes from the rendezvous tag. Everything above is
+  render-free and offline; nothing dials yet.
+
+**Four spec corrections found by implementing it.** `PlaceInviteV1` as drafted
+could not be admitted at all.
+
+1. `inviter`. Stickleback needs an authenticated author root to process a
+   control frame and an envelope cannot authenticate its own.
+2. `inviter_prekey`. A welcome cannot be processed without the sender's
+   authenticated pre-key, and a freshly prepared identity knows only its own.
+   The bundle carries a Personae attestation, so it also turns `inviter` from a
+   claim into a verified fact: admission requires the attested root and the
+   declared one to agree, *and* the root to be in the Gemot membership fold.
+3. `founder`, distinct from `inviter`. Conflating them was a real bug: opening
+   the Gemot store with the inviter as founder refuses every invitation from an
+   ordinary member, which is the normal case. It is not a trust decision, since
+   genesis admission requires the retained genesis to be authored by and to
+   name exactly that root. It is carried only because importing a drop needs a
+   founder before the fold exists, and founder discovery needs the fold.
+4. `key_welcome` split into `key_welcome` plus `key_direct`. Stickleback
+   publishes bounded, version-checking decoders for `GroupControlFrame` and
+   `GroupDirectFrame` and none for `GroupSessionDispatch`, so carrying the
+   frames separately means a peer-supplied welcome is parsed by its own domain
+   rather than by a raw CBOR decode into a struct with private fields.
+
+**Being invitable is a precondition, not a consequence.**
+`GroupSession::new` draws its long-term key from the RNG, so a recipient id is
+not derivable from a Personae root. The session that generated the published
+pre-key is the only one a welcome can ever be addressed to, and creating a
+fresh session at admission time refuses every genuine welcome. Hence
+`prepare_group_identity`, which is idempotent so a second call cannot rotate
+the identity out from under a welcome already in flight.
+
+This also corrects the refusal path. Deleting `place-secrets` on a refused
+invitation would let any stranger destroy the key material a pending welcome is
+already addressed to, so refusal now removes only a Gemot store this attempt
+created and never touches sealed secrets.
+
+**Still unproved:** check 4, that Gemot binds the produced epoch to the same
+membership heads. The envelope names no expected epoch, and adding one needs a
+key-typed field in a module whose whole discipline is to hold no key types.
+Decide the representation before claiming this check.
 
 Done when a malformed, expired, or foreign-recipient invitation leaves no
 `place.json` and no sealed secret behind, and a valid one joins all three

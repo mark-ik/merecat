@@ -131,11 +131,49 @@ pub struct RendezvousV1 {
 pub struct PlaceInviteV1 {
     pub version: u16,
     pub binding: PlaceBindingV1,
+    /// Personae root that founded the Moot.
+    ///
+    /// Distinct from `inviter`, and not a trust decision: Gemot's genesis
+    /// admission requires the retained genesis to be authored by, and to name,
+    /// exactly this root, so a false claim is refused by signature rather than
+    /// believed. It is carried because importing a drop needs the founder
+    /// before the fold exists, and founder discovery needs the fold.
+    ///
+    /// Conflating this with `inviter` was a real bug: an invitation from an
+    /// ordinary member, which is the normal case, would have been refused with
+    /// a founder error.
+    pub founder: [u8; 32],
+    /// Personae root that authored the welcome.
+    ///
+    /// Added 2026-07-31; the plan's original struct omitted it, and Stickleback
+    /// requires an authenticated author root to process a control frame. This
+    /// field is not trusted on its own: `inviter_prekey` attests the same root
+    /// cryptographically, and admission requires the two to agree *and* the
+    /// root to appear in the Gemot membership fold.
+    pub inviter: [u8; 32],
+    /// The inviter's published `GroupPrekeyBundle`.
+    ///
+    /// Needed because a welcome cannot be processed without the sender's
+    /// authenticated pre-key, and a freshly prepared group identity knows only
+    /// its own. The bundle carries a Personae-signed attestation, so it is also
+    /// what turns `inviter` from a claim into a verified fact.
+    pub inviter_prekey: ArtifactRefV1,
     /// Signed Gemot bootstrap evidence, first shaped as an aggregate native drop.
     pub governance: ArtifactRefV1,
-    /// The recipient-bound Stickleback welcome. Never a serialized `DataKeyring`:
-    /// a raw keyring would admit whoever held the envelope.
+    /// The broadcast half of the Stickleback welcome: one `GroupControlFrame`.
+    ///
+    /// Never a serialized `DataKeyring`. A raw keyring would admit whoever held
+    /// the envelope, which is the whole failure this split exists to prevent.
     pub key_welcome: ArtifactRefV1,
+    /// The recipient-bound half: one `GroupDirectFrame` addressed to the
+    /// invitee's authenticated crypto identity.
+    ///
+    /// Split from `key_welcome` on 2026-07-31 rather than encoded together as a
+    /// `GroupSessionDispatch`. Stickleback publishes bounded, version-checking
+    /// decoders for each frame and none for the dispatch, so carrying them
+    /// separately means a peer-supplied welcome is parsed by its own domain
+    /// instead of by a raw CBOR decode into a struct with private fields.
+    pub key_direct: ArtifactRefV1,
     pub rendezvous: Vec<RendezvousV1>,
 }
 
@@ -181,6 +219,8 @@ impl PlaceInviteV1 {
         for (artifact, field) in [
             (&self.governance, "governance artifact"),
             (&self.key_welcome, "key welcome artifact"),
+            (&self.key_direct, "recipient welcome artifact"),
+            (&self.inviter_prekey, "inviter pre-key artifact"),
         ] {
             match artifact.verified_bytes(field) {
                 Ok(_) | Err(InviteError::UnfetchedArtifact { .. }) => {}
@@ -295,8 +335,12 @@ mod tests {
                 "hall",
             )
             .unwrap(),
+            founder: [8; 32],
+            inviter: [9; 32],
+            inviter_prekey: inline(b"inviter pre-key bundle"),
             governance: inline(b"gemot native drop"),
-            key_welcome: inline(b"recipient-bound welcome"),
+            key_welcome: inline(b"group control frame"),
+            key_direct: inline(b"recipient-bound direct frame"),
             rendezvous: vec![RendezvousV1 {
                 carrier: P2PANDA_ENDPOINT_TICKET.into(),
                 hint: "ticket".into(),
