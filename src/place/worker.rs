@@ -255,6 +255,18 @@ fn admit_inner(
     let binding = &invite.binding;
     let local_root = identity.master_public_key().to_bytes();
 
+    // 0. The inviter's own time bound, checked before anything is created.
+    //    The heads pin below already invalidates an invitation whenever the
+    //    roster moves; this additionally stops a forwarded envelope working
+    //    forever in a Moot whose membership never changes.
+    let now_ms = settings.authority_clock.now_ms();
+    if now_ms > invite.not_after_ms {
+        return Err(format!(
+            "invitation expired at {} and it is now {now_ms}",
+            invite.not_after_ms
+        ));
+    }
+
     // 5. The Commons scopes are distinct governed roots, not aliases of the
     //    Moot or of each other. Checked first because it is free, and because
     //    a collision here would silently point two domains at one store.
@@ -952,6 +964,9 @@ mod tests {
                 .current_epoch()
                 .expect("adding a member installs an epoch"),
             membership_heads,
+            // Comfortably after the pinned AUTHORITY_AT_MS, so only the test
+            // that moves the clock forward sees an expiry.
+            not_after_ms: AUTHORITY_AT_MS + 1_000,
             rendezvous: Vec::new(),
         }
     }
@@ -1084,6 +1099,18 @@ mod tests {
         let error =
             admit_invitation(&stale_heads_dir, &stale_heads, &joiner, &settings()).unwrap_err();
         assert!(error.contains("did not converge"), "{error}");
+
+        // The inviter's own time bound, on an otherwise valid envelope, with a
+        // clock moved past it. Nothing is created, so expiry is cheap and
+        // cannot be reached by an envelope that would have failed anyway.
+        let expired_dir = root.join("expired");
+        let expired_clock = PlaceWorkerSettings {
+            authority_clock: AuthorityClock::Fixed(invite.not_after_ms + 1),
+            ..PlaceWorkerSettings::default()
+        };
+        let error = admit_invitation(&expired_dir, &invite, &joiner, &expired_clock).unwrap_err();
+        assert!(error.contains("expired"), "{error}");
+        assert_eq!(residue(&expired_dir), (false, false, false));
 
         // Aliased Commons scopes are refused before any store is created.
         let aliased_dir = root.join("aliased");

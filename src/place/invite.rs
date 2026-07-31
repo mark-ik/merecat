@@ -198,6 +198,17 @@ pub struct PlaceInviteV1 {
     /// also holds. Admission requires these to equal the heads Gemot itself
     /// converged to from the imported evidence.
     pub membership_heads: Vec<[u8; 32]>,
+    /// When this invitation stops being offered, in milliseconds since the
+    /// Unix epoch.
+    ///
+    /// Deliberately separate from `membership_heads`, which already makes an
+    /// invitation stale the moment the roster changes. They answer different
+    /// questions: the heads pin is a security bound the domain enforces and
+    /// cannot be relaxed, while this is a time bound the inviter chooses, so a
+    /// forwarded envelope stops working even in a Moot whose membership never
+    /// moves. Checked against the host's `AuthorityClock`, like every other
+    /// time-dependent place decision.
+    pub not_after_ms: u64,
     pub rendezvous: Vec<RendezvousV1>,
 }
 
@@ -382,6 +393,7 @@ mod tests {
             key_direct: inline(b"recipient-bound direct frame"),
             expected_epoch: [4; 32],
             membership_heads: vec![[5; 32]],
+            not_after_ms: 1_000,
             rendezvous: vec![RendezvousV1 {
                 carrier: P2PANDA_ENDPOINT_TICKET.into(),
                 hint: "ticket".into(),

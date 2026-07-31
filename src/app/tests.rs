@@ -183,6 +183,7 @@ fn a_refused_invitation_leaves_no_binding_in_app_state() {
         key_direct: inline_artifact(b"direct"),
         expected_epoch: [0x76; 32],
         membership_heads: vec![[0x77; 32]],
+        not_after_ms: u64::MAX,
         rendezvous: Vec::new(),
     });
 

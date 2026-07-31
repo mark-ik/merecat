@@ -441,9 +441,30 @@ so unreadable time withholds content rather than admitting it.
   and otherwise reports that it wrote nothing. A save can update an admitted
   binding; it can never mint one. App state holding a binding with no admitted
   sidecar is logged as the anomaly it is rather than silently repaired.
+- ~~Invitation expiry~~ done. `not_after_ms`, checked against the host
+  `AuthorityClock` before anything is created. Kept separate from
+  `membership_heads` on purpose: the heads pin is a security bound the domain
+  enforces and cannot be relaxed, while expiry is a time bound the inviter
+  chooses, so a forwarded envelope stops working even in a Moot whose roster
+  never moves. T3a's done-when named "expired" and nothing could express it.
+- ~~Ticket encoding~~ settled, with no new format to define.
+  `p2panda.endpoint-ticket.v1` means the string from
+  `P2pandaTransport::ticket()`, which is `EndpointTicket::to_string()`, and it
+  is consumed by `add_peer_ticket`, which conveniently returns the `PeerID`
+  that `set_topics` needs to bootstrap the overlays.
+
+  Checked against upstream rather than assumed: `iroh` 1.0.3, `iroh-base`
+  1.0.3, and `iroh-tickets` 1.0.0 all resolve to crates.io with checksums.
+  `p2panda-net` is a fork (`mark-ik/p2panda`) but does not fork iroh or the
+  ticket format, so the encoding carries no fork-specific risk. The one forked
+  iroh-family crate in the graph is `iroh-mdns-address-lookup`, which is
+  discovery, the lane already excluded from the first proof.
 - **Open:** join the three lanes from the rendezvous tag. Everything above is
   render-free and offline; nothing dials yet. This is the remainder of T3a and
-  the first part that leaves the offline envelope.
+  the first part that leaves the offline envelope. The sequence is now fully
+  determined: `add_peer_ticket(hint)` for a `PeerID`, then `set_topics` with
+  the Moot, Commons-root, and chat-space overlays, then `JoinedSpace` per
+  replica. What it still needs is the worker's concurrency conversion.
 
 **Four spec corrections found by implementing it.** `PlaceInviteV1` as drafted
 could not be admitted at all.
