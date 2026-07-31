@@ -459,12 +459,67 @@ so unreadable time withholds content rather than admitting it.
   ticket format, so the encoding carries no fork-specific risk. The one forked
   iroh-family crate in the graph is `iroh-mdns-address-lookup`, which is
   discovery, the lane already excluded from the first proof.
-- **Open:** join the three lanes from the rendezvous tag. Everything above is
-  render-free and offline; nothing dials yet. This is the remainder of T3a and
-  the first part that leaves the offline envelope. The sequence is now fully
-  determined: `add_peer_ticket(hint)` for a `PeerID`, then `set_topics` with
-  the Moot, Commons-root, and chat-space overlays, then `JoinedSpace` per
-  replica. What it still needs is the worker's concurrency conversion.
+- **Open:** join the lanes. Scoped below rather than started, because the
+  transport API is moving (`bind_inner` grew a relay parameter on 2026-07-31)
+  and because scoping corrected two things this rung had wrong.
+
+#### T3a lane join, scoped 2026-07-31
+
+**It is not three lanes.** This plan has said "the Gemot, Commons graph, and
+Commons chat lanes" throughout, which reads as three `JoinedSpace`s. Gemot is
+five stores, each with its own extension type, log-id type, and accept closure:
+constitution, delegation, membership, records/objects, tessera. With the two
+Commons lanes that is seven.
+
+T3c's receipt needs five of them. Constitution, delegation, and membership
+carry authority correctness; graph and chat carry the content. Records and
+tessera feed roster and trust display, not the proof, and can follow.
+
+**All five Gemot lanes subscribe to the same topic**, the Moot id, and are
+distinguished only by extension type. Gemot's existing lane proofs each join
+one lane in isolation, so five lanes sharing one topic on one endpoint is
+untested in combination: a session will receive every message on the topic and
+reject what does not decode as its own extension. Verify that with two lanes
+before building five. If it does not hold, the fix is domain-side topic
+separation, not a Turnstone workaround.
+
+**Most of the ceremony belongs in mere, not here.** The stop rule already says
+Turnstone does not assemble p2panda sessions, and the domains mostly agree:
+
+| Lane | State |
+|---|---|
+| Commons chat | `ChatReplica::join(endpoint, gossip)` exists, with policy, key state, and checkpoint authority already inside its accept closure |
+| Commons graph | Only `sync_store()`. The ceremony is written inline in tests; it wants a `Replica::join` beside chat's |
+| Gemot's five | Sync proofs exist per lane; no product helper. Wants one call that joins the set and hands back the handles |
+
+So the first move is mere-side: `Replica::join`, and a Gemot lane-set join.
+Turnstone then holds handles and composes, which is what it is supposed to do.
+
+**What Turnstone owns.** The worker gains a tokio runtime, scoped to transport
+futures rather than the mass `pollster` conversion originally imagined here:
+the existing offline calls await redb, in-memory stores, and Stickleback
+crypto, none of which need a reactor. Live handles sit beside `OpenPlace` and
+drop on `Release`, under the same acknowledgement discipline that already lets
+a session directory move. Ticket to peer is
+`add_peer_ticket(hint)` → `PeerID` → `set_topics(peer, overlays)`, where the
+overlays are `sync_overlay_topic` of the Moot, Commons root, and chat space.
+
+**Two things the offline rungs left implicit.**
+
+Re-projection happens only at `Open` today. Live lanes need received operations
+to trigger a re-fold and a new snapshot, so an accept closure firing must reach
+the app as an update. Debounce it: one update per operation would be a redraw
+per received message.
+
+Ongoing DCGKA processing does not exist. The joiner processes exactly one
+frame, ever. Adds, removes, and rotations after join have nowhere to go, and
+the membership lane is what will deliver them. `save_group_session` already
+gives them a persistence path.
+
+**Stop rule, before anyone optimizes.** The worker must keep folding chat from
+full history. `projection_from_checkpoint_with_authority` is cheaper and
+filters only the retained tail, so adopting it would silently grandfather
+revoked content that a checkpoint already committed.
 
 **Four spec corrections found by implementing it.** `PlaceInviteV1` as drafted
 could not be admitted at all.
