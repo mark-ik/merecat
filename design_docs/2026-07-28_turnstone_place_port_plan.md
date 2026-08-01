@@ -621,11 +621,36 @@ lanes.
 
 #### T3b. Effective graph and chat
 
-- Add `ShareFocusedNode`, `SendPlaceMessage`, and `ResyncPlace` with authority
-  preflight.
-- Add `src/place/projection.rs` and reconcile into Canvas without overwriting
-  the private local overlay.
-- Persist key changes only through the sealed secret store.
+- ~~`ShareFocusedNode`, `SendPlaceMessage`, `ResyncPlace` with authority
+  preflight~~ done 2026-08-01. All three lower through the existing
+  action/effect/update discipline to `PlaceWorkerCommand::Author` and
+  `::Resync`. Authoring preflights against the same `GemotAuthorityView` the
+  projections fold through and refuses locally, because an operation every
+  peer would filter out is not worth storing and "you may not" beats silent
+  filtering. Authoring stores; publishing is a separate step, so a place with
+  no live lanes authors happily and syncs when it next joins.
+
+  Receipts: `a_joiner_catches_up_on_a_live_place_over_one_ticket` now also
+  authors and reaches the host over the live lane, and
+  `an_unauthorized_profile_is_refused_before_it_authors` covers the pending
+  case — a member with no delegation, which is exactly the shape a revoked
+  member ends up in.
+
+  **`Ring::Place` was added, and this is the divergence that earned it.**
+  Acting within a place you already belong to is grantable; deciding which
+  places you belong to stays host-only. Folding these into `Session` would
+  have let a grant given for session lifecycle also speak in every place under
+  the user's Personae root.
+
+- **Open:** `src/place/projection.rs` and Canvas reconciliation without
+  overwriting the private local overlay. The shared graph currently reaches
+  the app as counts, not nodes.
+- **Open:** the debounced resync loop. `Resync` exists and is correct, but
+  nothing calls it automatically: received operations land in the stores and
+  wait for the next explicit resync.
+- **Open:** ongoing DCGKA processing. The joiner still processes exactly one
+  frame ever; adds, removes, and rotations after join have nowhere to go, and
+  the membership lane is what will deliver them.
 
 Done when authored facts converge between two peers and the T3.0 filter still
 holds on live lanes, not only on cached opens.

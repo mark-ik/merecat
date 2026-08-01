@@ -40,6 +40,15 @@ pub enum Ring {
     Panes,
     Dispatch,
     Session,
+    /// Acting WITHIN a place this profile already belongs to: speaking in a
+    /// channel, sharing an address, refreshing what its lanes drained in.
+    ///
+    /// Grantable, and deliberately separate from `Session`. Automating a post
+    /// is ordinary, but it should not ride on a grant given for session
+    /// lifecycle: those policies genuinely differ, which is the test for
+    /// whether a ring earns its own variant. Deciding WHICH places a profile
+    /// belongs to stays host-only; see `JoinPlace`.
+    Place,
     HostOnly,
 }
 
@@ -70,6 +79,7 @@ impl Ring {
             Ring::Panes => "panes",
             Ring::Dispatch => "dispatch",
             Ring::Session => "session",
+            Ring::Place => "place",
             Ring::HostOnly => "host-only",
         }
     }
@@ -143,6 +153,11 @@ pub fn ring_of(action: &Action) -> Ring {
         | EmptyRecycleBin
         | RecoverSession(_) => Ring::Session,
 
+        // Acting inside a place this profile already joined. Authoring is
+        // attributable to the user's Personae root and other members see it as
+        // their words, so it is grantable but never implied by `session`.
+        SendPlaceMessage { .. } | ShareFocusedNode | ResyncPlace => Ring::Place,
+
         // Gate management: never emittable in effect, whatever the grant.
         InstallDenizen { .. } | ConfirmInstallDenizen | CancelInstallDenizen
         | UninstallDenizen { .. } | RunDenizen { .. }
@@ -193,7 +208,13 @@ pub fn emit_allowed(
 
 /// Every ring, in privilege order (least first). Host-only is deliberately
 /// absent: it is not a choice a review can offer.
-pub const GRANTABLE_RINGS: [Ring; 4] = [Ring::Navigate, Ring::Panes, Ring::Dispatch, Ring::Session];
+pub const GRANTABLE_RINGS: [Ring; 5] = [
+    Ring::Navigate,
+    Ring::Panes,
+    Ring::Dispatch,
+    Ring::Session,
+    Ring::Place,
+];
 
 /// The interface-shaped names of the rings this subject's authority actually
 /// covers — the `caps.granted()` answer a component reads to skip a feature

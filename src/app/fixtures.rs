@@ -27,6 +27,7 @@ impl App {
             content: ContentStates::default(),
             place: crate::place::PlaceState::default(),
             next_place_generation: 0,
+            next_place_request: 0,
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
             history: chrome::nav::History::new(""),

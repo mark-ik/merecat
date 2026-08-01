@@ -111,6 +111,13 @@ pub enum Action {
     /// until every admission check has answered, so this is a request to try,
     /// not a statement that the session now belongs to a place.
     JoinPlace(Box<crate::place::invite::PlaceInviteV1>),
+    /// Send one message to a channel of the active place.
+    SendPlaceMessage { channel: String, body: String },
+    /// Share the focused node's address into the place's shared graph.
+    ShareFocusedNode,
+    /// Re-fold the active place's projections from what its lanes have drained
+    /// in. Cheap and idempotent; it authors nothing.
+    ResyncPlace,
     /// Flip the focused node's live content: spawn a document session for it
     /// through the content port, or close the one it has (rung 4; the
     /// session-engines plan's phase-4 consumer intent).
@@ -434,6 +441,18 @@ pub enum Effect {
         generation: u64,
         invite: Box<crate::place::invite::PlaceInviteV1>,
     },
+    /// Author one fact into the active place and publish it to live peers.
+    RunPlaceCommand {
+        session: crate::panes::SessionId,
+        generation: u64,
+        request: u64,
+        command: crate::place::worker::PlaceCommand,
+    },
+    /// Re-fold the active place's projections without touching its lanes.
+    ResyncPlace {
+        session: crate::panes::SessionId,
+        generation: u64,
+    },
     /// Release any retained place handles. The shell waits for acknowledgement
     /// on switch, trash, and shutdown before touching the session directory.
     ClosePlace {
@@ -514,6 +533,18 @@ pub enum Update {
     PlaceOpened {
         session: crate::panes::SessionId,
         generation: u64,
+        result: Result<crate::place::OfflinePlaceSnapshot, String>,
+    },
+    /// One authored place command completed.
+    ///
+    /// Success carries the re-folded snapshot, because authoring changes what
+    /// the place projects and the app should never keep a stale view of state
+    /// it just changed. Failure changes no state: an unauthorized or malformed
+    /// command is reported, not absorbed.
+    PlaceCommandDone {
+        session: crate::panes::SessionId,
+        generation: u64,
+        request: u64,
         result: Result<crate::place::OfflinePlaceSnapshot, String>,
     },
     /// One invitation admission completed.

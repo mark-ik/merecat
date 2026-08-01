@@ -138,6 +138,10 @@ pub enum AppEvent {
     /// A workbench tile tore out into a lens window as a pinned Tile pane
     /// (the branch arm), by the node's url.
     TileTornOut(String),
+    /// A place command was refused, with the reason. Loud rather than silent:
+    /// a message that never sends because authority was withdrawn must say so,
+    /// not vanish.
+    PlaceRefused(String),
     /// The app adopted a session (a boot, a mint, or a switch), by label.
     SessionSwitched(String),
     /// The current session was closed (trashed).
@@ -217,6 +221,7 @@ impl AppEvent {
             AppEvent::WindowClosed => "window-closed".to_string(),
             AppEvent::PaneTornOut(tag) => format!("pane-torn-out {tag}"),
             AppEvent::TileTornOut(url) => format!("tile-torn-out {url}"),
+            AppEvent::PlaceRefused(reason) => format!("place-refused {reason}"),
             AppEvent::SessionSwitched(label) => format!("session-switched {label}"),
             AppEvent::SessionClosed => "session-closed".to_string(),
             AppEvent::SessionForked => "session-forked".to_string(),

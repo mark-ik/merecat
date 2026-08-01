@@ -87,6 +87,9 @@ pub struct App {
     /// Monotonic identity for place-worker opens. It is never reset on a
     /// session switch, so a late answer cannot alias a later visit.
     pub(crate) next_place_generation: u64,
+    /// Monotonic id for authored place commands, so a late answer is
+    /// attributable to the command that asked for it.
+    pub(crate) next_place_request: u64,
     /// Which surface receives semantic input (rung 5 slice A). The explicit
     /// replacement for the old `omnibar.open` routing boolean: a third surface
     /// class (panes) joins by adding a `FocusTarget` variant rather than
@@ -409,6 +412,20 @@ impl App {
             Action::ToggleSizeByRecency => self.toggle_size_by_recency(),
             Action::SaveSession => vec![Effect::SaveSession],
             Action::JoinPlace(invite) => self.join_place(invite),
+            Action::SendPlaceMessage { channel, body } => self.run_place_command(
+                crate::place::worker::PlaceCommand::SendMessage { channel, body },
+            ),
+            Action::ShareFocusedNode => match self.focused_address() {
+                Some(address) => self.run_place_command(
+                    crate::place::worker::PlaceCommand::ShareNode { address },
+                ),
+                None => {
+                    self.events
+                        .push(AppEvent::PlaceRefused("no focused node to share".into()));
+                    vec![Effect::Redraw]
+                }
+            },
+            Action::ResyncPlace => self.resync_place(),
             // Multi-session (rung 6's second half). Both lower to the shell's
             // SwitchSession effect: the PORT saves the departing session and
             // tears down its live handles before the app adopts the target —

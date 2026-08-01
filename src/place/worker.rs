@@ -109,13 +109,34 @@ pub enum PlaceWorkerCommand {
         session: SessionId,
         generation: u64,
     },
+    /// Author one fact into the shared place and push it to live peers.
+    Author {
+        session: SessionId,
+        generation: u64,
+        request: u64,
+        command: PlaceCommand,
+    },
     Release(std::sync::mpsc::SyncSender<()>),
+}
+
+/// One authored change to the shared place.
+///
+/// Deliberately small and concrete. Both variants are things a person does in
+/// a place; neither is a generic "write this operation", because a host that
+/// can post arbitrary operations has taken over authorship from the domain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlaceCommand {
+    SendMessage { channel: String, body: String },
+    ShareNode { address: String },
 }
 
 pub(crate) struct OpenPlace {
     /// Live lane handles, when this open dialed. First field on purpose: the
     /// lane tasks must stop before the stores they drain into close.
     pub(crate) lanes: Option<crate::place::lanes::LiveLanes>,
+    /// The binding this place was opened under, so a later command names the
+    /// same scopes the projections fold from.
+    pub(crate) binding: PlaceBindingV1,
     pub(crate) moot: MootFile,
     pub(crate) graph: Replica<RedbBackend>,
     pub(crate) chat: ChatReplica<RedbBackend>,
@@ -656,6 +677,7 @@ pub(crate) fn open_cached_place(
 
     let open = OpenPlace {
         lanes: None,
+        binding: binding.clone(),
         moot,
         graph,
         chat,
@@ -663,6 +685,94 @@ pub(crate) fn open_cached_place(
     };
     let snapshot = place_snapshot(&open, binding.moot.0, settings)?;
     Ok((open, snapshot))
+}
+
+/// Author one fact locally, then push it onto the live lane.
+///
+/// Preflight first: Turnstone refuses its own unauthorized command rather
+/// than authoring an operation that every peer would then filter out of its
+/// projection. That is the local half of the two authority paths — the other
+/// being that received operations are stored whatever their verdict, so a
+/// later re-evaluation can still reverse it.
+///
+/// Publishing is separate from authoring on purpose. Authoring stores the
+/// operation, which is what makes it survive; publishing is what makes it
+/// arrive. A place with no live lanes authors happily and syncs when it next
+/// joins.
+fn author_into_place(
+    open: &mut OpenPlace,
+    binding: &PlaceBindingV1,
+    identity: &dyn IdentityProvider,
+    command: &PlaceCommand,
+    settings: &PlaceWorkerSettings,
+) -> Result<(), String> {
+    let subject = identity.master_public_key().to_bytes();
+    let needed = match command {
+        PlaceCommand::SendMessage { .. } => commons::chat::chat_write_capability(binding.chat.0),
+        PlaceCommand::ShareNode { .. } => commons::commons_write_capability(binding.root.0),
+    };
+    let moot_snapshot = pollster::block_on(open.moot.snapshot())
+        .map_err(|error| format!("materialize Gemot: {error}"))?;
+    let delegations = pollster::block_on(open.moot.delegations())
+        .map_err(|error| format!("materialize Gemot delegations: {error}"))?;
+    let authority = GemotAuthorityView {
+        authority: MootAuthority {
+            delegations: &delegations,
+            rules: &moot_snapshot.governance.rules,
+            moot_id: binding.moot.0,
+            now_ms: settings.authority_clock.now_ms(),
+        },
+    };
+    if !matches!(
+        commons::CommonsAuthority::classify(
+            &authority,
+            servitor::Subject(subject),
+            &needed,
+            servitor::Mode::Write,
+        ),
+        commons::AuthorityState::Effective
+    ) {
+        return Err(
+            "this profile holds no effective capability to author here".to_string()
+        );
+    }
+
+    match command {
+        PlaceCommand::SendMessage { channel, body } => {
+            if body.trim().is_empty() {
+                return Err("a message needs a body".to_string());
+            }
+            let operation = pollster::block_on(open.chat.author(
+                commons::chat::ChatEvent::Message(commons::chat::Message {
+                    channel: channel.clone(),
+                    body: body.clone(),
+                    sent_at_ms: settings.authority_clock.now_ms(),
+                    reply_to: None,
+                }),
+            ))
+            .map_err(|error| format!("author message: {error}"))?;
+            if let Some(lanes) = &open.lanes {
+                lanes.publish_chat(operation)?;
+            }
+        }
+        PlaceCommand::ShareNode { address } => {
+            if address.trim().is_empty() {
+                return Err("a shared node needs an address".to_string());
+            }
+            let address = address.clone();
+            let operation = pollster::block_on(open.graph.edit(move |log| {
+                log.insert_node(
+                    &chartulary::Author::new("turnstone"),
+                    chartulary::Container::new(address),
+                );
+            }))
+            .map_err(|error| format!("author shared node: {error}"))?;
+            if let Some(lanes) = &open.lanes {
+                lanes.publish_graph(operation)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Fold the current app-owned snapshot from an open place's stores.
@@ -841,13 +951,42 @@ pub fn spawn_place_worker(
                         // nothing answers with the error rather than silence.
                         let result = match &live {
                             Some(open) => {
-                                place_snapshot(open, open.moot.moot_id().0, &settings)
+                                place_snapshot(open, open.binding.moot.0, &settings)
                             }
                             None => Err("no open place to resync".to_string()),
                         };
                         out.emit(Update::PlaceOpened {
                             session,
                             generation,
+                            result,
+                        });
+                    }
+                    PlaceWorkerCommand::Author {
+                        session,
+                        generation,
+                        request,
+                        command,
+                    } => {
+                        let result = match &mut live {
+                            Some(open) => {
+                                let binding = open.binding.clone();
+                                author_into_place(
+                                    open,
+                                    &binding,
+                                    identity.as_ref(),
+                                    &command,
+                                    &settings,
+                                )
+                                .and_then(|()| {
+                                    place_snapshot(open, binding.moot.0, &settings)
+                                })
+                            }
+                            None => Err("no open place to author into".to_string()),
+                        };
+                        out.emit(Update::PlaceCommandDone {
+                            session,
+                            generation,
+                            request,
                             result,
                         });
                     }

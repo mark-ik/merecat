@@ -52,6 +52,37 @@ impl App {
                 self.events.push(AppEvent::BinFailed(error));
                 vec![Effect::Redraw]
             }
+            Update::PlaceCommandDone {
+                session,
+                generation,
+                request: _,
+                result,
+            } => {
+                if session != self.session_id || self.place.generation() != Some(generation) {
+                    return Vec::new();
+                }
+                match result {
+                    // Authoring changed what the place projects, so the answer
+                    // carries the re-folded snapshot rather than leaving the
+                    // app with a stale view of state it just changed.
+                    Ok(snapshot) => {
+                        if let Some(binding) = self.place.binding().cloned() {
+                            self.place = crate::place::PlaceState::Offline {
+                                binding,
+                                generation,
+                                snapshot,
+                            };
+                        }
+                    }
+                    // A refusal changes no state. The place is still open and
+                    // still whatever it was; the command simply did not happen.
+                    Err(error) => {
+                        tracing::warn!(%error, "place command refused");
+                        self.events.push(AppEvent::PlaceRefused(error));
+                    }
+                }
+                vec![Effect::Redraw]
+            }
             Update::PlaceJoined {
                 session,
                 generation,

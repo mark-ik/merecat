@@ -52,6 +52,30 @@ impl Shell {
                             invite,
                         });
                 }
+                Effect::RunPlaceCommand {
+                    session,
+                    generation,
+                    request,
+                    command,
+                } => {
+                    self.place_handle
+                        .command(crate::place::worker::PlaceWorkerCommand::Author {
+                            session,
+                            generation,
+                            request,
+                            command,
+                        });
+                }
+                Effect::ResyncPlace {
+                    session,
+                    generation,
+                } => {
+                    self.place_handle
+                        .command(crate::place::worker::PlaceWorkerCommand::Resync {
+                            session,
+                            generation,
+                        });
+                }
                 Effect::ClosePlace { .. } => self.release_place_worker(),
                 Effect::StoreImage { hex, bytes } => {
                     session::save_image_blob(&self.app.session_dir(), &hex, &bytes);

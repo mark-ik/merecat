@@ -57,6 +57,7 @@ impl App {
             content: ContentStates::default(),
             place: crate::place::PlaceState::default(),
             next_place_generation: 0,
+            next_place_request: 0,
             focus: FocusTarget::Canvas,
             frisket: FrisketLayout::default(),
             history: chrome::nav::History::new(String::new()),
@@ -322,6 +323,49 @@ impl App {
             session: self.session_id,
             generation,
             invite,
+        }]
+    }
+
+    /// The focused node's address, for sharing it into the place.
+    pub fn focused_address(&self) -> Option<String> {
+        let member = self.canvas.focused_member()?;
+        let (_, node) = self.canvas.graph().get_node_by_id(member)?;
+        let url = node.url().trim();
+        (!url.is_empty()).then(|| url.to_string())
+    }
+
+    /// Lower one place command, if this session actually has an open place.
+    ///
+    /// Refused locally when there is no place rather than sent to a worker
+    /// that would refuse it anyway: "you are not in a place" is a different
+    /// answer from "the place refused you", and only one of them is about
+    /// authority.
+    pub fn run_place_command(
+        &mut self,
+        command: crate::place::worker::PlaceCommand,
+    ) -> Vec<Effect> {
+        let Some(generation) = self.place.generation() else {
+            self.events
+                .push(AppEvent::PlaceRefused("this session is not in a place".into()));
+            return vec![Effect::Redraw];
+        };
+        self.next_place_request = self.next_place_request.wrapping_add(1);
+        vec![Effect::RunPlaceCommand {
+            session: self.session_id,
+            generation,
+            request: self.next_place_request,
+            command,
+        }]
+    }
+
+    /// Ask the worker to re-fold what the lanes have drained in.
+    pub fn resync_place(&mut self) -> Vec<Effect> {
+        let Some(generation) = self.place.generation() else {
+            return Vec::new();
+        };
+        vec![Effect::ResyncPlace {
+            session: self.session_id,
+            generation,
         }]
     }
 

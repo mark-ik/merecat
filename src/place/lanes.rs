@@ -47,11 +47,31 @@ impl LiveLanes {
         ]
     }
 
-}
 
-// T3b adds the publish half here: initial sync covers retained history for a
-// late joiner, while operations authored WHILE live reach peers only through
-// `JoinedSpace::publish` on the graph and chat handles above.
+    /// Push one freshly authored graph operation onto the live lane.
+    ///
+    /// Initial sync covers retained history for a late joiner; an operation
+    /// authored while live reaches connected peers only through this. Storing
+    /// it is what makes it survive, publishing is what makes it arrive.
+    pub(crate) fn publish_graph(
+        &self,
+        operation: stickleback::Operation<CommonsExt>,
+    ) -> Result<(), String> {
+        self.graph
+            .publish(operation)
+            .map_err(|error| format!("publish graph operation: {error}"))
+    }
+
+    /// Push one freshly authored chat operation onto the live lane.
+    pub(crate) fn publish_chat(
+        &self,
+        operation: stickleback::Operation<ChatExt>,
+    ) -> Result<(), String> {
+        self.chat
+            .publish(operation)
+            .map_err(|error| format!("publish chat operation: {error}"))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -75,10 +95,28 @@ mod tests {
         settings,
     };
     use crate::place::worker::{
-        PlaceWorkerCommand, author_invitation, found_place_group, load_group_session,
-        open_cached_place, place_store_dir, prepare_group_identity, spawn_place_worker,
+        PlaceCommand, PlaceWorkerCommand, author_invitation, found_place_group,
+        load_group_session, open_cached_place, place_store_dir, prepare_group_identity,
+        spawn_place_worker,
     };
     use commons::{Replica, chat::ChatReplica};
+
+    /// Issue a capability delegation on the host's retained delegation lane.
+    fn delegate_to(host: &Path, founder: &InMemoryProvider, moot: [u8; 32], subject: [u8; 32]) {
+        let rules = place_rules(founder.master_public_key().to_bytes());
+        let moot_file = pollster::block_on(gemot::moot::MootFile::open_existing(
+            place_store_dir(host).join("gemot"),
+            gemot::moot::MootId(moot),
+            settings().retention,
+        ))
+        .unwrap();
+        pollster::block_on(moot_file.delegation_store().author_issue(
+            &founder_signing_key(founder, moot),
+            &rules,
+            place_delegation(founder, moot, subject),
+        ))
+        .unwrap();
+    }
 
     /// Author retained graph and chat content on the host as the founder.
     fn author_host_content(host: &Path, founder: &InMemoryProvider, moot: [u8; 32]) {
@@ -153,9 +191,14 @@ mod tests {
         let b = binding(0x7a);
 
         // Retained state exists before anything dials.
-        found_place_for_authoring(&host, &b, &founder, joiner.master_public_key().to_bytes());
+        let joiner_root = joiner.master_public_key().to_bytes();
+        found_place_for_authoring(&host, &b, &founder, joiner_root);
         found_place_group(&host, &founder, b.moot.0).unwrap();
         author_host_content(&host, &founder, b.moot.0);
+        // The joiner is a member AND delegated, so it can speak once the
+        // delegation lane carries the certificate to it. Membership alone
+        // would leave it able to read and not to write.
+        delegate_to(&host, &founder, b.moot.0, joiner_root);
         let joiner_prekey = prepare_group_identity(&guest, &joiner, b.moot.0).unwrap();
 
         // The host binds its transport first, because the ticket in the
@@ -245,12 +288,66 @@ mod tests {
             else {
                 continue;
             };
+            // Content AND authority: the delegation lane must have carried the
+            // joiner's certificate too, or it converges on a place it can read
+            // and cannot speak in.
             let done = snapshot.graph.nodes == 2
                 && snapshot.chat.messages == 2
                 && snapshot.chat.channels == 1
-                && snapshot.moot.members == 2;
+                && snapshot.moot.members == 2
+                && snapshot.moot.delegated_certificates == 2;
             last = Some(snapshot);
             if done {
+                break;
+            }
+        }
+
+        // The joiner speaks, and its own projection carries the message back
+        // immediately: authoring stores locally, publishing is what makes it
+        // travel. Both halves ride the one command.
+        worker.command(PlaceWorkerCommand::Author {
+            session,
+            generation: 1,
+            request: 1,
+            command: PlaceCommand::SendMessage {
+                channel: "hall".into(),
+                body: "from the joiner".into(),
+            },
+        });
+        let authored = updates
+            .recv_timeout(Duration::from_secs(30))
+            .expect("author answers");
+        match authored {
+            Update::PlaceCommandDone {
+                request: 1,
+                result: Ok(snapshot),
+                ..
+            } => assert_eq!(
+                snapshot.chat.messages, 3,
+                "the author's own message projects at once"
+            ),
+            Update::PlaceCommandDone {
+                result: Err(error), ..
+            } => panic!("author refused: {error}"),
+            _ => panic!("author answered with an unrelated update"),
+        }
+
+        // And it reaches the host over the live lane, which is the half
+        // initial sync does not cover.
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "the authored message never reached the host"
+            );
+            std::thread::sleep(Duration::from_millis(400));
+            let projection =
+                pollster::block_on(host_open.chat.projection()).unwrap();
+            if projection
+                .messages
+                .iter()
+                .any(|message| message.message.body == "from the joiner")
+            {
                 break;
             }
         }
@@ -260,6 +357,77 @@ mod tests {
         ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(_host_lanes);
         drop(host_open);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A profile with no effective capability is refused before it authors.
+    /// The refusal is local: an operation nobody would project is not worth
+    /// storing, and "you may not" is a better answer than silent filtering.
+    #[test]
+    fn an_unauthorized_profile_is_refused_before_it_authors() {
+        let root = std::env::temp_dir().join(format!(
+            "turnstone-place-unauthorized-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let host = root.join("host");
+        let guest = root.join("guest");
+        let founder = InMemoryProvider::from_seed([0xe1; 32]);
+        let joiner = RootIdentity::Unsealed(InMemoryProvider::from_seed([0xe2; 32]));
+        let b = binding(0x7c);
+
+        // Membership without a delegation: the joiner belongs to the Moot but
+        // holds no capability, which is exactly the pending case.
+        found_place_for_authoring(&host, &b, &founder, joiner.master_public_key().to_bytes());
+        found_place_group(&host, &founder, b.moot.0).unwrap();
+        let joiner_prekey = prepare_group_identity(&guest, &joiner, b.moot.0).unwrap();
+        let invite = author_invitation(
+            &host,
+            &b,
+            &founder,
+            &joiner_prekey,
+            u64::MAX,
+            Vec::new(),
+            &settings(),
+        )
+        .unwrap();
+
+        let wake: armillary::Wake = Arc::new(|| {});
+        let (worker, updates) = spawn_place_worker(wake, Arc::new(joiner), settings());
+        let session = SessionId::new();
+        worker.command(PlaceWorkerCommand::Join {
+            session,
+            generation: 1,
+            directory: guest,
+            invite: Box::new(invite),
+        });
+        assert!(matches!(
+            updates.recv_timeout(Duration::from_secs(30)),
+            Ok(Update::PlaceJoined { result: Ok(_), .. })
+        ));
+
+        worker.command(PlaceWorkerCommand::Author {
+            session,
+            generation: 1,
+            request: 1,
+            command: PlaceCommand::SendMessage {
+                channel: "hall".into(),
+                body: "unauthorized".into(),
+            },
+        });
+        match updates.recv_timeout(Duration::from_secs(30)) {
+            Ok(Update::PlaceCommandDone {
+                result: Err(error), ..
+            }) => assert!(error.contains("no effective capability"), "{error}"),
+            Ok(Update::PlaceCommandDone { result: Ok(_), .. }) => {
+                panic!("an unauthorized profile must not author")
+            }
+            _ => panic!("author answered with an unrelated update"),
+        }
+
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        worker.command(PlaceWorkerCommand::Release(ack_tx));
+        ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 }
