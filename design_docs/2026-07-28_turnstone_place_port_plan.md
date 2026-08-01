@@ -642,9 +642,23 @@ lanes.
   have let a grant given for session lifecycle also speak in every place under
   the user's Personae root.
 
-- **Open:** `src/place/projection.rs` and Canvas reconciliation without
-  overwriting the private local overlay. The shared graph currently reaches
-  the app as counts, not nodes.
+- ~~`src/place/projection.rs` and Canvas reconciliation~~ done 2026-08-01.
+  `SharedGraph` reduces the already-filtered Commons fold to addresses and
+  ids, sorted, so two peers holding the same place present it identically and
+  a difference between them is a real one. It rides on the snapshot, so every
+  path that delivers one (open, join, author, resync) carries it.
+
+  Reconciliation is additive by construction, which is how the "never
+  overwrite the private overlay" rule stops being a rule to remember: the only
+  mutation is minting what is missing. A node the person put there is never
+  moved, relabelled, or removed by shared state converging, and a node leaving
+  the place stops arriving rather than vanishing from under the cursor. It
+  restores selection too, since `visit` selects what it mints and a background
+  resync must not move the cursor. Idempotent, which is what lets it run on
+  every resync without accumulating damage.
+
+  Sharing uses address-as-identity, so sharing the same page twice converges
+  on one node instead of accumulating duplicates.
 - ~~The debounced resync loop~~ done 2026-08-01. A watcher task samples the
   seven lanes' shared counters and emits one `PlaceLanesAdvanced` per settled
   burst, which the app answers with `Effect::ResyncPlace`. A sync round of
@@ -659,9 +673,32 @@ lanes.
   The catch-up receipt now converges without polling `Resync` and asserts the
   watcher actually reported, so a convergence that happened to work without it
   cannot pass.
-- **Open:** ongoing DCGKA processing. The joiner still processes exactly one
-  frame ever; adds, removes, and rotations after join have nowhere to go, and
-  the membership lane is what will deliver them.
+- **Open, and it needs a decision first: ongoing DCGKA processing.** The
+  joiner still processes exactly one frame ever, so adds, removes, and epoch
+  rotations after join have nowhere to go.
+
+  Scoping said the membership lane would deliver them. It will not, and the
+  reason matters: **no lane carries DCGKA frames at all.** `MootGroupExt` is
+  Gemot's governance membership, a p2panda-auth fold answering who belongs.
+  Stickleback's DCGKA group answers who can decrypt. Those are the two folds
+  `AdmittedPlace` already reports separately and explicitly does not assert
+  equal. The welcome reached the joiner inside the invitation envelope, which
+  works exactly once and is why this looked solved.
+
+  So a carrier has to be chosen before anything is wired:
+
+  1. A dedicated group-control lane in Commons or Stickleback, carrying
+     `GroupControlFrame` plus recipient-addressed `GroupDirectFrame`s. Honest
+     about the fold being its own, and the eighth lane on the endpoint.
+  2. Ride the Gemot membership lane. Cheapest, and conflates the two folds
+     this codebase has taken care to keep apart.
+  3. Out of band per change, like the invitation. Fine for adds, useless for
+     removals and rotations, which must reach a member who is not asking.
+
+  (1) looks right, but it is a wire-format decision with a lane id, an
+  extension type, and an admission policy, so it belongs to whoever owns the
+  Stickleback group model rather than being settled by the first consumer that
+  needs it.
 
 Done when authored facts converge between two peers and the T3.0 filter still
 holds on live lanes, not only on cached opens.

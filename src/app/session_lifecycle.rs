@@ -326,6 +326,40 @@ impl App {
         }]
     }
 
+    /// Bring the shared graph's addresses into this session's Canvas.
+    ///
+    /// Additive by construction. The place decides what the PLACE holds, never
+    /// what this person's canvas holds, so a node the person put there is
+    /// never moved, relabelled, or removed by shared state converging; a
+    /// shared node that leaves the place simply stops arriving here. The only
+    /// mutation is minting what is missing, which is why this can run on every
+    /// resync without accumulating damage.
+    ///
+    /// Returns how many nodes it minted, so a caller can tell "nothing new"
+    /// from "nothing happened".
+    pub fn reconcile_shared_graph(
+        &mut self,
+        shared: &crate::place::projection::SharedGraph,
+    ) -> usize {
+        let missing: Vec<String> = shared
+            .addresses()
+            .filter(|address| self.canvas.graph().get_node_by_url(address).is_none())
+            .map(str::to_string)
+            .collect();
+        // Selection is the person's, so restore it: `visit` selects what it
+        // mints, and a background resync must not move the cursor.
+        let selected = self.canvas.selected_members();
+        for address in &missing {
+            self.canvas.visit(address);
+        }
+        if !missing.is_empty() {
+            for member in selected {
+                self.canvas.select_member(member);
+            }
+        }
+        missing.len()
+    }
+
     /// The focused node's address, for sharing it into the place.
     pub fn focused_address(&self) -> Option<String> {
         let member = self.canvas.focused_member()?;

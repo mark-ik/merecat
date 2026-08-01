@@ -79,6 +79,7 @@ impl App {
                     // app with a stale view of state it just changed.
                     Ok(snapshot) => {
                         if let Some(binding) = self.place.binding().cloned() {
+                            self.reconcile_shared_graph(&snapshot.shared);
                             self.place = crate::place::PlaceState::Offline {
                                 binding,
                                 generation,
@@ -104,11 +105,14 @@ impl App {
                     return Vec::new();
                 }
                 self.place = match result {
-                    Ok((binding, snapshot)) => crate::place::PlaceState::Offline {
-                        binding,
-                        generation,
-                        snapshot,
-                    },
+                    Ok((binding, snapshot)) => {
+                        self.reconcile_shared_graph(&snapshot.shared);
+                        crate::place::PlaceState::Offline {
+                            binding,
+                            generation,
+                            snapshot,
+                        }
+                    }
                     // A refused invitation is not a degraded place, it is no
                     // place. Landing in `Degraded` would leave app state
                     // holding a binding admission never granted.
@@ -131,11 +135,14 @@ impl App {
                     return Vec::new();
                 };
                 self.place = match result {
-                    Ok(snapshot) => crate::place::PlaceState::Offline {
-                        binding,
-                        generation,
-                        snapshot,
-                    },
+                    Ok(snapshot) => {
+                        self.reconcile_shared_graph(&snapshot.shared);
+                        crate::place::PlaceState::Offline {
+                            binding,
+                            generation,
+                            snapshot,
+                        }
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "place cache failed to open");
                         crate::place::PlaceState::Degraded {

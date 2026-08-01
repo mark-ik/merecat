@@ -759,11 +759,13 @@ fn author_into_place(
             if address.trim().is_empty() {
                 return Err("a shared node needs an address".to_string());
             }
+            // Address as identity, so sharing the same page twice converges on
+            // one node instead of accumulating duplicates of the same thing.
             let address = address.clone();
             let operation = pollster::block_on(open.graph.edit(move |log| {
                 log.insert_node(
                     &chartulary::Author::new("turnstone"),
-                    chartulary::Container::new(address),
+                    chartulary::Container::new(address.clone()).with_address(address),
                 );
             }))
             .map_err(|error| format!("author shared node: {error}"))?;
@@ -841,6 +843,7 @@ fn place_snapshot(
             epochs: open.group.epoch_count(),
             has_current_epoch: open.group.current_epoch().is_some(),
         },
+        shared: crate::place::projection::SharedGraph::from_projection(&graph_projection),
     })
 }
 

@@ -188,10 +188,14 @@ mod tests {
         let graph_backend = RedbBackend::open(stores.join("commons-graph.redb")).unwrap();
         let mut graph = Replica::for_identity(graph_backend, b.root.0, founder).unwrap();
         for index in 0..2 {
-            pollster::block_on(graph.edit(|log| {
+            // Address as identity, matching what ShareNode authors: the
+            // fixture must produce what the product path produces, or the
+            // projection is proved against something nobody writes.
+            pollster::block_on(graph.edit(move |log| {
+                let address = format!("shared-{index}");
                 log.insert_node(
                     &Author::new("turnstone"),
-                    Container::new(format!("shared-{index}")),
+                    Container::new(address.clone()).with_address(address),
                 );
             }))
             .unwrap();
@@ -403,6 +407,13 @@ mod tests {
                 break;
             }
         }
+
+        // The shared graph reaches the app as nodes, not counts. Both of the
+        // host's shared addresses are named, in deterministic order.
+        let shared = last.expect("converged snapshot").shared;
+        assert_eq!(shared.nodes.len(), 2);
+        let addresses: Vec<&str> = shared.addresses().collect();
+        assert_eq!(addresses, vec!["shared-0", "shared-1"]);
 
         let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
         worker.command(PlaceWorkerCommand::Release(ack_tx));

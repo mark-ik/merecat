@@ -241,6 +241,56 @@ fn a_stale_join_answer_cannot_bind_a_session() {
     ));
 }
 
+#[test]
+fn shared_nodes_arrive_without_disturbing_the_local_canvas() {
+    let mut app = App::test_stub();
+    // The person's own work: a node they opened and selected.
+    let mine = app.canvas.visit("https://mine.example");
+    let mine_id = app.canvas.graph().get_node(mine).unwrap().id;
+    let before = app.canvas.graph().nodes().count();
+
+    let shared = crate::place::projection::SharedGraph {
+        nodes: vec![
+            crate::place::projection::SharedNode {
+                id: "https://theirs.example".into(),
+                address: "https://theirs.example".into(),
+            },
+            // Already present locally: reconciliation must not duplicate it.
+            crate::place::projection::SharedNode {
+                id: "https://mine.example".into(),
+                address: "https://mine.example".into(),
+            },
+        ],
+    };
+
+    assert_eq!(app.reconcile_shared_graph(&shared), 1, "only the missing one");
+    assert_eq!(app.canvas.graph().nodes().count(), before + 1);
+    assert!(
+        app.canvas
+            .graph()
+            .get_node_by_url("https://theirs.example")
+            .is_some(),
+        "the shared address arrived"
+    );
+    assert_eq!(
+        app.canvas.selected_members(),
+        vec![mine_id],
+        "a background reconcile must not move the person's selection"
+    );
+
+    // Idempotent: converging again changes nothing, which is what lets this
+    // run on every resync.
+    assert_eq!(app.reconcile_shared_graph(&shared), 0);
+    assert_eq!(app.canvas.graph().nodes().count(), before + 1);
+
+    // A node leaving the place does not remove the person's copy of it.
+    assert_eq!(
+        app.reconcile_shared_graph(&crate::place::projection::SharedGraph::default()),
+        0
+    );
+    assert_eq!(app.canvas.graph().nodes().count(), before + 1);
+}
+
 fn inline_artifact(bytes: &[u8]) -> crate::place::invite::ArtifactRefV1 {
     crate::place::invite::ArtifactRefV1::Inline {
         media_type: "application/vnd.mere.place-artifact".into(),

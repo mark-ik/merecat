@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod invite;
 pub(crate) mod lanes;
+pub mod projection;
 pub mod worker;
 
 /// The only binding version this Turnstone build understands.
@@ -196,6 +197,9 @@ pub struct OfflinePlaceSnapshot {
     pub graph: GraphCache,
     pub chat: ChatCache,
     pub group: GroupCache,
+    /// What the shared graph actually holds, as opposed to how much of it.
+    /// Already authority-filtered: see [`projection::SharedGraph`].
+    pub shared: projection::SharedGraph,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
