@@ -291,6 +291,44 @@ fn shared_nodes_arrive_without_disturbing_the_local_canvas() {
     assert_eq!(app.canvas.graph().nodes().count(), before + 1);
 }
 
+#[test]
+fn a_shared_knot_address_needs_no_path_of_its_own() {
+    // T4's Commons half. A Knot document is an addressed node in the shared
+    // graph, so it rides the ordinary share path and arrives through the
+    // ordinary reconcile. The plan forbids inventing OpenSharedKnot or
+    // SaveSharedKnot, and this is the assertion that keeps that honest: if
+    // Knot ever needs its own share path, this test is what breaks.
+    let mut app = App::test_stub();
+    let shared = crate::place::projection::SharedGraph {
+        nodes: vec![
+            crate::place::projection::SharedNode {
+                id: "file:///vault/minutes.knot".into(),
+                address: "file:///vault/minutes.knot".into(),
+            },
+            crate::place::projection::SharedNode {
+                id: "https://example.test/page".into(),
+                address: "https://example.test/page".into(),
+            },
+        ],
+    };
+
+    assert_eq!(app.reconcile_shared_graph(&shared), 2);
+    let knot = app
+        .canvas
+        .graph()
+        .get_node_by_url("file:///vault/minutes.knot");
+    assert!(knot.is_some(), "the Knot address reconciled like any other");
+
+    // And it is recognizable as Knot, so the existing OpenAddress route sends
+    // it to the authoring engine without the place port routing anything.
+    assert!(crate::knot_authoring::is_knot_address(
+        "file:///vault/minutes.knot"
+    ));
+    assert!(!crate::knot_authoring::is_knot_address(
+        "https://example.test/page"
+    ));
+}
+
 fn inline_artifact(bytes: &[u8]) -> crate::place::invite::ArtifactRefV1 {
     crate::place::invite::ArtifactRefV1::Inline {
         media_type: "application/vnd.mere.place-artifact".into(),

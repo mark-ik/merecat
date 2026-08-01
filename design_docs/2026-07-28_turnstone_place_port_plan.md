@@ -735,10 +735,47 @@ wants deciding rather than defaulting.
 
 ### T4. Knot through the existing content lane
 
-- Publish a Knot document address/container through Commons.
-- Configure the existing `KnotAuthoringEngine` for the active place endpoint.
+- ~~Publish a Knot document address/container through Commons~~ done
+  2026-08-01, and it needed no code: a Knot document is an addressed node in
+  the shared graph, so `ShareNode` publishes it, reconciliation brings it into
+  Canvas, and `is_knot_address` sends it to the authoring engine through the
+  ordinary `OpenAddress` route.
+
+  `a_shared_knot_address_needs_no_path_of_its_own` is the guard rather than
+  the feature. This rung forbids inventing `OpenSharedKnot` or
+  `SaveSharedKnot`, and that stop rule is only enforceable if something fails
+  when Knot starts wanting its own path.
+
 - Keep Knot revisions and merge receipts in Knot; Commons carries the document
-  address and metadata, not translated document edits.
+  address and metadata, not translated document edits. **Unchanged and
+  reaffirmed.**
+
+- **Blocked, and not on wiring: whose authority admits a shared Knot space?**
+
+  `KnotSyncHost` (mere `ports/knot/src/resident.rs`) syncs **one persona's own
+  devices**. Its transport key IS the writer seed, so a device's node id and
+  its author identity are the same value, and admission is a list of
+  `paired_writers` — "writer keys of this persona's other devices", with
+  `pair_writer` to add another. No Personae root, no Moot membership, no
+  capability anywhere in that path.
+
+  That answers a different question from the one this rung asks. T4's done
+  condition is two *peers* converging, not two devices of one person, and
+  those need different admission: place members are decided by Gemot, and
+  their number changes as the Moot changes.
+
+  So one of these has to be chosen before anything is built:
+
+  1. Knot sync gains a place-scoped admission mode, admitting members the way
+     Commons does, with the Moot as the authority.
+  2. A shared Knot space is a distinct space from a personal one, joined per
+     place, with pairing kept for the personal case.
+  3. Shared documents ride Commons after all, which this rung's own stop rule
+     forbids and which would translate document edits through a graph.
+
+  (3) is out. Between (1) and (2) is a Knot-side ownership question, and the
+  same shape as the DCGKA carrier decision recorded under T3b: the piece looks
+  wired until you ask which fold answers "may this person write here".
 
 Done when both peers author offline revisions and reopen the same derived
 document after convergence.
