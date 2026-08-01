@@ -131,6 +131,7 @@ mod tests {
     use crate::action::Update;
     use crate::identity::RootIdentity;
     use crate::panes::SessionId;
+    use crate::place::PlaceBindingV1;
     use crate::place::invite::{P2PANDA_ENDPOINT_TICKET, RendezvousV1};
     use crate::place::worker::tests::{
         binding, found_place_for_authoring, founder_signing_key, place_delegation, place_rules,
@@ -161,8 +162,8 @@ mod tests {
     }
 
     /// Author retained graph and chat content on the host as the founder.
-    fn author_host_content(host: &Path, founder: &InMemoryProvider, moot: [u8; 32]) {
-        let b = binding(0x7a);
+    fn author_host_content(host: &Path, founder: &InMemoryProvider, b: &PlaceBindingV1) {
+        let moot = b.moot.0;
         let stores = place_store_dir(host);
         // The founder's own writes must be Effective on the joiner, and a root
         // grant alone covers nothing: MootDelegations::covers walks
@@ -240,7 +241,7 @@ mod tests {
         let joiner_root = joiner.master_public_key().to_bytes();
         found_place_for_authoring(&host, &b, &founder, joiner_root);
         found_place_group(&host, &founder, b.moot.0).unwrap();
-        author_host_content(&host, &founder, b.moot.0);
+        author_host_content(&host, &founder, &b);
         // The joiner is a member AND delegated, so it can speak once the
         // delegation lane carries the certificate to it. Membership alone
         // would leave it able to read and not to write.
@@ -419,6 +420,418 @@ mod tests {
         worker.command(PlaceWorkerCommand::Release(ack_tx));
         ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(_host_lanes);
+        drop(host_open);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Wait for one authored command's answer, stepping past the lane nudges
+    /// that arrive on the same channel. A bare `recv` races the watcher.
+    fn expect_authored(updates: &std::sync::mpsc::Receiver<Update>, request: u64) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            match updates.recv_timeout(Duration::from_secs(10)) {
+                Ok(Update::PlaceCommandDone {
+                    request: got,
+                    result: Ok(_),
+                    ..
+                }) if got == request => return,
+                Ok(Update::PlaceCommandDone {
+                    result: Err(error), ..
+                }) => panic!("request {request} refused: {error}"),
+                _ => continue,
+            }
+        }
+        panic!("request {request} never answered");
+    }
+
+    /// Drive the worker until its snapshot satisfies `done`, answering lane
+    /// nudges with resyncs. Returns the satisfying snapshot, or says how far
+    /// it got.
+    fn converge_until(
+        worker: &armillary::ActorHandle<PlaceWorkerCommand>,
+        updates: &std::sync::mpsc::Receiver<Update>,
+        session: SessionId,
+        what: &str,
+        done: impl Fn(&crate::place::OfflinePlaceSnapshot) -> bool,
+    ) -> crate::place::OfflinePlaceSnapshot {
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let mut last = None;
+        // Ask once up front: what is already retained may satisfy `done`
+        // without any lane traffic at all.
+        worker.command(PlaceWorkerCommand::Resync {
+            session,
+            generation: 1,
+        });
+        loop {
+            assert!(Instant::now() < deadline, "{what}: never happened; {last:?}");
+            match updates.recv_timeout(Duration::from_secs(10)) {
+                Ok(Update::PlaceLanesAdvanced { .. }) => {
+                    worker.command(PlaceWorkerCommand::Resync {
+                        session,
+                        generation: 1,
+                    });
+                }
+                Ok(Update::PlaceOpened {
+                    result: Ok(snapshot),
+                    ..
+                })
+                | Ok(Update::PlaceCommandDone {
+                    result: Ok(snapshot),
+                    ..
+                }) => {
+                    if done(&snapshot) {
+                        return snapshot;
+                    }
+                    last = Some(snapshot);
+                    // No nudge is coming if the lanes are quiet, so keep
+                    // asking rather than blocking on traffic that may not
+                    // arrive.
+                    std::thread::sleep(Duration::from_millis(300));
+                    worker.command(PlaceWorkerCommand::Resync {
+                        session,
+                        generation: 1,
+                    });
+                }
+                Ok(Update::PlaceCommandDone {
+                    result: Err(error), ..
+                }) => panic!("{what}: command refused: {error}"),
+                _ => continue,
+            }
+        }
+    }
+
+    /// T3c's convergence half: a shared node crosses, a partition stops
+    /// traffic without losing anything, and reconnecting converges both sides.
+    #[test]
+    fn a_partition_heals_and_both_sides_converge() {
+        let root = std::env::temp_dir().join(format!(
+            "turnstone-place-partition-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let host = root.join("host");
+        let guest = root.join("guest");
+        let founder = InMemoryProvider::from_seed([0xf1; 32]);
+        let joiner = RootIdentity::Unsealed(InMemoryProvider::from_seed([0xf2; 32]));
+        let b = binding(0x7e);
+        let joiner_root = joiner.master_public_key().to_bytes();
+
+        found_place_for_authoring(&host, &b, &founder, joiner_root);
+        found_place_group(&host, &founder, b.moot.0).unwrap();
+        author_host_content(&host, &founder, &b);
+        delegate_to(&host, &founder, b.moot.0, joiner_root);
+        let joiner_prekey = prepare_group_identity(&guest, &joiner, b.moot.0).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let host_transport = runtime
+            .block_on(async {
+                P2pandaTransport::builder(&founder.master_keypair())
+                    .gossip()
+                    .bind()
+                    .await
+            })
+            .unwrap();
+        let ticket = runtime.block_on(host_transport.ticket()).unwrap();
+        let invite = author_invitation(
+            &host,
+            &b,
+            &founder,
+            &joiner_prekey,
+            u64::MAX,
+            vec![RendezvousV1 {
+                carrier: P2PANDA_ENDPOINT_TICKET.into(),
+                hint: ticket,
+            }],
+            &settings(),
+        )
+        .unwrap();
+
+        let (host_open, _) = open_cached_place(&host, &b, &founder, &settings()).unwrap();
+        let (endpoint, gossip) = host_transport.sync_parts().unwrap();
+        let host_lanes = runtime
+            .block_on(async {
+                let moot = host_open
+                    .moot
+                    .join_lanes(endpoint.clone(), gossip.clone())
+                    .await?;
+                let graph = host_open.graph.join(endpoint.clone(), gossip.clone()).await?;
+                let chat = host_open.chat.join(endpoint, gossip).await?;
+                Ok::<_, stickleback::JoinError>((moot, graph, chat))
+            })
+            .unwrap();
+
+        let wake: armillary::Wake = Arc::new(|| {});
+        let (worker, updates) = spawn_place_worker(wake, Arc::new(joiner), settings());
+        let session = SessionId::new();
+        worker.command(PlaceWorkerCommand::Join {
+            session,
+            generation: 1,
+            directory: guest.clone(),
+            invite: Box::new(invite),
+        });
+        assert!(matches!(
+            updates.recv_timeout(Duration::from_secs(60)),
+            Ok(Update::PlaceJoined { result: Ok(_), .. })
+        ));
+        converge_until(&worker, &updates, session, "initial catch-up", |s| {
+            s.graph.nodes == 2 && s.moot.delegated_certificates == 2
+        });
+
+        // A shared HTTPS node authored by the joiner reaches the host.
+        worker.command(PlaceWorkerCommand::Author {
+            session,
+            generation: 1,
+            request: 1,
+            command: PlaceCommand::ShareNode {
+                address: "https://shared.example/page".into(),
+            },
+        });
+        expect_authored(&updates, 1);
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            assert!(Instant::now() < deadline, "the shared node never crossed");
+            std::thread::sleep(Duration::from_millis(300));
+            let projection = pollster::block_on(host_open.graph.projection()).unwrap();
+            if projection
+                .graph
+                .graph()
+                .nodes()
+                .any(|(_, c)| c.id == "https://shared.example/page")
+            {
+                break;
+            }
+        }
+
+        // Partition: the host leaves its lanes. Nothing is lost on either
+        // side, because authoring stores before it publishes.
+        drop(host_lanes);
+        worker.command(PlaceWorkerCommand::Author {
+            session,
+            generation: 1,
+            request: 2,
+            command: PlaceCommand::SendMessage {
+                channel: "hall".into(),
+                body: "sent while partitioned".into(),
+            },
+        });
+        expect_authored(&updates, 2);
+
+        // Heal: the host rejoins and catches up on what it missed.
+        let (endpoint, gossip) = host_transport.sync_parts().unwrap();
+        let _rejoined = runtime
+            .block_on(async {
+                let moot = host_open
+                    .moot
+                    .join_lanes(endpoint.clone(), gossip.clone())
+                    .await?;
+                let graph = host_open.graph.join(endpoint.clone(), gossip.clone()).await?;
+                let chat = host_open.chat.join(endpoint, gossip).await?;
+                Ok::<_, stickleback::JoinError>((moot, graph, chat))
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "the partitioned message never arrived after healing"
+            );
+            std::thread::sleep(Duration::from_millis(400));
+            let projection = pollster::block_on(host_open.chat.projection()).unwrap();
+            if projection
+                .messages
+                .iter()
+                .any(|m| m.message.body == "sent while partitioned")
+            {
+                break;
+            }
+        }
+
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        worker.command(PlaceWorkerCommand::Release(ack_tx));
+        ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(_rejoined);
+        drop(host_open);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// T3c's restart half: what a place converged on survives the worker
+    /// dying, and reopens without any network at all.
+    ///
+    /// It also pins the reconnection gap. `Open` does not dial: only `Join`
+    /// carries a rendezvous, and the invitation is not persisted, so a
+    /// restarted place comes back **offline** holding everything it had. That
+    /// is correct behaviour for what exists and the wrong end state for a
+    /// product; the assertion here is what will fail when reconnection lands,
+    /// which is the point.
+    #[test]
+    fn a_restarted_place_keeps_what_it_converged_on() {
+        let root = std::env::temp_dir().join(format!(
+            "turnstone-place-restart-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let host = root.join("host");
+        let guest = root.join("guest");
+        let founder = InMemoryProvider::from_seed([0xa7; 32]);
+        let joiner = RootIdentity::Unsealed(InMemoryProvider::from_seed([0xa8; 32]));
+        let b = binding(0x8a);
+        let joiner_root = joiner.master_public_key().to_bytes();
+
+        found_place_for_authoring(&host, &b, &founder, joiner_root);
+        found_place_group(&host, &founder, b.moot.0).unwrap();
+        author_host_content(&host, &founder, &b);
+        delegate_to(&host, &founder, b.moot.0, joiner_root);
+        let joiner_prekey = prepare_group_identity(&guest, &joiner, b.moot.0).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let host_transport = runtime
+            .block_on(async {
+                P2pandaTransport::builder(&founder.master_keypair())
+                    .gossip()
+                    .bind()
+                    .await
+            })
+            .unwrap();
+        let ticket = runtime.block_on(host_transport.ticket()).unwrap();
+        let invite = author_invitation(
+            &host,
+            &b,
+            &founder,
+            &joiner_prekey,
+            u64::MAX,
+            vec![RendezvousV1 {
+                carrier: P2PANDA_ENDPOINT_TICKET.into(),
+                hint: ticket,
+            }],
+            &settings(),
+        )
+        .unwrap();
+
+        let (host_open, _) = open_cached_place(&host, &b, &founder, &settings()).unwrap();
+        let (endpoint, gossip) = host_transport.sync_parts().unwrap();
+        let host_lanes = runtime
+            .block_on(async {
+                let moot = host_open
+                    .moot
+                    .join_lanes(endpoint.clone(), gossip.clone())
+                    .await?;
+                let graph = host_open.graph.join(endpoint.clone(), gossip.clone()).await?;
+                let chat = host_open.chat.join(endpoint, gossip).await?;
+                Ok::<_, stickleback::JoinError>((moot, graph, chat))
+            })
+            .unwrap();
+
+        let identity = Arc::new(joiner);
+        let wake: armillary::Wake = Arc::new(|| {});
+        let (worker, updates) =
+            spawn_place_worker(wake.clone(), Arc::clone(&identity), settings());
+        let session = SessionId::new();
+        worker.command(PlaceWorkerCommand::Join {
+            session,
+            generation: 1,
+            directory: guest.clone(),
+            invite: Box::new(invite),
+        });
+        assert!(matches!(
+            updates.recv_timeout(Duration::from_secs(60)),
+            Ok(Update::PlaceJoined { result: Ok(_), .. })
+        ));
+        let converged = converge_until(&worker, &updates, session, "catch-up", |s| {
+            s.graph.nodes == 2 && s.chat.messages == 2
+        });
+
+        // The worker dies, taking every lane and handle with it.
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        worker.command(PlaceWorkerCommand::Release(ack_tx));
+        ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(worker);
+        drop(updates);
+        drop(host_lanes);
+
+        // A fresh worker reopens from the persisted binding alone.
+        let (restarted, restarted_updates) =
+            spawn_place_worker(wake, identity, settings());
+        // Retried because a real restart is a new PROCESS: reopening the same
+        // redb in-process can briefly race the previous handle's file lock
+        // under load. That is an artifact of testing restart without
+        // restarting, not a condition the product meets.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let reopened = loop {
+            restarted.command(PlaceWorkerCommand::Open {
+                session,
+                generation: 2,
+                directory: guest.clone(),
+                binding: b.clone(),
+            });
+            match restarted_updates.recv_timeout(Duration::from_secs(15)) {
+                Ok(Update::PlaceOpened {
+                    result: Ok(snapshot),
+                    ..
+                }) => break snapshot,
+                Ok(Update::PlaceOpened {
+                    result: Err(error), ..
+                }) => {
+                    assert!(
+                        Instant::now() < deadline && error.contains("Cannot acquire lock"),
+                        "reopen failed: {error}"
+                    );
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                _ => continue,
+            }
+        };
+
+        // Everything survived, including the authority that made it visible.
+        assert_eq!(reopened.graph.nodes, converged.graph.nodes);
+        assert_eq!(reopened.chat.messages, converged.chat.messages);
+        assert_eq!(reopened.moot.members, converged.moot.members);
+        assert_eq!(
+            reopened.moot.delegated_certificates,
+            converged.moot.delegated_certificates
+        );
+        assert_eq!(reopened.shared, converged.shared);
+        assert!(reopened.group.has_current_epoch, "the sealed epoch reopened");
+
+        // The reopened place has no lanes, because `Open` does not dial and no
+        // rendezvous was persisted. It is still fully usable: authoring stores
+        // locally and will publish whenever it next joins, which is the whole
+        // reason those are separate steps.
+        restarted.command(PlaceWorkerCommand::Author {
+            session,
+            generation: 2,
+            request: 9,
+            command: PlaceCommand::SendMessage {
+                channel: "hall".into(),
+                body: "authored after restart, offline".into(),
+            },
+        });
+        match restarted_updates.recv_timeout(Duration::from_secs(30)) {
+            Ok(Update::PlaceCommandDone {
+                request: 9,
+                result: Ok(snapshot),
+                ..
+            }) => assert_eq!(
+                snapshot.chat.messages,
+                converged.chat.messages + 1,
+                "an offline place still authors"
+            ),
+            Ok(Update::PlaceCommandDone {
+                result: Err(error), ..
+            }) => panic!("offline authoring refused: {error}"),
+            _ => panic!("author answered with an unrelated update"),
+        }
+
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        restarted.command(PlaceWorkerCommand::Release(ack_tx));
+        ack_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(host_open);
         let _ = std::fs::remove_dir_all(&root);
     }

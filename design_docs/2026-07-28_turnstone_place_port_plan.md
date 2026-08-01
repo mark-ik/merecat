@@ -703,11 +703,35 @@ lanes.
 Done when authored facts converge between two peers and the T3.0 filter still
 holds on live lanes, not only on cached opens.
 
-#### T3c. Render-free two-peer receipt
+#### T3c. Render-free two-peer receipt - DONE 2026-08-01
 
-Done when the render-free two-peer test covers join, message, shared HTTPS
-node, partition, restart catch-up, and an unauthorized graph write that never
-enters the effective projection.
+Four receipts in `src/place/lanes.rs`, covering the whole list:
+
+| Step | Receipt |
+|---|---|
+| Join, message, catch-up | `a_joiner_catches_up_on_a_live_place_over_one_ticket` |
+| Shared HTTPS node, partition, heal | `a_partition_heals_and_both_sides_converge` |
+| Restart | `a_restarted_place_keeps_what_it_converged_on` |
+| Unauthorized write | `an_unauthorized_profile_is_refused_before_it_authors`, plus `a_revoked_member_reaches_no_projected_place_state` for the received side |
+
+The unauthorized case is covered from both ends deliberately. A local command
+is refused before it authors, and an operation that arrives from a peer whose
+grant was withdrawn stays retained and out of the projection. Those are
+different mechanisms and only the second is about convergence.
+
+**The restart receipt pins an open gap on purpose.** A restarted place comes
+back **offline**, holding everything it converged on, because `Open` does not
+dial: only `Join` carries a rendezvous and the invitation is not persisted. It
+is fully usable offline, which the receipt asserts by authoring into it, and
+that authored fact will publish whenever it next joins. But nothing
+reconnects on its own.
+
+That is the next real decision, and it is not merely "persist the ticket": an
+endpoint ticket names a live address that will not survive the peer's own
+restart. The options are a persisted peer-id address book plus discovery, a
+relay the place agrees on, or an explicit reconnect gesture. Discovery is the
+lane already excluded from the first proof for the macOS reason, so this
+wants deciding rather than defaulting.
 
 ### T4. Knot through the existing content lane
 
