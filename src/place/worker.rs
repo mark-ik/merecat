@@ -923,6 +923,11 @@ pub fn spawn_place_worker(
                                     &binding,
                                     identity.as_ref(),
                                     &tickets,
+                                    // The watcher reports arrivals under THIS
+                                    // open's generation, so a nudge from a
+                                    // departed place is dropped by the same
+                                    // guard every other answer passes.
+                                    Some((out.clone(), session, generation)),
                                 )?);
                             }
                             Ok((binding, opened, snapshot))

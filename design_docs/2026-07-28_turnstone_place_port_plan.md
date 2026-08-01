@@ -645,9 +645,20 @@ lanes.
 - **Open:** `src/place/projection.rs` and Canvas reconciliation without
   overwriting the private local overlay. The shared graph currently reaches
   the app as counts, not nodes.
-- **Open:** the debounced resync loop. `Resync` exists and is correct, but
-  nothing calls it automatically: received operations land in the stores and
-  wait for the next explicit resync.
+- ~~The debounced resync loop~~ done 2026-08-01. A watcher task samples the
+  seven lanes' shared counters and emits one `PlaceLanesAdvanced` per settled
+  burst, which the app answers with `Effect::ResyncPlace`. A sync round of
+  fifty operations becomes one re-fold, not fifty.
+
+  It reports arrivals and never folds anything itself: the authority filter
+  belongs on the worker thread with the stores, not on a sampling task. The
+  nudge carries the open's generation, so a tick from a departed place is
+  dropped by the same guard every other answer passes, and the watcher is
+  aborted explicitly on drop because it holds an `Emitter`.
+
+  The catch-up receipt now converges without polling `Resync` and asserts the
+  watcher actually reported, so a convergence that happened to work without it
+  cannot pass.
 - **Open:** ongoing DCGKA processing. The joiner still processes exactly one
   frame ever; adds, removes, and rotations after join have nowhere to go, and
   the membership lane is what will deliver them.

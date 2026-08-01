@@ -535,6 +535,16 @@ pub enum Update {
         generation: u64,
         result: Result<crate::place::OfflinePlaceSnapshot, String>,
     },
+    /// The place's live lanes accepted operations and have settled.
+    ///
+    /// A nudge, not a projection: the watcher samples counters and cannot
+    /// apply the authority filter, which belongs with the stores. The app
+    /// answers by asking for a resync, so what arrived becomes visible through
+    /// exactly the same fold every other path uses.
+    PlaceLanesAdvanced {
+        session: crate::panes::SessionId,
+        generation: u64,
+    },
     /// One authored place command completed.
     ///
     /// Success carries the re-folded snapshot, because authoring changes what

@@ -52,6 +52,18 @@ impl App {
                 self.events.push(AppEvent::BinFailed(error));
                 vec![Effect::Redraw]
             }
+            Update::PlaceLanesAdvanced {
+                session,
+                generation,
+            } => {
+                if session != self.session_id || self.place.generation() != Some(generation) {
+                    return Vec::new();
+                }
+                vec![Effect::ResyncPlace {
+                    session,
+                    generation,
+                }]
+            }
             Update::PlaceCommandDone {
                 session,
                 generation,

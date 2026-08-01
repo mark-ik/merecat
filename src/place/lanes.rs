@@ -18,12 +18,19 @@ use transport::{P2pandaTransport, sync_overlay_topic};
 use crate::place::PlaceBindingV1;
 use crate::place::worker::OpenPlace;
 
+/// How often the watcher samples lane counters, and how long they must hold
+/// steady before it reports. A burst of operations from one sync round then
+/// settles into a single re-fold instead of one per message.
+const WATCH_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// One place's joined lanes, plus the transport and runtime that carry them.
 ///
-/// Field order is drop order and is load-bearing: lane tasks abort first,
-/// then the transport's actors stop, then the runtime they all lived on shuts
-/// down. The runtime last, because aborting a task needs a live runtime.
+/// Field order is drop order and is load-bearing: the watcher stops first,
+/// then lane tasks abort, then the transport's actors stop, then the runtime
+/// they all lived on shuts down. The runtime last, because aborting a task
+/// needs a live runtime.
 pub(crate) struct LiveLanes {
+    watcher: Option<tokio::task::JoinHandle<()>>,
     moot: MootLanes,
     graph: JoinedSpace<CommonsExt>,
     chat: JoinedSpace<ChatExt>,
@@ -31,7 +38,42 @@ pub(crate) struct LiveLanes {
     _runtime: tokio::runtime::Runtime,
 }
 
+impl Drop for LiveLanes {
+    fn drop(&mut self) {
+        // Explicit because the watcher outlives nothing else usefully: it
+        // holds an Emitter, and a tick landing after the place closed would
+        // ask the app to resync a place that is gone.
+        if let Some(watcher) = self.watcher.take() {
+            watcher.abort();
+        }
+    }
+}
+
+/// Shared counter handles across all seven lanes, sampled by the watcher.
+struct LaneCounters {
+    handles: Vec<std::sync::Arc<std::sync::Mutex<stickleback::SyncStatus>>>,
+}
+
+impl LaneCounters {
+    /// Accepted operations across every lane. A sum is right HERE and wrong in
+    /// the status surface: the watcher only needs to know that something
+    /// arrived, while a person needs to know which lane it arrived on.
+    fn total(&self) -> u64 {
+        self.handles
+            .iter()
+            .map(|handle| handle.lock().map(|status| status.ops_received).unwrap_or(0))
+            .sum()
+    }
+}
+
 impl LiveLanes {
+    fn counter_handles(&self) -> LaneCounters {
+        let mut handles = self.moot.status_handles().to_vec();
+        handles.push(self.graph.status_handle());
+        handles.push(self.chat.status_handle());
+        LaneCounters { handles }
+    }
+
     /// Per-lane received/sent counters, Gemot's five then graph then chat,
     /// for the status surface: it must be able to say which lane is behind.
     pub(crate) fn ops_received(&self) -> [u64; 7] {
@@ -267,40 +309,50 @@ mod tests {
             _ => panic!("join answered with an unrelated update"),
         }
 
-        // Catch-up: poll Resync until the founder's retained state projects,
-        // or say exactly how far it got.
+        // Catch-up WITHOUT polling Resync: the lane watcher nudges, the app
+        // answers by resyncing, and the joiner converges on its own. This
+        // stands in for the app's fold, which turns PlaceLanesAdvanced into an
+        // Effect::ResyncPlace.
         let deadline = Instant::now() + Duration::from_secs(45);
         let mut last = None;
+        let mut nudges = 0;
         loop {
             assert!(
                 Instant::now() < deadline,
-                "did not converge; last snapshot: {last:?}"
+                "did not converge after {nudges} lane nudges; last: {last:?}"
             );
-            std::thread::sleep(Duration::from_millis(400));
-            worker.command(PlaceWorkerCommand::Resync {
-                session,
-                generation: 1,
-            });
-            let Ok(Update::PlaceOpened {
-                result: Ok(snapshot),
-                ..
-            }) = updates.recv_timeout(Duration::from_secs(10))
-            else {
-                continue;
-            };
-            // Content AND authority: the delegation lane must have carried the
-            // joiner's certificate too, or it converges on a place it can read
-            // and cannot speak in.
-            let done = snapshot.graph.nodes == 2
-                && snapshot.chat.messages == 2
-                && snapshot.chat.channels == 1
-                && snapshot.moot.members == 2
-                && snapshot.moot.delegated_certificates == 2;
-            last = Some(snapshot);
-            if done {
-                break;
+            match updates.recv_timeout(Duration::from_secs(10)) {
+                Ok(Update::PlaceLanesAdvanced { generation: 1, .. }) => {
+                    nudges += 1;
+                    worker.command(PlaceWorkerCommand::Resync {
+                        session,
+                        generation: 1,
+                    });
+                }
+                Ok(Update::PlaceOpened {
+                    result: Ok(snapshot),
+                    ..
+                }) => {
+                    // Content AND authority: the delegation lane must have
+                    // carried the joiner's certificate too, or it converges on
+                    // a place it can read and cannot speak in.
+                    let done = snapshot.graph.nodes == 2
+                        && snapshot.chat.messages == 2
+                        && snapshot.chat.channels == 1
+                        && snapshot.moot.members == 2
+                        && snapshot.moot.delegated_certificates == 2;
+                    last = Some(snapshot);
+                    if done {
+                        break;
+                    }
+                }
+                _ => continue,
             }
         }
+        assert!(
+            nudges > 0,
+            "the joiner converged without the watcher reporting anything"
+        );
 
         // The joiner speaks, and its own projection carries the message back
         // immediately: authoring stores locally, publishing is what makes it
@@ -453,6 +505,11 @@ pub(crate) fn join_live(
     binding: &PlaceBindingV1,
     identity: &dyn IdentityProvider,
     tickets: &[String],
+    watch: Option<(
+        armillary::Emitter<crate::action::Update>,
+        crate::panes::SessionId,
+        u64,
+    )>,
 ) -> Result<LiveLanes, String> {
     if tickets.is_empty() {
         return Err("no dialable rendezvous".to_string());
@@ -509,11 +566,43 @@ pub(crate) fn join_live(
         Ok::<_, String>((transport, moot_lanes, graph, chat))
     })?;
 
-    Ok(LiveLanes {
+    let mut lanes = LiveLanes {
+        watcher: None,
         moot: moot_lanes,
         graph,
         chat,
         _transport: transport,
         _runtime: runtime,
-    })
+    };
+
+    // The watcher turns lane arrivals into ONE app-visible nudge per settled
+    // burst. It reports that something arrived; it never folds a projection
+    // itself, because the authority filter belongs on the worker thread with
+    // the stores, not on a sampling task.
+    if let Some((out, session, generation)) = watch {
+        let counters = lanes.counter_handles();
+        lanes.watcher = Some(lanes._runtime.spawn(async move {
+            let mut settled = counters.total();
+            loop {
+                tokio::time::sleep(WATCH_TICK).await;
+                let now = counters.total();
+                if now == settled {
+                    continue;
+                }
+                // Wait for the burst to stop growing before reporting, so a
+                // sync round of fifty operations is one re-fold and not fifty.
+                tokio::time::sleep(WATCH_TICK).await;
+                let after = counters.total();
+                if after != now {
+                    continue;
+                }
+                settled = after;
+                out.emit(crate::action::Update::PlaceLanesAdvanced {
+                    session,
+                    generation,
+                });
+            }
+        }));
+    }
+    Ok(lanes)
 }
