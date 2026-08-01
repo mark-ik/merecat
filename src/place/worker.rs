@@ -99,14 +99,27 @@ pub enum PlaceWorkerCommand {
         directory: PathBuf,
         invite: Box<PlaceInviteV1>,
     },
+    /// Re-fold the open place's projections without touching its lanes.
+    ///
+    /// The live lanes drain received operations straight into the retained
+    /// stores; this is how what arrived becomes authority-filtered,
+    /// product-visible state. Answered with [`Update::PlaceOpened`] under the
+    /// same generation, so the app folds it exactly like an open.
+    Resync {
+        session: SessionId,
+        generation: u64,
+    },
     Release(std::sync::mpsc::SyncSender<()>),
 }
 
-struct OpenPlace {
-    _moot: MootFile,
-    _graph: Replica<RedbBackend>,
-    _chat: ChatReplica<RedbBackend>,
-    _group: GroupSession,
+pub(crate) struct OpenPlace {
+    /// Live lane handles, when this open dialed. First field on purpose: the
+    /// lane tasks must stop before the stores they drain into close.
+    pub(crate) lanes: Option<crate::place::lanes::LiveLanes>,
+    pub(crate) moot: MootFile,
+    pub(crate) graph: Replica<RedbBackend>,
+    pub(crate) chat: ChatReplica<RedbBackend>,
+    pub(crate) group: GroupSession,
 }
 
 pub fn place_store_dir(session_dir: &Path) -> PathBuf {
@@ -233,6 +246,7 @@ pub fn author_invitation(
     identity: &dyn IdentityProvider,
     joiner_prekey: &[u8],
     not_after_ms: u64,
+    rendezvous: Vec<crate::place::invite::RendezvousV1>,
     settings: &PlaceWorkerSettings,
 ) -> Result<PlaceInviteV1, String> {
     binding
@@ -317,7 +331,7 @@ pub fn author_invitation(
         expected_epoch,
         membership_heads: snapshot.membership.auth_heads,
         not_after_ms,
-        rendezvous: Vec::new(),
+        rendezvous,
     })
 }
 
@@ -376,7 +390,7 @@ pub fn found_place_group(
 }
 
 /// Reopen the sealed group session established by [`prepare_group_identity`].
-fn load_group_session(
+pub(crate) fn load_group_session(
     directory: &Path,
     identity: &dyn IdentityProvider,
     moot: [u8; 32],
@@ -592,7 +606,7 @@ pub fn save_group_session(
         .map_err(|error| format!("seal group session: {error}"))
 }
 
-fn open_cached_place(
+pub(crate) fn open_cached_place(
     directory: &Path,
     binding: &PlaceBindingV1,
     identity: &dyn IdentityProvider,
@@ -629,43 +643,67 @@ fn open_cached_place(
         settings.retention.clone(),
     ))
     .map_err(|error| format!("open Gemot cache: {error}"))?;
-    let moot_snapshot = pollster::block_on(moot.snapshot())
+
+    let graph_backend = RedbBackend::open(stores.join("commons-graph.redb"))
+        .map_err(|error| format!("open Commons graph cache: {error}"))?;
+    let graph = Replica::for_identity(graph_backend, binding.root.0, identity)
+        .map_err(|error| format!("bind Commons graph writer: {error}"))?;
+
+    let chat_backend = RedbBackend::open(stores.join("commons-chat.redb"))
+        .map_err(|error| format!("open Commons chat cache: {error}"))?;
+    let chat = ChatReplica::for_identity(chat_backend, binding.chat.0, identity, keyring)
+        .map_err(|error| format!("bind Commons chat writer: {error}"))?;
+
+    let open = OpenPlace {
+        lanes: None,
+        moot,
+        graph,
+        chat,
+        group,
+    };
+    let snapshot = place_snapshot(&open, binding.moot.0, settings)?;
+    Ok((open, snapshot))
+}
+
+/// Fold the current app-owned snapshot from an open place's stores.
+///
+/// Factored from the open path so a resync can re-fold WITHOUT dropping the
+/// live lanes: the lanes drain received operations into these same stores,
+/// and this is where they become authority-filtered, product-visible state.
+fn place_snapshot(
+    open: &OpenPlace,
+    moot_id: [u8; 32],
+    settings: &PlaceWorkerSettings,
+) -> Result<OfflinePlaceSnapshot, String> {
+    let moot_snapshot = pollster::block_on(open.moot.snapshot())
         .map_err(|error| format!("materialize Gemot: {error}"))?;
 
     // The single authority view both Commons domains project through. It is
     // built from the Moot's own converged constitution and delegation fold, so
     // an operation whose author was never granted, or whose grant was
     // withdrawn, cannot reach a projection this worker emits.
-    let delegations = pollster::block_on(moot.delegations())
+    let delegations = pollster::block_on(open.moot.delegations())
         .map_err(|error| format!("materialize Gemot delegations: {error}"))?;
     let authority = GemotAuthorityView {
         authority: MootAuthority {
             delegations: &delegations,
             rules: &moot_snapshot.governance.rules,
-            moot_id: binding.moot.0,
+            moot_id,
             now_ms: settings.authority_clock.now_ms(),
         },
     };
 
-    let graph_backend = RedbBackend::open(stores.join("commons-graph.redb"))
-        .map_err(|error| format!("open Commons graph cache: {error}"))?;
-    let graph = Replica::for_identity(graph_backend, binding.root.0, identity)
-        .map_err(|error| format!("bind Commons graph writer: {error}"))?;
-    let graph_projection = pollster::block_on(graph.projection_with_authority(&authority))
+    let graph_projection = pollster::block_on(open.graph.projection_with_authority(&authority))
         .map_err(|error| format!("materialize Commons graph: {error}"))?;
-
-    let chat_backend = RedbBackend::open(stores.join("commons-chat.redb"))
-        .map_err(|error| format!("open Commons chat cache: {error}"))?;
-    let chat = ChatReplica::for_identity(chat_backend, binding.chat.0, identity, keyring)
-        .map_err(|error| format!("bind Commons chat writer: {error}"))?;
-    let chat_projection = pollster::block_on(chat.projection_with_authority(&authority))
+    let chat_projection = pollster::block_on(open.chat.projection_with_authority(&authority))
         .map_err(|error| format!("materialize Commons chat: {error}"))?;
 
-    let group_members = group
+    let group_members = open
+        .group
         .members()
         .map_err(|error| format!("materialize group membership: {error}"))?
         .len();
-    let snapshot = OfflinePlaceSnapshot {
+    Ok(OfflinePlaceSnapshot {
         moot: MootCache {
             membership_epoch: moot_snapshot.membership.epoch,
             members: moot_snapshot.membership.members.len(),
@@ -690,19 +728,10 @@ fn open_cached_place(
         },
         group: GroupCache {
             members: group_members,
-            epochs: group.epoch_count(),
-            has_current_epoch: group.current_epoch().is_some(),
+            epochs: open.group.epoch_count(),
+            has_current_epoch: open.group.current_epoch().is_some(),
         },
-    };
-    Ok((
-        OpenPlace {
-            _moot: moot,
-            _graph: graph,
-            _chat: chat,
-            _group: group,
-        },
-        snapshot,
-    ))
+    })
 }
 
 /// Spawn the retained-place worker. Each `Open` first releases the prior
@@ -769,6 +798,24 @@ pub fn spawn_place_worker(
                                 &settings,
                             )
                             .map(|(opened, snapshot)| (admitted.binding, opened, snapshot))
+                        })
+                        .and_then(|(binding, mut opened, snapshot)| {
+                            // Dial whatever the envelope offered. A ticketless
+                            // invitation still admits: the place is real and
+                            // offline, which Degraded-vs-Offline surfaces.
+                            let tickets: Vec<String> = invite
+                                .dialable()
+                                .map(|entry| entry.hint.clone())
+                                .collect();
+                            if !tickets.is_empty() {
+                                opened.lanes = Some(crate::place::lanes::join_live(
+                                    &opened,
+                                    &binding,
+                                    identity.as_ref(),
+                                    &tickets,
+                                )?);
+                            }
+                            Ok((binding, opened, snapshot))
                         });
                         match joined {
                             Ok((binding, opened, snapshot)) => {
@@ -786,6 +833,24 @@ pub fn spawn_place_worker(
                             }),
                         }
                     }
+                    PlaceWorkerCommand::Resync {
+                        session,
+                        generation,
+                    } => {
+                        // Only meaningful with an open place; a resync of
+                        // nothing answers with the error rather than silence.
+                        let result = match &live {
+                            Some(open) => {
+                                place_snapshot(open, open.moot.moot_id().0, &settings)
+                            }
+                            None => Err("no open place to resync".to_string()),
+                        };
+                        out.emit(Update::PlaceOpened {
+                            session,
+                            generation,
+                            result,
+                        });
+                    }
                     PlaceWorkerCommand::Release(ack) => {
                         live = None;
                         let _ = ack.send(());
@@ -798,7 +863,7 @@ pub fn spawn_place_worker(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chartulary::{Author, Container};
     use commons::chat::{Channel, ChatEvent, Message};
@@ -826,7 +891,7 @@ mod tests {
     const AUTHORITY_AT_MS: u64 = 50;
     const ROOT_GRANT: [u8; 32] = [0x67; 32];
 
-    fn settings() -> PlaceWorkerSettings {
+    pub(crate) fn settings() -> PlaceWorkerSettings {
         PlaceWorkerSettings {
             authority_clock: AuthorityClock::Fixed(AUTHORITY_AT_MS),
             ..PlaceWorkerSettings::default()
@@ -845,7 +910,7 @@ mod tests {
         cap_path(&Cap::scope("commons").unwrap())
     }
 
-    fn place_rules(founder_id: [u8; 32]) -> ConstitutionRules {
+    pub(crate) fn place_rules(founder_id: [u8; 32]) -> ConstitutionRules {
         let mut rules = ConstitutionRules::founder_only(founder_id);
         rules.grant(CapabilityGrant {
             id: ROOT_GRANT,
@@ -870,7 +935,7 @@ mod tests {
     /// Gemot authors delegation facts under the scope-derived key that signed
     /// the certificate, not the master key: the master secret stays behind the
     /// provider.
-    fn founder_signing_key(founder: &InMemoryProvider, moot: [u8; 32]) -> identity::Ed25519Keypair {
+    pub(crate) fn founder_signing_key(founder: &InMemoryProvider, moot: [u8; 32]) -> identity::Ed25519Keypair {
         founder
             .derive_keypair(&delegation_signing_salt(&place_scope(moot)))
             .unwrap()
@@ -879,7 +944,7 @@ mod tests {
     /// The founder's signed delegation admitting one profile root to both
     /// Commons domains. Deterministic, so a later test can recompute its id to
     /// revoke it.
-    fn place_delegation(
+    pub(crate) fn place_delegation(
         founder: &InMemoryProvider,
         moot: [u8; 32],
         subject: [u8; 32],
@@ -895,7 +960,7 @@ mod tests {
                 20,
                 Some(900),
                 0,
-                [1; 32],
+                [subject[0] ^ 0x5a; 32],
             ),
         )
         .unwrap()
@@ -934,7 +999,7 @@ mod tests {
         drop(moot);
     }
 
-    fn binding(seed: u8) -> PlaceBindingV1 {
+    pub(crate) fn binding(seed: u8) -> PlaceBindingV1 {
         PlaceBindingV1::new(
             PlaceId([seed; 32]),
             SharedContainerId([seed.wrapping_add(1); 32]),
@@ -1331,6 +1396,7 @@ mod tests {
             &founder,
             &outsider_prekey,
             AUTHORITY_AT_MS + 1_000,
+            Vec::new(),
             &settings(),
         )
         .unwrap_err();
@@ -1342,6 +1408,7 @@ mod tests {
             &founder,
             &joiner_prekey,
             AUTHORITY_AT_MS + 1_000,
+            Vec::new(),
             &settings(),
         )
         .unwrap();
@@ -1359,7 +1426,7 @@ mod tests {
 
     /// Found a Moot with both roots in its membership fold, as the authoring
     /// side would already have.
-    fn found_place_for_authoring(
+    pub(crate) fn found_place_for_authoring(
         directory: &Path,
         binding: &PlaceBindingV1,
         founder: &InMemoryProvider,

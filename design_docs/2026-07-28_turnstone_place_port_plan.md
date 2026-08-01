@@ -459,9 +459,29 @@ so unreadable time withholds content rather than admitting it.
   ticket format, so the encoding carries no fork-specific risk. The one forked
   iroh-family crate in the graph is `iroh-mdns-address-lookup`, which is
   discovery, the lane already excluded from the first proof.
-- **Open:** join the lanes. Scoped below rather than started, because the
-  transport API is moving (`bind_inner` grew a relay parameter on 2026-07-31)
-  and because scoping corrected two things this rung had wrong.
+- ~~Join the lanes~~ **DONE 2026-07-31.** The receipt is
+  `a_joiner_catches_up_on_a_live_place_over_one_ticket`: a founder's retained
+  place (Moot with two members, a founder self-delegation, two graph nodes,
+  one channel, two sealed messages), one endpoint ticket in the invitation,
+  and the worker's own `Join` command dialing it. Seven lanes per side over
+  one endpoint each, one-directional bootstrap (the host never learns the
+  joiner ahead of time), and `Resync` folding the converged state through the
+  same authority filter as every offline open. Render-free, product path on
+  the joiner side end to end.
+
+  The pieces landed where the scoping said they belonged: `Moot::join_lanes`
+  and `Replica::join` in mere, `LiveLanes`/`join_live` in
+  `src/place/lanes.rs` here, with the worker still synchronous and the tokio
+  runtime owned by the lane handles. A ticketless invitation still admits and
+  stays offline. The worker gained `Resync`, which re-folds projections
+  without touching lanes; the `ResyncPlace` app action wires to it in T3b.
+
+  One fixture-level fact worth keeping: a root capability grant alone makes
+  nothing effective, because `MootDelegations::covers` walks certificates
+  only. A founder whose content should project must delegate to itself.
+
+  The scoping sections below are kept as written; the lane-count correction,
+  the ALPN defect, and the publish requirement all came from them.
 
 #### T3a lane join, scoped 2026-07-31
 

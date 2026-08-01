@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod invite;
+pub(crate) mod lanes;
 pub mod worker;
 
 /// The only binding version this Turnstone build understands.

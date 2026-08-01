@@ -51,6 +51,13 @@ identity = { package = "personae", git = "https://github.com/merely-made/mere.gi
 # Commons, Stickleback, and Muniment retain their own wire, authority, crypto,
 # and durable-store contracts.
 commons = { package = "commons-spine", git = "https://github.com/merely-made/mere.git", branch = "main" }
+# The live-lane carrier: ticket import, overlay tagging, and the sync parts
+# the domain join helpers take. The place worker owns the handles; sessions
+# are assembled by stickleback's JoinedSpace inside the domain crates.
+transport = { package = "mere-transport", git = "https://github.com/merely-made/mere.git", branch = "main" }
+# The place worker's lane runtime: transport binding and JoinedSpace tasks
+# need a reactor. Scoped to the worker thread; the app and panes stay sync.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 gemot = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 stickleback = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 muniment = { git = "https://github.com/merely-made/mere.git", branch = "main", features = ["redb"] }
@@ -191,6 +198,20 @@ piccolo = ["dep:script-engine-api", "dep:script-engine-piccolo"]
 # pre-rename fork in beside genet-stylo, which `links = "servo_style_crate"`
 # (one Stylo per graph) makes a hard resolution error.
 #
+# The p2panda family, repointed at the owned fork exactly as mere's workspace
+# does. A [patch] applies only from the top-level manifest, so mere's own
+# repoint does NOT reach a consumer building mere crates from git: without
+# these, stickleback resolves upstream p2panda-net 0.7.0, which lacks the
+# fork's LogSync Builder::protocol_id (the per-lane ALPN fix), and the build
+# is red. The family patches together or not at all.
+p2panda-auth = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-core = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-discovery = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-encryption = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-net = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-store = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-stream = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-sync = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
 # stylo_taffy must be patched for the same reason: the registry copy names
 # crates.io stylo, dragging a second Stylo in. Genet vendors one that git-deps
 # genet-stylo. See genet's 2026-07-12 ring-3 fork-rename plan.
