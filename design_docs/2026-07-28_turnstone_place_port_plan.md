@@ -799,9 +799,16 @@ wants deciding rather than defaulting.
   for personal multi-device replication, which is a real and separate case. It
   was only ever wrong for a question it was never asked.
 
-Done when both peers author offline revisions and reopen the same derived
-document after convergence. **Conditional on the K1 decision above; Option A
-replaces this condition.**
+**Done when (replaced 2026-08-02 by the K1 decision, Option A):** two peers
+edit the same document concurrently through projection, the holder's revisions
+remain authoritative, and a disconnected visitor is told the document is
+unavailable rather than shown a stale copy it cannot save.
+
+The previous condition — "both peers author offline revisions and reopen the
+same derived document after convergence" — assumed replication and is retired
+with the option that required it. The shared-Knot authority question recorded
+above is **closed as dissolved**: under projection there is no shared Knot
+space for anyone to be admitted into.
 
 ### T5. Headed receipt
 
