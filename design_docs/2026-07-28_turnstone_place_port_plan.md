@@ -777,8 +777,31 @@ wants deciding rather than defaulting.
   same shape as the DCGKA carrier decision recorded under T3b: the piece looks
   wired until you ask which fold answers "may this person write here".
 
+  **Reframed 2026-08-02, and the question may dissolve rather than resolve.**
+  See the [Knot in Graphshell plan](../../mere/design_docs/mere_docs/implementation_strategy/2026-08-02_knot_in_graphshell_plan.md).
+  `KnotEndpoint` already implements graphshell's `ProjectionSource` and
+  `IntentSink`; only its deployment as a spawned process is accidental. If a
+  shared document is **projected** by the mere that holds it rather than
+  replicated to visitors, there is no shared Knot space for anyone to be
+  admitted into, and nothing needs to agree with Gemot.
+
+  That is a product decision, not a technical one, because **projection cannot
+  author offline**: a projected surface has no local replica. Which means this
+  rung's done condition below is not neutral between the options — it assumes
+  replication, and Option A would rewrite it to:
+
+  > two peers edit the same document concurrently through projection, the
+  > holder's revisions remain authoritative, and a disconnected visitor is
+  > told the document is unavailable rather than shown a stale copy it cannot
+  > save.
+
+  Also corrects the reading above: `paired_writers` is the *right* authority
+  for personal multi-device replication, which is a real and separate case. It
+  was only ever wrong for a question it was never asked.
+
 Done when both peers author offline revisions and reopen the same derived
-document after convergence.
+document after convergence. **Conditional on the K1 decision above; Option A
+replaces this condition.**
 
 ### T5. Headed receipt
 
