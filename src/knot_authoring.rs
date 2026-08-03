@@ -226,6 +226,61 @@ impl KnotClipHandle {
 }
 
 impl KnotHub {
+    /// Host the Knot endpoint in this process, over the in-memory carrier.
+    ///
+    /// The default path. A spawned endpoint cannot exist in a browser tab or
+    /// an iOS app, so hosting is what lets the editor reach the targets the
+    /// product is aimed at; `connect` remains for the case where an endpoint
+    /// really is a separate program.
+    ///
+    /// Everything past construction is identical, because the carrier seam is
+    /// where the two differ and `run_hub` never sees it.
+    fn host(root: PathBuf, wake: Wake) -> Result<Arc<Self>, String> {
+        let (commands, receiver) = mpsc::channel();
+        let (ready_send, ready_receive) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("turnstone-knot-authoring".into())
+            .spawn(move || {
+                let profile = CapabilityProfile::new([
+                    PresentationCapability::EditableText,
+                    PresentationCapability::PortableCard,
+                ]);
+                let retained = knot::KnotEndpoint::open(&root)
+                    .map_err(|error| format!("could not open the Knot directory: {error}"))
+                    .and_then(|endpoint| {
+                        // Resume is the endpoint's own answer; the carrier has
+                        // no business inventing one.
+                        let carrier = graphshell_local::LocalCarrier::new(
+                            endpoint,
+                            |endpoint: &mut knot::KnotEndpoint, request| {
+                                graphshell_endpoint::ResumableProjectionSource::resume(
+                                    endpoint, request,
+                                )
+                                .map_err(|error| error.to_string())
+                            },
+                        );
+                        RetainedEndpointSession::over(Box::new(carrier), profile)
+                    });
+                match retained {
+                    Ok(retained) => {
+                        let _ = ready_send.send(Ok(()));
+                        run_hub(retained, receiver, wake);
+                    }
+                    Err(error) => {
+                        let _ = ready_send.send(Err(error));
+                    }
+                }
+            })
+            .map_err(|error| format!("could not start Knot authoring worker: {error}"))?;
+        ready_receive
+            .recv()
+            .map_err(|_| "Knot authoring worker stopped during startup".to_string())??;
+        Ok(Arc::new(Self {
+            commands,
+            next_registration: AtomicU64::new(1),
+        }))
+    }
+
     fn connect(program: PathBuf, args: Vec<OsString>, wake: Wake) -> Result<Arc<Self>, String> {
         let (commands, receiver) = mpsc::channel();
         let (ready_send, ready_receive) = mpsc::sync_channel(1);
@@ -328,6 +383,34 @@ impl KnotAuthoringEngine {
         let max_depth = env_integer("TURNSTONE_KNOT_RESOLVE_MAX_DEPTH", DEFAULT_EFFECT_MAX_DEPTH)?;
         let max_ops = env_integer("TURNSTONE_KNOT_RUN_MAX_OPS", DEFAULT_EFFECT_MAX_OPS)?;
         let effects_enabled = resolve_mode != "never" || run_mode != "never";
+
+        // Host in-process where the endpoint's constructor is a plain
+        // directory open. A spawned endpoint cannot exist in a browser tab or
+        // an iOS app, so hosting is the path that reaches the targets this
+        // product is aimed at, and spawning is the exception rather than the
+        // rule.
+        //
+        // The vault and effects modes still spawn: their endpoints take
+        // injected identity, grants, and evaluators that this branch does not
+        // yet assemble. That is unfinished wiring, not a decision — each has
+        // an in-process constructor waiting in `KnotEndpoint`.
+        //
+        // `TURNSTONE_KNOT_ENDPOINT` remains an explicit opt-out, for the case
+        // where the endpoint genuinely is a separate program.
+        let explicit_program = std::env::var_os("TURNSTONE_KNOT_ENDPOINT").is_some();
+        if mode == "directory-write" && !effects_enabled && !explicit_program {
+            let hub = KnotHub::host(root, wake)?;
+            let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
+                .ok()
+                .filter(|target| !target.trim().is_empty());
+            return Ok(Some(Self {
+                hub,
+                clip_target,
+                auto_resolve: resolve_mode == "auto",
+                auto_run: run_mode == "auto",
+            }));
+        }
+
         let args = match mode.as_str() {
             "directory-write" if effects_enabled => vec![
                 "directory-write-effects".into(),

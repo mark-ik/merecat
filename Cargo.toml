@@ -76,6 +76,11 @@ scenotime = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 # The committed Git sources are authoritative. The gitignored Cargo config
 # redirects them to a sibling checkout during cross-repository development.
 graphshell = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+# The in-process carrier and the Knot endpoint it hosts. Turnstone embeds the
+# endpoint rather than spawning it: a subprocess is unshippable in a browser
+# tab or an iOS app, so the spawn path cannot be the only one.
+graphshell-local = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+knot = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 graphshell-client = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 graphshell-endpoint = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 graphshell-protocol = { git = "https://github.com/merely-made/mere.git", branch = "main" }
