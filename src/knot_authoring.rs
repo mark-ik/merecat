@@ -235,6 +235,18 @@ struct HostedEffects {
     max_source_bytes: u64,
 }
 
+/// Which source truth a hosted endpoint serves.
+///
+/// The same two the spawned path names as mode strings, minus the stringly
+/// typed hop: the process boundary was the only reason they were ever text.
+enum HostedKnot {
+    Directory { root: PathBuf },
+    PersonaVault {
+        data_root: PathBuf,
+        persona: identity::PersonaId,
+    },
+}
+
 impl KnotHub {
     /// Host the Knot endpoint in this process, over the in-memory carrier.
     ///
@@ -245,7 +257,11 @@ impl KnotHub {
     ///
     /// Everything past construction is identical, because the carrier seam is
     /// where the two differ and `run_hub` never sees it.
-    fn host(root: PathBuf, effects: Option<HostedEffects>, wake: Wake) -> Result<Arc<Self>, String> {
+    fn host(
+        source: HostedKnot,
+        effects: Option<HostedEffects>,
+        wake: Wake,
+    ) -> Result<Arc<Self>, String> {
         let (commands, receiver) = mpsc::channel();
         let (ready_send, ready_receive) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -255,17 +271,37 @@ impl KnotHub {
                     PresentationCapability::EditableText,
                     PresentationCapability::PortableCard,
                 ]);
-                let opened = match &effects {
-                    // Writable, because granting effects to a read-only
-                    // endpoint would advertise capabilities it cannot honour.
-                    Some(hosted) => knot::KnotEndpoint::open_writable(
-                        &root,
-                        knot::KnotWriteGrant::new(hosted.max_source_bytes),
-                    ),
-                    None => knot::KnotEndpoint::open(&root),
+                let grant = knot::KnotWriteGrant::new(
+                    effects
+                        .as_ref()
+                        .map_or(DEFAULT_MAX_SOURCE_BYTES, |hosted| hosted.max_source_bytes),
+                );
+                let opened = match source {
+                    // Writable when effects exist, because granting effects to
+                    // a read-only endpoint would advertise capabilities it
+                    // cannot honour.
+                    HostedKnot::Directory { root } if effects.is_some() => {
+                        knot::KnotEndpoint::open_writable(&root, grant)
+                            .map_err(|error| format!("could not open the Knot directory: {error}"))
+                    }
+                    HostedKnot::Directory { root } => knot::KnotEndpoint::open(&root)
+                        .map_err(|error| format!("could not open the Knot directory: {error}")),
+                    HostedKnot::PersonaVault { data_root, persona } => {
+                        // The device identity comes from the data root on
+                        // disk, the same way the endpoint binary obtains it.
+                        knot::local_device_root(&data_root, "knot")
+                            .and_then(|device| {
+                                knot::StartupUnlockedPersonalVault::open(
+                                    &data_root, persona, device, [],
+                                )
+                            })
+                            .and_then(|authority| authority.into_endpoint(grant))
+                            .map_err(|error| {
+                                format!("could not startup-unlock the Knot persona vault: {error}")
+                            })
+                    }
                 };
                 let retained = opened
-                    .map_err(|error| format!("could not open the Knot directory: {error}"))
                     .map(|mut endpoint| {
                         if let Some(hosted) = effects {
                             endpoint.grant_effects(knot::KnotEffectAuthority::new(hosted.policy));
@@ -415,15 +451,10 @@ impl KnotAuthoringEngine {
         // product is aimed at, and spawning is the exception rather than the
         // rule.
         //
-        // The persona-vault modes still spawn: their endpoint is unlocked
-        // through a device identity this constructor does not receive, so
-        // hosting them needs an identity threaded into `from_env` rather than
-        // more wiring here. Unfinished, not blocked.
-        //
-        // `TURNSTONE_KNOT_ENDPOINT` remains an explicit opt-out, for the case
-        // where the endpoint genuinely is a separate program.
+        // `TURNSTONE_KNOT_ENDPOINT` is an explicit opt-out, for the case where
+        // the endpoint genuinely is a separate program. Everything else hosts.
         let explicit_program = std::env::var_os("TURNSTONE_KNOT_ENDPOINT").is_some();
-        if mode == "directory-write" && !explicit_program {
+        if !explicit_program {
             let effects = effects_enabled.then(|| HostedEffects {
                 policy: knot::KnotEffectPolicy {
                     resolve: effect_mode_value(&resolve_mode),
@@ -435,16 +466,50 @@ impl KnotAuthoringEngine {
                 },
                 max_source_bytes,
             });
-            let hub = KnotHub::host(root, effects, wake)?;
-            let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
-                .ok()
-                .filter(|target| !target.trim().is_empty());
-            return Ok(Some(Self {
-                hub,
-                clip_target,
-                auto_resolve: resolve_mode == "auto",
-                auto_run: run_mode == "auto",
-            }));
+            let hosted = match mode.as_str() {
+                "directory-write" => Some(HostedKnot::Directory { root: root.clone() }),
+                "persona-vault" => {
+                    // The vault is the boundary this mode exists for, so a
+                    // `file:` scheme would let an effect read straight past it.
+                    // Refused here exactly as on the spawned path, because a
+                    // guard that only one deployment enforces is not a guard.
+                    if effects_enabled
+                        && split_list(&schemes)
+                            .iter()
+                            .any(|scheme| scheme.eq_ignore_ascii_case("file"))
+                    {
+                        return Err(
+                            "persona-vault effects cannot admit file: outside the vault".into()
+                        );
+                    }
+                    let persona = std::env::var("TURNSTONE_KNOT_PERSONA")
+                        .map_err(|_| {
+                            "TURNSTONE_KNOT_PERSONA is required for persona-vault mode".to_string()
+                        })?
+                        .parse::<uuid::Uuid>()
+                        .map(identity::PersonaId::from_uuid)
+                        .map_err(|error| {
+                            format!("TURNSTONE_KNOT_PERSONA must be a UUID: {error}")
+                        })?;
+                    Some(HostedKnot::PersonaVault {
+                        data_root: root.clone(),
+                        persona,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(hosted) = hosted {
+                let hub = KnotHub::host(hosted, effects, wake)?;
+                let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
+                    .ok()
+                    .filter(|target| !target.trim().is_empty());
+                return Ok(Some(Self {
+                    hub,
+                    clip_target,
+                    auto_resolve: resolve_mode == "auto",
+                    auto_run: run_mode == "auto",
+                }));
+            }
         }
 
         let args = match mode.as_str() {
