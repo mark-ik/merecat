@@ -225,6 +225,16 @@ impl KnotClipHandle {
     }
 }
 
+/// The effect grant a hosted endpoint carries, already parsed.
+///
+/// The spawned path passes these as CLI strings the endpoint binary reparses.
+/// Hosting skips the round trip: the values are typed on both sides of a call
+/// that no longer crosses a process.
+struct HostedEffects {
+    policy: knot::KnotEffectPolicy,
+    max_source_bytes: u64,
+}
+
 impl KnotHub {
     /// Host the Knot endpoint in this process, over the in-memory carrier.
     ///
@@ -235,7 +245,7 @@ impl KnotHub {
     ///
     /// Everything past construction is identical, because the carrier seam is
     /// where the two differ and `run_hub` never sees it.
-    fn host(root: PathBuf, wake: Wake) -> Result<Arc<Self>, String> {
+    fn host(root: PathBuf, effects: Option<HostedEffects>, wake: Wake) -> Result<Arc<Self>, String> {
         let (commands, receiver) = mpsc::channel();
         let (ready_send, ready_receive) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -245,8 +255,23 @@ impl KnotHub {
                     PresentationCapability::EditableText,
                     PresentationCapability::PortableCard,
                 ]);
-                let retained = knot::KnotEndpoint::open(&root)
+                let opened = match &effects {
+                    // Writable, because granting effects to a read-only
+                    // endpoint would advertise capabilities it cannot honour.
+                    Some(hosted) => knot::KnotEndpoint::open_writable(
+                        &root,
+                        knot::KnotWriteGrant::new(hosted.max_source_bytes),
+                    ),
+                    None => knot::KnotEndpoint::open(&root),
+                };
+                let retained = opened
                     .map_err(|error| format!("could not open the Knot directory: {error}"))
+                    .map(|mut endpoint| {
+                        if let Some(hosted) = effects {
+                            endpoint.grant_effects(knot::KnotEffectAuthority::new(hosted.policy));
+                        }
+                        endpoint
+                    })
                     .and_then(|endpoint| {
                         // Resume is the endpoint's own answer; the carrier has
                         // no business inventing one.
@@ -390,16 +415,27 @@ impl KnotAuthoringEngine {
         // product is aimed at, and spawning is the exception rather than the
         // rule.
         //
-        // The vault and effects modes still spawn: their endpoints take
-        // injected identity, grants, and evaluators that this branch does not
-        // yet assemble. That is unfinished wiring, not a decision — each has
-        // an in-process constructor waiting in `KnotEndpoint`.
+        // The persona-vault modes still spawn: their endpoint is unlocked
+        // through a device identity this constructor does not receive, so
+        // hosting them needs an identity threaded into `from_env` rather than
+        // more wiring here. Unfinished, not blocked.
         //
         // `TURNSTONE_KNOT_ENDPOINT` remains an explicit opt-out, for the case
         // where the endpoint genuinely is a separate program.
         let explicit_program = std::env::var_os("TURNSTONE_KNOT_ENDPOINT").is_some();
-        if mode == "directory-write" && !effects_enabled && !explicit_program {
-            let hub = KnotHub::host(root, wake)?;
+        if mode == "directory-write" && !explicit_program {
+            let effects = effects_enabled.then(|| HostedEffects {
+                policy: knot::KnotEffectPolicy {
+                    resolve: effect_mode_value(&resolve_mode),
+                    run: effect_mode_value(&run_mode),
+                    allowed_schemes: split_list(&schemes),
+                    allowed_languages: split_list(&languages),
+                    max_depth: max_depth as u8,
+                    max_ops,
+                },
+                max_source_bytes,
+            });
+            let hub = KnotHub::host(root, effects, wake)?;
             let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
                 .ok()
                 .filter(|target| !target.trim().is_empty());
@@ -639,6 +675,30 @@ fn default_endpoint_path() -> Result<PathBuf, String> {
             executable.display()
         ))
     }
+}
+
+/// The already-validated mode string as Knot's own enum.
+///
+/// `effect_mode` rejected anything else on the way in, so an unknown value
+/// here would be a bug upstream rather than user input; the safe reading is
+/// the one that grants nothing.
+fn effect_mode_value(mode: &str) -> knot::KnotEffectMode {
+    match mode {
+        "auto" => knot::KnotEffectMode::Auto,
+        "ask" => knot::KnotEffectMode::Ask,
+        _ => knot::KnotEffectMode::Never,
+    }
+}
+
+/// Split a comma-separated setting, dropping blanks so a trailing comma or an
+/// empty setting yields no entry rather than an empty-string allowance.
+fn split_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub fn is_knot_address(address: &str) -> bool {
