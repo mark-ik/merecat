@@ -21,14 +21,13 @@ use cambium::{
 };
 use genet_layout::{IncrementalLayout, ScrollOffsets};
 use genet_scripted_dom::{NodeId, ScriptedDom};
-use graphshell::client::{ResolvedContent, ResolvedPresentation};
+use graphshell::client::{ResolvedContent, ResolvedPresentation, RetainedEndpointSession};
 use graphshell::protocol::{
     AdvertisedAction, CapabilityProfile, DerivedTextV1, EDITABLE_TEXT_SAVE_INTENT, EditableTextV1,
     InsertKnotClipV1, IntentResult, KNOT_BLOCK_RUN_INTENT, KNOT_CLIP_INSERT_INTENT,
     KNOT_TRANSCLUSION_RESOLVE_INTENT, KnotEffectV1, PresentationCapability, ProjectionSession,
     SaveTextV1,
 };
-use graphshell::sessions::RetainedEndpointSession;
 use inker::{
     ContentReport, DocumentSession, OutlineEntry, SessionClick, SessionEngine, SessionError,
     SessionLink, SessionScrollKey, SessionSpawnRequest,
@@ -352,7 +351,11 @@ impl KnotHub {
                     PresentationCapability::EditableText,
                     PresentationCapability::PortableCard,
                 ]);
-                let retained = RetainedEndpointSession::spawn(program.as_os_str(), &args, profile);
+                let retained = graphshell::sessions::spawn_endpoint_session(
+                    program.as_os_str(),
+                    &args,
+                    profile,
+                );
                 match retained {
                     Ok(retained) => {
                         let _ = ready_send.send(Ok(()));
