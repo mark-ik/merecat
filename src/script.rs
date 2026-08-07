@@ -207,6 +207,7 @@ fn pane_kind(pane: &str) -> Option<PaneKind> {
         "apparatus" => Some(PaneKind::Apparatus),
         "overmap" => Some(PaneKind::Overmap),
         "workbench" => Some(PaneKind::Workbench),
+        "settings" => Some(PaneKind::Settings),
         _ => None,
     }
 }

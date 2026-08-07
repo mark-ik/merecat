@@ -47,6 +47,7 @@ fn pane_content(kind: PaneKind) -> PaneContent {
         PaneKind::Apparatus => PaneContent::Apparatus,
         PaneKind::Overmap => PaneContent::Overmap(Default::default()),
         PaneKind::Workbench => PaneContent::Workbench,
+        PaneKind::Settings => PaneContent::Custom("settings".into()),
     }
 }
 

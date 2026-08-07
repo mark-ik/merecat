@@ -115,6 +115,13 @@ impl Shell {
                 pane.sync(&self.app, rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
+            Some(PaneContent::Custom(name)) if name == "settings" => {
+                let pane = self.settings_pane.get_or_insert_with(|| {
+                    crate::settings_pane::SettingsPane::new(self.app.data_root.clone())
+                });
+                pane.sync(rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
             Some(PaneContent::Overmap(cfg)) => {
                 // The switcher as a graph view (overmap O1): sessions as
                 // container nodes, fork lineage as edges, on the shared

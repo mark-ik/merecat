@@ -34,6 +34,8 @@ mod scenario;
 mod script;
 mod sections;
 mod session;
+pub mod settings_provider;
+mod settings_pane;
 pub mod shell;
 mod surface;
 mod swatch_pane;

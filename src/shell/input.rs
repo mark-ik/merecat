@@ -41,6 +41,7 @@ impl Shell {
             // A settings option is a row for receipt purposes (the Apparatus
             // pane's radio options).
             || self.click(&genet_probe::Selector::class("radio").containing(substr))
+            || self.click(&genet_probe::Selector::class("setting-apply").containing(substr))
             // A composed list section's row (the gloss-composite): the same
             // verb addresses it, wherever the section was composed.
             || self.click(&genet_probe::Selector::class("section-row").containing(substr));
@@ -333,6 +334,19 @@ impl Shell {
                                             }
                                         }
                                     }
+                                }
+                            }
+                            Some(PaneContent::Custom(name)) if name == "settings" => {
+                                let dims = plan.iter().find(|s| s.id == hit.id).map(|s| {
+                                    (
+                                        s.rect.w.round().max(1.0) as u32,
+                                        s.rect.h.round().max(1.0) as u32,
+                                    )
+                                });
+                                if let (Some((rw, rh)), Some(pane)) =
+                                    (dims, self.settings_pane.as_mut())
+                                {
+                                    pane.click(hit.local.0, hit.local.1, rw, rh);
                                 }
                             }
                             Some(PaneContent::Overmap(_)) => {

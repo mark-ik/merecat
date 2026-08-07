@@ -212,6 +212,9 @@ pub struct Shell {
     /// The Apparatus pane (the settings row): the focused node's viewer
     /// override on a cambium radio_group. Retained like the others.
     apparatus_pane: Option<crate::apparatus_pane::ApparatusPane>,
+    /// The application-settings projection over the host provider. Retained
+    /// like the other Cambium panes.
+    settings_pane: Option<crate::settings_pane::SettingsPane>,
     /// The Overmap pane (O1): the switcher as a graph view, retained like the
     /// Gloss minimap it mirrors.
     overmap_pane: Option<crate::swatch_pane::SwatchPane>,
@@ -345,6 +348,7 @@ impl Shell {
             inspector_pane: None,
             workbench_pane: None,
             apparatus_pane: None,
+            settings_pane: None,
             overmap_pane: None,
             hovered_pane: None,
             chrome: crate::chrome_view::ChromeSurfaces::new(),
@@ -591,6 +595,11 @@ impl Shell {
                             }
                         }
                     }
+                }
+            }
+            PaneContent::Custom(name) if name == "settings" => {
+                if let Some(pane) = self.settings_pane.as_mut() {
+                    pane.click(lx, ly, rw, rh);
                 }
             }
             PaneContent::Inspector => {

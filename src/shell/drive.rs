@@ -78,6 +78,11 @@ impl genet_probe::Automatable for Shell {
                             guards.push(("apparatus", rect, pane.dom_ref()));
                         }
                     }
+                    Some(PaneContent::Custom(name)) if name == "settings" => {
+                        if let Some(pane) = &self.settings_pane {
+                            guards.push(("settings", rect, pane.dom_ref()));
+                        }
+                    }
                     Some(PaneContent::Overmap(_)) => {
                         if let Some(pane) = &self.overmap_pane {
                             guards.push(("overmap", rect, pane.dom_ref()));

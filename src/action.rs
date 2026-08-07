@@ -306,6 +306,8 @@ pub enum PaneKind {
     Overmap,
     /// The node-tiling workbench: platen's model inside one frisket leaf.
     Workbench,
+    /// Application-owned settings projected from the host settings provider.
+    Settings,
 }
 
 impl PaneKind {
@@ -321,6 +323,7 @@ impl PaneKind {
             PaneKind::Apparatus => "Apparatus",
             PaneKind::Overmap => "Overmap",
             PaneKind::Workbench => "Workbench",
+            PaneKind::Settings => "Settings",
         }
     }
 }
@@ -388,6 +391,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
             Action::SummonPane(PaneKind::Apparatus),
         ),
         ("Open Overmap pane", Action::SummonPane(PaneKind::Overmap)),
+        ("Open Settings pane", Action::SummonPane(PaneKind::Settings)),
         ("New window", Action::NewWindow),
         ("Tear out pane", Action::TearOutActivePane),
         ("Fork from node", Action::ForkFocusedNode),
