@@ -168,6 +168,99 @@ projection and section machinery; Roster, Inspector, Apparatus share
 furniture; Trail and Alembic share list forms. Semantic merger would make each
 group vaguer. Apparatus stays object-facing and does not absorb settings.
 
+## 4b. Chrome, and how configurable it should be
+
+The chrome is the frame around the panes: the omnibar, whatever status the
+shell shows, the divider bands, and the topology itself. The direction is that
+**as much of it as possible is layout, not code** — the same principle that
+makes panes registry entries makes chrome a saved, restorable thing.
+
+### What exists
+
+An omnibar is already here ([src/app/omnibar_arms.rs](../src/app/omnibar_arms.rs)):
+one line, opened plain or in a `>` command lane, recomputing suggestions
+against the action catalog every keystroke, with `FocusTarget::Chrome` taking
+keys while it is open. The catalog it reads is the same one the palette
+snapshot and the automation runner read ([src/app/palette.rs](../src/app/palette.rs)),
+composed once so the three cannot disagree about what a label means. That
+single-catalog property is the asset; the omnibar is a view onto it.
+
+What is missing is not the omnibar. It is **scrollback** and
+**configurability**.
+
+### Omnibar with scrollback
+
+The omnibar today is stateless between invocations. Giving it a scrollback —
+a retained transcript of commands run and their results — turns it from a
+launcher into a shell. The material is already there: `AppEvent`
+([src/observe.rs:120](../src/observe.rs)) is the journal every action already
+emits, and it is what the automation runner replays. A scrollback is that
+journal, made visible and addressable, with command entries interleaved. So
+this is surfacing an existing stream, not building a new one.
+
+Design constraints that follow from it being real rather than decorative:
+scrollback is per-space (it belongs to a window's work, like the pane tree),
+it is bounded (a ring, not an unbounded log), and a result in it is a value
+you can act on again, not just text — the same "a result is a value" posture
+the Rerun blueprint model takes toward recorded truth. Whether scrollback is
+its own pane kind (bound `Application`, `PerSpace`) or a mode the omnibar
+expands into is an open question; the pane form composes better with the rest
+of this plan, so start there.
+
+### Configurable chrome
+
+The knobs, in rough order of cost:
+
+- **Which chrome is present.** Omnibar shown or summoned, status band on or
+  off, palette bound to a key or always docked. These are user settings once
+  §6's settings lane interprets `SettingControl` generically.
+- **Where it sits.** Omnibar top or bottom, docked or floating. The compositor
+  already places surfaces at rects, so chrome placement is the same math the
+  panes use.
+- **Named layouts** (§7) capture the chrome configuration alongside the pane
+  topology, so a saved "Operate" layout can carry a docked scrollback and an
+  always-visible Steward while "Browse" carries neither.
+
+Zellij is the closest prior art for the chrome specifically: declarative,
+named, restorable layouts where the frame is data. egui_tiles is the model for
+the tree being generic over app-owned payloads. Rerun for keeping recorded
+truth (the graph, the journal) separate from the saved view of it.
+
+### Floating and nested panes, nested splits
+
+These three are one capability with three names, and they are the reason the
+shared-`TileTree` decision in §5 is load-bearing rather than cosmetic.
+
+**Turnstone's own tree is binary today**: `SplitChoice::First`/`Second`
+([src/panes/mod.rs:272](../src/panes/mod.rs)), each branch splitting exactly
+two ways. Genet's `TileTree` is **N-ary**: `children: Vec<TileBranch>`
+([genet/components/genet-host-api/tile.rs:42](../../genet/components/genet-host-api/tile.rs)).
+Arbitrarily nested splits are already expressible in the binary tree by
+nesting — a row of three is a row of two whose second child is another row —
+but N-ary children are the honest representation, and they make an even split
+of three cells one node instead of a lopsided pair. So "nested splits" is
+partly here and would be cleaner under `TileTree`.
+
+**Nested panes** — a pane whose content is itself a pane tree — is what the
+workbench already is (a leaf holding platen's tiling) and what a tab-stack is
+(a leaf holding N tabbed tiles). Generalizing it means a leaf's content can be
+another `TileTree`, which is exactly the recursion `TileTree` already has and
+turnstone's binary tree does not express uniformly.
+
+**Floating panes** are the one genuinely new structure. A floating pane is not
+in the split tree at all; it is a free-rect surface composited above it, with
+its own z-order. The compositor already places surfaces at rects and already
+manages a chrome layer above the panes, so the machinery is present; what is
+new is a second collection beside the tree — floats are siblings of the root
+split, not children of any branch — and a rule for focus and z-order among
+them. A torn-out pane that has not yet become its own window is the natural
+first float.
+
+The ordering these imply: adopt `TileTree` (or decide against it) in §5 first,
+because nested splits and nested panes both want its recursion and its N-ary
+children; floats come after, as a layer beside whichever tree wins, because
+they do not depend on the tree's shape.
+
 ## 5. The Cambium boundary
 
 The recorded ruling stands
@@ -214,7 +307,35 @@ configurability-over-defaults posture. Settings is deliberately **not** the
 registry's proof case; it is the special case. Publishing, a plain workflow
 pane, is the proof.
 
-## 7. Prior art
+## 7. The chrome
+
+Inventory, verified. Three pieces exist: the omnibar (an overlay line with a
+`>` command lane, suggestions recomputed per keystroke,
+[src/app/omnibar_arms.rs](../src/app/omnibar_arms.rs)); the action catalog
+(one composition read by the `>` lane, the snapshot, and the automation
+runner alike, contextual rows leading, denizen rows already extending it,
+[src/app/palette.rs](../src/app/palette.rs)); and the focus model, where
+`FocusTarget { Canvas, Chrome, Content }` makes chrome a first-class layer.
+Configurability today: content yes (the catalog is data-driven and
+gate-extensible), composition no (which chrome exists, and where, is
+hard-coded).
+
+Direction, settled 2026-08-08: the zellij posture. Chrome is made of the same
+stuff as content, and a named layout declares its chrome the way it declares
+its panes. Four extensions, each landing on something already built:
+
+- **Scrollback.** The typed `AppEvent` journal
+  ([src/observe.rs](../src/observe.rs)) already records commands and outcomes,
+  attributed. A scrollback is a chrome-facing lens over it, a dialogue view,
+  not a new log. The doctrine pair is already written in the tree: "the graph
+  is the history made spatial"; scrollback is the same history made temporal.
+  Boundary: Steward owns live operational status, scrollback owns the
+  conversation. Same events, two projections.
+- **Floating panes.** Every pane already composites as its own surface, so a
+  floating pane is a `PaneRecord` whose rect is its own rather than derived
+  from the tree: a floating set beside the tree, per space. This extends the
+  recorded tear-out trichotomy with a fourth station (tile, stack, float,
+  window), recorded here as a doctrine amend
 
 Rerun blueprints (recorded truth separate from saved view topology and
 per-view config), egui_tiles (layout tree generic over app-owned payloads),
@@ -241,10 +362,28 @@ editable defaults rather than fixed modes.
    selection, and physics, and tool panes follow focus between them. The
    two-graph split is the receipt because it is the hardest case; two Rosters
    fall out of the same fix.
-4. **Stacks and tabs.** One real tool stack over mixed surface types, then
-   the shared-`TileTree` decision, with the recorded fallback.
+4. **Stacks, tabs, and the tree decision.** One real tool stack over mixed
+   surface types, then the shared-`TileTree` decision (§5), with the recorded
+   fallback. This decision now carries more than tabs: turnstone's tree is
+   binary, `TileTree` is N-ary and recursive, and nested splits plus nested
+   panes both want that recursion (§4b). Weigh it as the tree question, not
+   the tab question.
    Done when inactive tabs neither render nor receive input and the stack
    survives save, reload, and tear-out.
+
+4c. **Omnibar scrollback and configurable chrome.** Surface the `AppEvent`
+   journal as a bounded, per-space, act-on-again scrollback (§4b); make chrome
+   presence and placement settings that §6's lane interprets. Independent of
+   the tree decision, so it can proceed in parallel with step 4.
+   Done when a command run in the omnibar leaves a scrollback entry whose
+   result can be re-invoked, and chrome layout persists in a named layout.
+
+4d. **Floating panes.** A free-rect surface layer beside the split tree, with
+   z-order and focus rules; a torn-out-but-not-yet-windowed pane as the first
+   float. After the tree decision, because floats layer onto whichever tree
+   wins.
+   Done when a pane floats above the tree, holds focus and z-order, and either
+   redocks into the tree or tears out to a window.
 5. **Cambium promotion.** Generic pane shell, settings form, empty/error/
    unavailable states into the component catalog.
    Done when narrow and regular specimens pass visual and semantic receipts.
