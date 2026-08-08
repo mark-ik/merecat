@@ -57,7 +57,7 @@ commons = { package = "commons-spine", git = "https://github.com/merely-made/mer
 transport = { package = "mere-transport", git = "https://github.com/merely-made/mere.git", branch = "main" }
 # The place worker's lane runtime: transport binding and JoinedSpace tasks
 # need a reactor. Scoped to the worker thread; the app and panes stay sync.
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 gemot = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 stickleback = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 muniment = { git = "https://github.com/merely-made/mere.git", branch = "main", features = ["redb"] }

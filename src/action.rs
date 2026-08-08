@@ -308,6 +308,8 @@ pub enum PaneKind {
     Workbench,
     /// Application-owned settings projected from the host settings provider.
     Settings,
+    /// Owner controls for a retained Knot publishing host.
+    Publishing,
 }
 
 impl PaneKind {
@@ -324,6 +326,7 @@ impl PaneKind {
             PaneKind::Overmap => "Overmap",
             PaneKind::Workbench => "Workbench",
             PaneKind::Settings => "Settings",
+            PaneKind::Publishing => "Publishing",
         }
     }
 }
@@ -392,6 +395,7 @@ pub fn palette_actions() -> Vec<(&'static str, Action)> {
         ),
         ("Open Overmap pane", Action::SummonPane(PaneKind::Overmap)),
         ("Open Settings pane", Action::SummonPane(PaneKind::Settings)),
+        ("Open Publishing pane", Action::SummonPane(PaneKind::Publishing)),
         ("New window", Action::NewWindow),
         ("Tear out pane", Action::TearOutActivePane),
         ("Fork from node", Action::ForkFocusedNode),

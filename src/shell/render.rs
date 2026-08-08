@@ -122,6 +122,14 @@ impl Shell {
                 pane.sync(rw as f32, rh as f32);
                 pane.scene(rw, rh)
             }
+            Some(PaneContent::Custom(name)) if name == "publishing" => {
+                let service = self.publish_service.clone();
+                let pane = self.publish_pane.get_or_insert_with(|| {
+                    crate::publish_pane::PublishPane::new(service)
+                });
+                pane.sync(rw as f32, rh as f32);
+                pane.scene(rw, rh)
+            }
             Some(PaneContent::Overmap(cfg)) => {
                 // The switcher as a graph view (overmap O1): sessions as
                 // container nodes, fork lineage as edges, on the shared

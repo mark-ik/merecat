@@ -1564,6 +1564,20 @@ fn available_actions_lead_with_the_contextual_rows() {
     assert_eq!(snap.available_actions, labels);
 }
 
+#[test]
+fn publishing_pane_is_a_summonable_window_control() {
+    let mut app = App::test_stub();
+    app.update(Action::SummonPane(PaneKind::Publishing));
+
+    assert!(app.frisket.iter_leaves().any(|(_, content, _)| {
+        matches!(content, PaneContent::Custom(name) if name == "publishing")
+    }));
+    assert!(crate::action::palette_actions().iter().any(|(label, action)| {
+        *label == "Open Publishing pane"
+            && matches!(action, Action::SummonPane(PaneKind::Publishing))
+    }));
+}
+
 /// Composition ORDER is the config's order, so reordering is the same leaf
 /// edit as add/remove: it moves within the stack, clamps at the ends
 /// rather than wrapping, and the palette only offers a move that would do

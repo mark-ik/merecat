@@ -215,6 +215,11 @@ pub struct Shell {
     /// The application-settings projection over the host provider. Retained
     /// like the other Cambium panes.
     settings_pane: Option<crate::settings_pane::SettingsPane>,
+    /// Owner controls for the active retained Knot publishing service.
+    publish_pane: Option<crate::publish_pane::PublishPane>,
+    /// The service owns carrier, vault read handle, tickets, and revocations;
+    /// the pane only projects and commands it.
+    publish_service: Option<Arc<crate::publish_service::KnotPublishingService>>,
     /// The Overmap pane (O1): the switcher as a graph view, retained like the
     /// Gloss minimap it mirrors.
     overmap_pane: Option<crate::swatch_pane::SwatchPane>,
@@ -304,9 +309,19 @@ impl Shell {
             let _ = knot_proxy.send_event(());
         });
         let mut knot_clip = None;
+        let mut publish_service = None;
         match crate::knot_authoring::KnotAuthoringEngine::from_env(knot_wake) {
-            Ok(Some(engine)) => {
+            Ok(Some(mut engine)) => {
                 knot_clip = engine.clip_handle();
+                if let Some(source) = engine.take_publish_source() {
+                    match crate::publish_service::KnotPublishingService::start(
+                        source,
+                        app.identity.clone(),
+                    ) {
+                        Ok(service) => publish_service = Some(Arc::new(service)),
+                        Err(error) => tracing::warn!(%error, "Knot publishing is unavailable"),
+                    }
+                }
                 content_engines.register(Box::new(engine));
             }
             Ok(None) => {}
@@ -349,6 +364,8 @@ impl Shell {
             workbench_pane: None,
             apparatus_pane: None,
             settings_pane: None,
+            publish_pane: None,
+            publish_service,
             overmap_pane: None,
             hovered_pane: None,
             chrome: crate::chrome_view::ChromeSurfaces::new(),
@@ -599,6 +616,11 @@ impl Shell {
             }
             PaneContent::Custom(name) if name == "settings" => {
                 if let Some(pane) = self.settings_pane.as_mut() {
+                    pane.click(lx, ly, rw, rh);
+                }
+            }
+            PaneContent::Custom(name) if name == "publishing" => {
+                if let Some(pane) = self.publish_pane.as_mut() {
                     pane.click(lx, ly, rw, rh);
                 }
             }

@@ -22,6 +22,8 @@ mod knot_authoring;
 pub mod observe;
 mod overmap;
 mod pane;
+mod publish_pane;
+mod publish_service;
 pub mod place;
 /// Turnstone's own pane model (was the `frisket` crate; folded in 2026-07-25).
 pub mod panes;

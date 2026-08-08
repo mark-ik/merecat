@@ -260,9 +260,10 @@ impl KnotHub {
         source: HostedKnot,
         effects: Option<HostedEffects>,
         wake: Wake,
-    ) -> Result<Arc<Self>, String> {
+    ) -> Result<(Arc<Self>, Option<knot::KnotPublishSource>), String> {
         let (commands, receiver) = mpsc::channel();
-        let (ready_send, ready_receive) = mpsc::sync_channel(1);
+        let (ready_send, ready_receive) =
+            mpsc::sync_channel::<Result<Option<knot::KnotPublishSource>, String>>(1);
         std::thread::Builder::new()
             .name("turnstone-knot-authoring".into())
             .spawn(move || {
@@ -282,9 +283,11 @@ impl KnotHub {
                     HostedKnot::Directory { root } if effects.is_some() => {
                         knot::KnotEndpoint::open_writable(&root, grant)
                             .map_err(|error| format!("could not open the Knot directory: {error}"))
+                            .map(|endpoint| (endpoint, None))
                     }
                     HostedKnot::Directory { root } => knot::KnotEndpoint::open(&root)
-                        .map_err(|error| format!("could not open the Knot directory: {error}")),
+                        .map_err(|error| format!("could not open the Knot directory: {error}"))
+                        .map(|endpoint| (endpoint, None)),
                     HostedKnot::PersonaVault { data_root, persona } => {
                         // The device identity comes from the data root on
                         // disk, the same way the endpoint binary obtains it.
@@ -294,20 +297,21 @@ impl KnotHub {
                                     &data_root, persona, device, [],
                                 )
                             })
-                            .and_then(|authority| authority.into_endpoint(grant))
+                            .and_then(|authority| authority.into_endpoint_and_publish_source(grant))
+                            .map(|(endpoint, source)| (endpoint, Some(source)))
                             .map_err(|error| {
                                 format!("could not startup-unlock the Knot persona vault: {error}")
                             })
                     }
                 };
                 let retained = opened
-                    .map(|mut endpoint| {
+                    .map(|(mut endpoint, publish_source)| {
                         if let Some(hosted) = effects {
                             endpoint.grant_effects(knot::KnotEffectAuthority::new(hosted.policy));
                         }
-                        endpoint
+                        (endpoint, publish_source)
                     })
-                    .and_then(|endpoint| {
+                    .and_then(|(endpoint, publish_source)| {
                         // Resume is the endpoint's own answer; the carrier has
                         // no business inventing one.
                         let carrier = graphshell_local::LocalCarrier::new(
@@ -320,10 +324,11 @@ impl KnotHub {
                             },
                         );
                         RetainedEndpointSession::over(Box::new(carrier), profile)
+                            .map(|retained| (retained, publish_source))
                     });
                 match retained {
-                    Ok(retained) => {
-                        let _ = ready_send.send(Ok(()));
+                    Ok((retained, publish_source)) => {
+                        let _ = ready_send.send(Ok(publish_source));
                         run_hub(retained, receiver, wake);
                     }
                     Err(error) => {
@@ -332,13 +337,16 @@ impl KnotHub {
                 }
             })
             .map_err(|error| format!("could not start Knot authoring worker: {error}"))?;
-        ready_receive
+        let publish_source = ready_receive
             .recv()
             .map_err(|_| "Knot authoring worker stopped during startup".to_string())??;
-        Ok(Arc::new(Self {
-            commands,
-            next_registration: AtomicU64::new(1),
-        }))
+        Ok((
+            Arc::new(Self {
+                commands,
+                next_registration: AtomicU64::new(1),
+            }),
+            publish_source,
+        ))
     }
 
     fn connect(program: PathBuf, args: Vec<OsString>, wake: Wake) -> Result<Arc<Self>, String> {
@@ -403,6 +411,9 @@ impl KnotHub {
 /// One configured endpoint shared by every open Knot document.
 pub struct KnotAuthoringEngine {
     hub: Arc<KnotHub>,
+    /// The separate read handle made at persona-vault startup. The shell gives
+    /// it to the publishing worker before this authoring engine is registered.
+    publish_source: Option<knot::KnotPublishSource>,
     clip_target: Option<String>,
     auto_resolve: bool,
     auto_run: bool,
@@ -502,12 +513,13 @@ impl KnotAuthoringEngine {
                 _ => None,
             };
             if let Some(hosted) = hosted {
-                let hub = KnotHub::host(hosted, effects, wake)?;
+                let (hub, publish_source) = KnotHub::host(hosted, effects, wake)?;
                 let clip_target = std::env::var("TURNSTONE_KNOT_CLIP_TARGET")
                     .ok()
                     .filter(|target| !target.trim().is_empty());
                 return Ok(Some(Self {
                     hub,
+                    publish_source,
                     clip_target,
                     auto_resolve: resolve_mode == "auto",
                     auto_run: run_mode == "auto",
@@ -578,6 +590,7 @@ impl KnotAuthoringEngine {
             .filter(|target| !target.trim().is_empty());
         Ok(Some(Self {
             hub,
+            publish_source: None,
             clip_target,
             auto_resolve: resolve_mode == "auto",
             auto_run: run_mode == "auto",
@@ -590,6 +603,13 @@ impl KnotAuthoringEngine {
             target: target.clone(),
             status: Arc::new(Mutex::new(KnotClipStatus::Ready)),
         })
+    }
+
+    /// Gives the shell the independent read authority needed to host shares.
+    /// Directory and spawned-endpoint modes have none: their file or process
+    /// boundary cannot safely be widened by this UI.
+    pub fn take_publish_source(&mut self) -> Option<knot::KnotPublishSource> {
+        self.publish_source.take()
     }
 
     #[cfg(test)]
@@ -608,6 +628,7 @@ impl KnotAuthoringEngine {
                 ],
                 Arc::new(|| {}),
             )?,
+            publish_source: None,
             clip_target: None,
             auto_resolve: false,
             auto_run: false,
@@ -638,6 +659,7 @@ impl KnotAuthoringEngine {
                 ],
                 Arc::new(|| {}),
             )?,
+            publish_source: None,
             clip_target: None,
             auto_resolve: resolve == "auto",
             auto_run: run == "auto",
@@ -667,6 +689,7 @@ impl KnotAuthoringEngine {
                 ],
                 Arc::new(|| {}),
             )?,
+            publish_source: None,
             clip_target: None,
             auto_resolve: false,
             auto_run: run == "auto",

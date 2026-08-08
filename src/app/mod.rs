@@ -48,6 +48,7 @@ fn pane_content(kind: PaneKind) -> PaneContent {
         PaneKind::Overmap => PaneContent::Overmap(Default::default()),
         PaneKind::Workbench => PaneContent::Workbench,
         PaneKind::Settings => PaneContent::Custom("settings".into()),
+        PaneKind::Publishing => PaneContent::Custom("publishing".into()),
     }
 }
 
