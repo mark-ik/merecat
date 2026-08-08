@@ -289,12 +289,18 @@ impl KnotHub {
                         .map_err(|error| format!("could not open the Knot directory: {error}"))
                         .map(|endpoint| (endpoint, None)),
                     HostedKnot::PersonaVault { data_root, persona } => {
-                        // The device identity comes from the data root on
-                        // disk, the same way the endpoint binary obtains it.
-                        knot::local_device_root(&data_root, "knot")
+                        // Identity is family-shared: the device key and the
+                        // persona vault come from the shared root, not from
+                        // turnstone's own, so a document sealed here opens in
+                        // woodshed and knot under the same persona.
+                        let identity_root = session_runtime::shared_root::shared_root();
+                        knot::local_device_root(&identity_root, "knot")
                             .and_then(|device| {
                                 knot::StartupUnlockedPersonalVault::open(
-                                    &data_root, persona, device, [],
+                                    &identity_root,
+                                    persona,
+                                    device,
+                                    [],
                                 )
                             })
                             .and_then(|authority| authority.into_endpoint_and_publish_source(grant))

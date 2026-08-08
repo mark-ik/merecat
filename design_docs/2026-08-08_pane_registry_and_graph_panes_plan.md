@@ -1,412 +1,653 @@
-# Pane Registry and Graph Panes Plan
+# Pane Registry, Graph Views, and Shell Composition Plan
 
 **Date**: 2026-08-08
-**Status**: Direction settled; nothing implemented. Originated as a read-only
-review by one agent, verified against the tree and amended by a second, with
-the graph-as-pane reframe added by Mark. Every file citation below was checked
-against the code on 2026-08-08, not carried from the review on trust.
 
-**Scope**: Generalize the pane machinery behind a registry, make pane
-instances genuinely independent, and make the graph canvas a pane like any
-other so one window can split across two graphs. Keep the semantic panes
-distinct.
+**Status**: Direction revised; implementation not started.
+
+**Scope**: Make pane instances independent, restore real multi-graph composition,
+generalize the window layout, and make the shell configurable without collapsing
+graph truth, Workbench arrangement, pane layout, and chrome into one model.
+
+The short ruling:
+
+- A window is a **space** containing panes. It is not owned by one graph.
+- A graph runtime owns graph truth. A Forme runtime owns arrangement and physics.
+  A **Graph pane** is a view onto both.
+- A **Workbench** is a durable arrangement of opened graph members, hosted in a pane.
+- A pane may publish graph, member, session, or application context for followers.
+- The **shell** owns commands, navigation, focus, notifications, and transcript data.
+  **Chrome** is the configurable projection of those services into a space.
+- Tiled containers are recursive. Floating panes are a sibling layer above the tiled
+  root. Tear-out moves the same pane instance into another space.
+- Roster, Inspector, Apparatus, Trail, Alembic, Steward, Comms, Gloss, Overmap,
+  Publishing, and Settings keep their separate meanings.
 
 ---
 
-## 1. The live problems, verified
+## 1. Prior decisions this plan carries forward
 
-1. **Pane instances are not independent.** `summon_pane`
-   ([src/app/pane_arms.rs:69](../src/app/pane_arms.rs)) mints a fresh `PaneId`
-   per summon, but the shell retains one renderer per kind
-   ([src/shell/mod.rs:195](../src/shell/mod.rs): `roster_grid`, `gloss_pane`,
-   `trail_pane`, `inspector_pane`, ...), and dispatch is by content kind, not
-   id ([src/shell/render.rs](../src/shell/render.rs), `pane_scene_by_kind`).
-   Two same-kind panes share one selection, scroll, and control state.
+| Source | Durable decision | Consequence here |
+| --- | --- | --- |
+| [Multi-Graph Activation](../../mere/design_docs/mere_docs/implementation_strategy/2026-06-09_multi_graph_activation_plan.md) and the archived [Window Composition Plan](../../mere/design_docs/archive_docs/2026-06-19_completed_plans/2026-06-11_window_composition_plan.md) | Graph authorities are pooled by `GraphId`; panes resolve through their own graph binding; one window may contain panes from different graphs. | Turnstone restores this model instead of extending its current single `App::canvas`. |
+| [Rung 5 Panes](2026-07-14_turnstone_rung5_panes_plan.md) | The window pane tree and Platen Workbench nest because they arrange different identities. | They may share a topology algebra, while pane identity and member identity remain distinct. |
+| [Surfaces in Cambium](2026-07-15_turnstone_surfaces_in_cambium.md) | Cambium owns the furniture inside a pane rect; Turnstone owns rects, mixed surfaces, routing, and composition. | `cambium::frisket` does not become Turnstone's outer renderer. |
+| [Gloss Composite Pane](2026-07-20_gloss_composite_pane.md) | Composition is per pane instance and travels with it. | `PaneConfig` remains instance state; the registry does not absorb it into pane-kind globals. |
+| [Frisket Direction](../../genet/docs/2026-07-24_frisket_pane_component_direction.md) | `genet-host-api::TileTree` is presentation vocabulary; hosts remain authoritative. Turnstone's mixed-surface presenter deliberately differs from the DOM presenter. | Reuse of `TileTree` is proof-gated and does not imply adopting the Cambium DOM view. |
+| [Overmap](../../mere/design_docs/mere_docs/implementation_strategy/2026-07-20_overmap_sessions_graph_plan.md) | Overmap derives a session graph from manifests and lineage. | A multi-graph space changes focus and composition, not Overmap's underlying truth. |
+| [Configuration Ownership](../../mere/design_docs/mere_docs/implementation_strategy/2026-08-06_configuration_ownership_settings_projection_plan.md) | The configured product owns typed storage; providers describe; Cambium renders; hosts apply. | `SettingsRef` is a pane source, not a graph-binding policy or a universal settings store. |
 
-   One nuance the review missed, and the code states outright: the shared
-   runner is deliberate for tear-out. "The runner being shared is what makes
-   tear-out identity-preserving." Keying by `PaneId` keeps that property,
-   because the id survives the move; it fixes only the two-same-kind case.
-   This plan refines that decision rather than overturning it.
+The external donors agree on the broad shape:
 
-2. **Binding is a boolean.** `follows_active_graph()`
-   ([src/panes/mod.rs](../src/panes/mod.rs)) is yes/no, and the render path
-   receives `PaneContent` without the leaf's id or a graph id. The model
-   claims graph-scoped leaves without a binding to resolve them from.
+- [Rerun Blueprints](https://rerun.io/docs/concepts/visualization/blueprints)
+  separate recorded truth from saved view hierarchy and per-view configuration.
+- [`egui_tiles`](https://docs.rs/egui_tiles/latest/egui_tiles/) uses one recursive,
+  app-payload-generic tree with explicit
+  [container cleanup policy](https://docs.rs/egui_tiles/latest/egui_tiles/struct.SimplificationOptions.html).
+- [Zellij layouts](https://zellij.dev/documentation/creating-a-layout.html) treat
+  tiled panes, stacked panes, floats, chrome choices, and named layouts as data.
 
-3. **`PaneContent` mixes four concerns**: renderer kind, data source,
-   per-instance configuration (`Gloss(PaneComposition)`), and extension
-   dispatch (`Custom`).
+They are donors, not replacement ontologies:
 
-4. **Two parallel enums plus a mapping.** `PaneKind`
-   ([src/action.rs:297](../src/action.rs)) maps to `PaneContent` through
-   `pane_content()` ([src/app/mod.rs:39](../src/app/mod.rs)); labels derive
-   separately. Settings and Publishing already ride magic strings
-   (`Custom("settings")`, `Custom("publishing")`), layout ops ride
-   `Custom("__placeholder__")`, and `System` is never constructed outside
-   tests.
+| Donor | Take | Keep out |
+| --- | --- | --- |
+| Rerun | Truth/blueprint separation; nested Grid, Horizontal, Vertical, and Tabs containers; editable, file-backed, default and heuristic layouts | Using application-id coupling as Mere's space identity; Mere spaces can deliberately compose several graphs |
+| `egui_tiles` | Generic payloads, recursive containers, grid movement, drag/drop, garbage collection, and explicit simplification rules | Making a runtime UI tree durable authority before Turnstone proves serialization and mixed-surface routing |
+| Zellij | Named nested layouts; tiled/stacked/floating stations; [pane identity and pin/show/hide operations](https://zellij.dev/documentation/plugin-api-commands) | Treating a terminal scrollback buffer as the semantic shell transcript; allowing floats to become a second copy of a tiled pane |
 
-## 2. Graphs are panes
+## 2. Live contradictions
 
-Today `PaneContent::Orrery` is a unit variant. Which graph it shows comes from
-the session, one per window; the default layout's own comment calls the leaf
-"bound to the nil (unbound) graph, a placeholder"; the summon anchor finds
-*the* Orrery leaf, singular. A second graph in the same window is not
-unsupported, it is inexpressible: there is nowhere on the leaf to say which
-graph.
+### 2.1 Graph identity exists in the model and is dropped by the host
 
-The reframe: **the canvas is a pane with `binding: Graph(id)` and multiplicity
-Many.** A split with two graphs in one window then falls out of the same model
-as everything else, and no "primary surfaces" special category is needed.
+Every `PaneNode::Leaf` already carries `graph_id`, and
+`retag_graph_bound_from` explicitly preserves a second graph pane
+([src/panes/layout.rs](../src/panes/layout.rs)). The current host then loses the
+binding:
 
-What other panes key off of becomes a derivation rule rather than a stored
-window property:
+- `App` owns one `canvas` and one current `session_id`
+  ([src/app/mod.rs](../src/app/mod.rs)).
+- Session adoption replaces the canvas graph in place
+  ([src/app/session_lifecycle.rs](../src/app/session_lifecycle.rs)).
+- `PanePlacement` carries pane id, content, and rect, but not `graph_id`
+  ([src/pane.rs](../src/pane.rs)).
+- Every Orrery leaf becomes the same `SurfaceKind::Canvas`, with one fixed
+  `SurfaceId::CANVAS` ([src/surface.rs](../src/surface.rs)).
+- A lens borrows the same canvas and temporarily swaps only its viewport
+  ([src/shell/lens.rs](../src/shell/lens.rs)).
 
-> The active graph of a space is the graph of its most recently focused
-> graph-bound pane.
+Two Orrery leaves can therefore duplicate one canvas view, but cannot present two
+independent graphs. The old Mere pool is precedent, not current Turnstone proof.
 
-`ActiveGraph`-bound tools (Roster, Inspector, Trail) follow focus between the
-graph panes of a split; a tool pinned with `Graph(id)` stops following. Both
-come from the binding enum below; nothing else is needed.
+### 2.2 Pane identity exists and renderer state is keyed by kind
 
-**Doctrine change, recorded deliberately:** this revises "window =
-graph-shaped session". The pane becomes graph-shaped; the window becomes a
-composition that may view several graphs. Consequences owned by this plan:
-`frame.json` persists a `GraphId` on graph leaves (today nothing), and the
-summon anchor becomes "the focused graph pane of this space" rather than "the
-primary Orrery". Consequences deferred, named in section 9: what a session
-means for a multi-graph window, and how Overmap draws one.
+`summon_pane` mints a fresh `PaneId` on every summon
+([src/app/pane_arms.rs](../src/app/pane_arms.rs)), while the shell retains one
+Roster, Gloss, Trail, Inspector, Workbench, Apparatus, Settings, and Publishing
+runner ([src/shell/mod.rs](../src/shell/mod.rs)). Sharing one runner across a pane's
+tear-out stations preserves identity. Sharing it across two distinct pane ids
+does not.
 
-Tear-out becomes uniform in passing: tearing out a graph pane yields a window
-viewing that graph, which is approximately what a lens window already is.
+### 2.3 Pane registration is distributed
 
-### The workbench, placed
+`PaneKind`, `PaneContent`, `pane_content`, labels, palette rows, render arms, input
+arms, observation, and accessibility all repeat pane-kind knowledge. Settings and
+Publishing use `Custom("settings")` and `Custom("publishing")`; layout mutation uses
+`Custom("__placeholder__")`; `System` has no live constructor.
 
-The workbench is the same graph through the other projection. The canvas
-shows the graph as space; the workbench shows chosen members as content:
-platen tiles graph nodes inside one leaf
-([src/workbench_pane.rs](../src/workbench_pane.rs), whose header says exactly
-this), cells composite each member's document as its own surface, tabs are
-members. Both projections follow a graph, which is why
-`follows_active_graph()` already answers yes for both. Under this model the
-workbench takes the same bindings a canvas does: `ActiveGraph` to follow the
-space's focus, `Graph(id)` to pin. Two workbenches over two graphs in one
-window is as expressible as two canvases.
+### 2.4 The Workbench and chrome are app-global
 
-One boundary stated hard, because unifying it away would be tempting and
-wrong: the workbench is a pane, **its cells are not**. A cell's identity is
-the member UUID; its arrangement belongs to platen, mere's composition layer,
-per the recorded platen/workbench split; it carries no `PaneId`, no binding,
-no registry entry. Frisket arranges tools and surfaces; platen arranges a
-graph's content inside one of them. Two arrangement systems, on purpose, with
-member identity and pane identity kept from competing for one job.
+Turnstone holds one `App.workbench`, so two Workbench panes cannot own different
+member arrangements. The omnibar likewise queries one `App::canvas`; its width and
+top offset are constants, and only the primary window renders it
+([src/ui.rs](../src/ui.rs), [src/chrome_view.rs](../src/chrome_view.rs)). Application
+settings already name `shellbar_edge` and `shellbar_hidden`, but Turnstone does not
+apply them.
 
-## 3. The model
+### 2.5 `AppEvent` is not shell scrollback
+
+`AppEvent` is a useful semantic observation stream, but it is partial, drained each
+frame, and frequently carries display text without command identity, target context,
+correlation, or a typed result ([src/observe.rs](../src/observe.rs)). A visible shell
+transcript can consume those events; it cannot truthfully be a direct view over the
+current stream.
+
+## 3. Separate source, context, and view state
+
+The earlier model overloaded `PaneBinding` with three different questions. The
+replacement keeps them distinct:
 
 ```rust
-PaneRecord {
+struct PaneSpec {
     id: PaneId,
     kind: PaneKindId,
-    binding: PaneBinding,
-    config: PaneConfig,
+    source: PaneSource,          // what this pane presents
+    context: ContextBinding,     // what this pane follows
+    config: PaneConfig,          // durable per-instance configuration
 }
 
-PaneDefinition {
-    id: PaneKindId,
-    display_name: String,
-    uniqueness: Uniqueness,
-    default_placement: Placement,
-    capabilities: PaneCapabilities,
-    renderer_factory: RendererFactory,
+struct PaneRecord {
+    spec: PaneSpec,
+    view: PaneViewState,         // pane-local camera, selection, scroll, UI state
+}
+
+enum PaneSource {
+    Fixed(SourceRef),
+    FromContext(SourceSelector),
+}
+
+enum SourceRef {
+    Graph(GraphId),
+    Forme { graph: GraphId, forme: FormeId },
+    Member { graph: GraphId, member: GraphMemberId },
+    Settings(SettingsRef),
+    Session(SessionId),
+    SessionSet,
+    Application,
+    External {
+        schema: SourceSchemaId,
+        payload: SerializedSource,
+    },
+}
+
+enum SourceSelector {
+    Graph,
+    Forme,
+    Member,
+    Session,
+}
+
+enum ContextBinding {
+    Own,
+    Follow(PaneId),
+    FocusedInOwnSpace,
+    Application,
 }
 ```
 
-`PaneBinding`, explicit: `ActiveGraph` (follows this space's focus, per the
-rule above), `Graph(id)`, `Node { graph, member }`, `Session(id)`,
-`SessionSet`, `Application`, `Settings(SettingsRef)`, or a typed open source.
-Stored bindings resolve against the space they live in; resolution takes the
-space as an input.
+The exact Rust shapes may narrow during A0. The separation is the requirement.
 
-**Uniqueness names its scope.** A flat multiplicity dodges the question the
-one-app-state, N-window model forces: two windows on the same graph both
-legitimately want a Roster, so "unique per binding" alone would wrongly focus
-the other window's instance.
+### Context publication
+
+A focused pane publishes the context it can honestly supply:
 
 ```rust
-enum Uniqueness {
-    Many,                 // Canvas, Workbench, Tile, Gloss
-    PerSpaceAndBinding,   // Roster, Inspector, Apparatus, Trail
-    PerSpace,             // Steward, Comms, Overmap, Settings
+struct PaneContext {
+    graph: Option<GraphId>,
+    forme: Option<FormeId>,
+    member: Option<GraphMemberId>,
+    session: Option<SessionId>,
 }
 ```
 
-Declared by the registered pane, never inferred from its label. Summoning a
-unique pane focuses the existing instance; multi-instance renderers are keyed
-by `PaneId`. Tabs and stacks are layout containers, not pane kinds; a tab is a
-tile's handle (`TileTab`), per the recorded naming.
+- A Graph pane publishes its graph and selected member.
+- A Workbench publishes its graph and active member.
+- A pinned member pane publishes its graph and member.
+- Overmap publishes the selected session.
+- Application surfaces publish no graph context.
 
-The registry retires `PaneKind` entirely: one registration replaces the enum
-arm, the `pane_content()` mapping, the palette row, the label derivation, and
-the render arm. Layout's `Custom("__placeholder__")` becomes a typed
-placeholder at the same time.
+`FocusedInOwnSpace` resolves to the most recently focused pane in the pane's current
+space that publishes the needed field. Moving or tearing out the follower therefore
+changes its focus scope without rewriting a stored `SpaceId`. `Follow(pane)` remains
+attached to one context source. A following Roster, for example, uses
+`PaneSource::FromContext(SourceSelector::Graph)` with `FocusedInOwnSpace`; pinning it
+resolves that pair to `PaneSource::Fixed(SourceRef::Graph(id))` with `Own`.
 
-**Persistence posture:** `PaneContent` is serialized in `frame.json`. The
-repo already has a recorded posture for this migration, in the Gloss
-variant's own comment: pre-release, no legacy friction, an unrecognized
-layout falls back to the default and logs. This plan adopts that posture by
-name. No migration machinery.
+The omnibar captures a context snapshot when it opens. A later focus movement cannot
+silently redirect a command that is already being composed.
 
-## 4. What stays distinct
+### Graph authority and Graph pane
 
-Consolidate mechanics and shared furniture; preserve the semantic panes:
-Roster (what exists), Inspector (what the selection is), Apparatus (how the
-object is represented), Trail (where navigation went), Alembic (what memory
-persists), Steward (operational activity), Comms (conversation), Gloss
-(current-graph projection), Overmap (sessions and lineage), Publishing (a
-workflow tool), Settings (addressed configuration). Gloss and Overmap share
-projection and section machinery; Roster, Inspector, Apparatus share
-furniture; Trail and Alembic share list forms. Semantic merger would make each
-group vaguer. Apparatus stays object-facing and does not absorb settings.
+Graph truth and projected arrangement are runtimes, not panes:
 
-## 4b. Chrome, and how configurable it should be
+```rust
+GraphRuntimePool: HashMap<GraphId, GraphRuntime>
+FormeRuntimePool: HashMap<(GraphId, FormeId), FormeRuntime>
+```
 
-The chrome is the frame around the panes: the omnibar, whatever status the
-shell shows, the divider bands, and the topology itself. The direction is that
-**as much of it as possible is layout, not code** — the same principle that
-makes panes registry entries makes chrome a saved, restorable thing.
+`GraphRuntime` owns graph truth and graph-scoped live resources. `FormeRuntime` owns
+arrangement geometry and its physics, with shared geometry addressed inside it by
+projection kind and layout id. A Graph pane owns a `PaneId`, camera, selection, and
+other view intent. Two panes may show:
 
-### What exists
+- two different graphs, using two runtimes;
+- one graph through independent cameras and selections;
+- one graph through a shared `FormeId` geometry;
+- explicit arrangement forks, using different `FormeId` values.
 
-An omnibar is already here ([src/app/omnibar_arms.rs](../src/app/omnibar_arms.rs)):
-one line, opened plain or in a `>` command lane, recomputing suggestions
-against the action catalog every keystroke, with `FocusTarget::Chrome` taking
-keys while it is open. The catalog it reads is the same one the palette
-snapshot and the automation runner read ([src/app/palette.rs](../src/app/palette.rs)),
-composed once so the three cannot disagree about what a label means. That
-single-catalog property is the asset; the omnibar is a view onto it.
+The identity Orrery arrangement is computed from graph truth. It is not persisted as
+if it were a curated Workbench. Curated member arrangements and explicit Forme forks
+are durable; projection geometry may be rebuilt from them.
 
-What is missing is not the omnibar. It is **scrollback** and
-**configurability**.
+`SurfaceKind::Graph(PaneId)` replaces the singleton canvas surface. Render, input,
+accessibility, content routing, and commands resolve the pane first, then its graph.
 
-### Omnibar with scrollback
+### Session rule
 
-The omnibar today is stateless between invocations. Giving it a scrollback —
-a retained transcript of commands run and their results — turns it from a
-launcher into a shell. The material is already there: `AppEvent`
-([src/observe.rs:120](../src/observe.rs)) is the journal every action already
-emits, and it is what the automation runner replays. A scrollback is that
-journal, made visible and addressable, with command entries interleaved. So
-this is surfacing an existing stream, not building a new one.
+A session remains a durable graph-shaped unit with `SessionId -> root GraphId`.
+A space may reference several sessions and graph runtimes at once. Focus chooses the
+default target for switch, save, rename, and navigation actions. Overmap continues to
+derive the session set from manifests. Broader cross-session relations stay with the
+Overmap and murm/moot owners.
 
-Design constraints that follow from it being real rather than decorative:
-scrollback is per-space (it belongs to a window's work, like the pane tree),
-it is bounded (a ring, not an unbounded log), and a result in it is a value
-you can act on again, not just text — the same "a result is a value" posture
-the Rerun blueprint model takes toward recorded truth. Whether scrollback is
-its own pane kind (bound `Application`, `PerSpace`) or a mode the omnibar
-expands into is an open question; the pane form composes better with the rest
-of this plan, so start there.
+This minimum rule is owned here because a two-graph receipt cannot be implemented
+while `App::session_id` still means the only graph allowed in memory.
 
-### Configurable chrome
+## 4. The Workbench
 
-The knobs, in rough order of cost:
+The Workbench is a graph-bound desk: a durable, curated arrangement of graph members
+promoted into directly usable content surfaces. It answers which members are open,
+how they are split or stacked, and which member is active. It does not replace graph
+truth or the window layout.
 
-- **Which chrome is present.** Omnibar shown or summoned, status band on or
-  off, palette bound to a key or always docked. These are user settings once
-  §6's settings lane interprets `SettingControl` generically.
-- **Where it sits.** Omnibar top or bottom, docked or floating. The compositor
-  already places surfaces at rects, so chrome placement is the same math the
-  panes use.
-- **Named layouts** (§7) capture the chrome configuration alongside the pane
-  topology, so a saved "Operate" layout can carry a docked scrollback and an
-  always-visible Steward while "Browse" carries neither.
+Platen already owns a recursive split tree of member tab-stacks and projects it onto
+`genet-host-api::TileTree`
+([Platen README](../../mere/crates/platen/platen/README.md),
+[workbench.rs](../../mere/crates/platen/platen/src/workbench.rs)). Turnstone currently
+hosts that tree inside one Workbench pane and composites live document surfaces into
+its cells ([src/workbench_pane.rs](../src/workbench_pane.rs)).
 
-Zellij is the closest prior art for the chrome specifically: declarative,
-named, restorable layouts where the frame is data. egui_tiles is the model for
-the tree being generic over app-owned payloads. Rerun for keeping recorded
-truth (the graph, the journal) separate from the saved view of it.
+The durable relationship is:
 
-### Floating and nested panes, nested splits
+```text
+GraphId
+  -> FormeId / Workbench arrangement
+       -> Workbench pane view
+            -> member tiles and document surfaces
+```
 
-These three are one capability with three names, and they are the reason the
-shared-`TileTree` decision in §5 is load-bearing rather than cosmetic.
+A window blueprint stores the Workbench pane and its
+`PaneSource::Fixed(SourceRef::Forme { graph, forme })` source. The member arrangement
+stays with the Forme/Workbench store. Closing its last pane makes the arrangement
+dormant; reopening it restores the same member tree.
 
-**Turnstone's own tree is binary today**: `SplitChoice::First`/`Second`
-([src/panes/mod.rs:272](../src/panes/mod.rs)), each branch splitting exactly
-two ways. Genet's `TileTree` is **N-ary**: `children: Vec<TileBranch>`
-([genet/components/genet-host-api/tile.rs:42](../../genet/components/genet-host-api/tile.rs)).
-Arbitrarily nested splits are already expressible in the binary tree by
-nesting — a row of three is a row of two whose second child is another row —
-but N-ary children are the honest representation, and they make an even split
-of three cells one node instead of a lopsided pair. So "nested splits" is
-partly here and would be cleaner under `TileTree`.
+### Shared topology, separate authority
 
-**Nested panes** — a pane whose content is itself a pane tree — is what the
-workbench already is (a leaf holding platen's tiling) and what a tab-stack is
-(a leaf holding N tabbed tiles). Generalizing it means a leaf's content can be
-another `TileTree`, which is exactly the recursion `TileTree` already has and
-turnstone's binary tree does not express uniformly.
+The useful generalization is a topology algebra parameterized by leaf identity:
 
-**Floating panes** are the one genuinely new structure. A floating pane is not
-in the split tree at all; it is a free-rect surface composited above it, with
-its own z-order. The compositor already places surfaces at rects and already
-manages a chrome layer above the panes, so the machinery is present; what is
-new is a second collection beside the tree — floats are siblings of the root
-split, not children of any branch — and a rule for focus and z-order among
-them. A torn-out pane that has not yet become its own window is the natural
-first float.
+```text
+window composition  = LayoutTree<PaneId>
+workbench content   = LayoutTree<MemberRef>
+```
 
-The ordering these imply: adopt `TileTree` (or decide against it) in §5 first,
-because nested splits and nested panes both want its recursion and its N-ary
-children; floats come after, as a layer beside whichever tree wins, because
-they do not depend on the tree's shape.
+They may share split, tab, grid, drag, fraction, and normalization code. They do not
+share ids, registries, or persistence owners. A Workbench member tile is pane-shaped
+and may render as its own surface, but it is not a registered window pane.
 
-## 5. The Cambium boundary
+The current hard sentence "Workbench cells are not panes" is therefore refined:
+they are nested layout leaves keyed by graph-member identity rather than top-level
+pane identity.
 
-The recorded ruling stands
-([genet/docs/2026-07-24_frisket_pane_component_direction.md](../../genet/docs/2026-07-24_frisket_pane_component_direction.md)):
-turnstone's outer renderer is a per-surface compositor, and `cambium::frisket`
-does not replace it. That doc's own revisit clause is "only if turnstone ever
-wants tabs", which it now plausibly does, so shared `TileTree` adoption
-reopens through exactly one mixed-surface tab-stack proof.
+## 5. Space topology, nesting, and floats
 
-**Fallback, stated in advance:** if the proof fails, turnstone keeps its own
-tree and the ruling stands unchanged. Reversibility written down is what keeps
-a failed experiment from lingering as a half-migration.
+```rust
+struct SpaceBlueprint {
+    panes: Vec<PaneSpec>,
+    tiled: LayoutNode,
+    floating: Vec<FloatingPane>,
+    chrome: ChromeBlueprint,
+}
 
-Layer responsibilities: genet-host-api owns generic topology, tab handles, and
-content addresses; Cambium owns the frame, tab strip, divider, lists, grids,
-settings controls, and empty/error states; Turnstone owns the registry,
-bindings, persistence, and mixed-surface composition; mere domains own
-portable graph vocabulary; Genet/Sprigging own DOM, style, layout, paint,
-input, accessibility, and custom leaves.
+enum LayoutNode {
+    Pane(PaneId),
+    Split {
+        axis: Axis,
+        children: Vec<LayoutBranch>,
+    },
+    Tabs {
+        children: Vec<LayoutNode>,
+        active: usize,
+    },
+    Grid {
+        children: Vec<LayoutNode>,
+        columns: GridColumns,
+        shares: GridShares,
+    },
+}
+```
 
-Naming collision to clear during the registry work, while it is nearly free:
-turnstone's field `self.frisket` is the pane tree, `cambium::frisket` is DOM
-presentation, and the frisket name is already slated to move. Rename the
-field.
+Containers recurse, so nested splits and tabbed sublayouts are ordinary structure.
+The model must define normalization after every edit: empty containers disappear,
+single-child containers collapse according to policy, adjacent same-axis splits may
+join, fractions renormalize, and focus moves to a surviving neighbor. The policy is
+saved with or derived from the named layout, not scattered through gesture handlers.
 
-## 6. Settings
+### Nested panes
 
-Ownership stays as designed: the product owns typed storage, providers
-describe settings, Cambium renders controls, the host applies them. The
-current implementation is incomplete, verified:
+Three cases must keep different names:
 
-- the reference is `pelt/appearance`, not a Turnstone namespace
-  ([src/settings_provider.rs:16](../src/settings_provider.rs));
-- rendering matches exact ids like `theme.id` instead of interpreting
-  `SettingControl` ([src/settings_pane.rs](../src/settings_pane.rs));
-- theme and zoom are marked `Live` but saving reaches only the provider,
-  never the running shell;
-- theme id and mode are free text where registered choices belong;
-- scope and movement render as Rust debug values.
+1. A recursively nested **container** holds ordinary pane leaves.
+2. A **layout-host pane**, currently Workbench, renders a second tree whose leaves use
+   another identity type.
+3. A pane containing another arbitrary `SpaceBlueprint` is a future embedded space.
+   It waits for a real second consumer beyond Workbench.
 
-Settings becomes `PaneBinding::Settings(SettingsRef)`. Presentation is
-user-configurable (tab, dedicated pane, modal), consistent with the
-configurability-over-defaults posture. Settings is deliberately **not** the
-registry's proof case; it is the special case. Publishing, a plain workflow
-pane, is the proof.
+### Floating panes
 
-## 7. The chrome
+A float is the same `PaneId` presented outside the tiled tree:
 
-Inventory, verified. Three pieces exist: the omnibar (an overlay line with a
-`>` command lane, suggestions recomputed per keystroke,
-[src/app/omnibar_arms.rs](../src/app/omnibar_arms.rs)); the action catalog
-(one composition read by the `>` lane, the snapshot, and the automation
-runner alike, contextual rows leading, denizen rows already extending it,
-[src/app/palette.rs](../src/app/palette.rs)); and the focus model, where
-`FocusTarget { Canvas, Chrome, Content }` makes chrome a first-class layer.
-Configurability today: content yes (the catalog is data-driven and
-gate-extensible), composition no (which chrome exists, and where, is
-hard-coded).
+```rust
+struct FloatingPane {
+    pane: PaneId,
+    rect: RelativeRect,
+    z: u32,
+    pinned: bool,
+    visible: bool,
+}
+```
 
-Direction, settled 2026-08-08: the zellij posture. Chrome is made of the same
-stuff as content, and a named layout declares its chrome the way it declares
-its panes. Four extensions, each landing on something already built:
+Each `PaneId` occupies exactly one station across all live spaces: one tiled leaf or
+one floating entry. Floating is a change of station, not a second appearance.
 
-- **Scrollback.** The typed `AppEvent` journal
-  ([src/observe.rs](../src/observe.rs)) already records commands and outcomes,
-  attributed. A scrollback is a chrome-facing lens over it, a dialogue view,
-  not a new log. The doctrine pair is already written in the tree: "the graph
-  is the history made spatial"; scrollback is the same history made temporal.
-  Boundary: Steward owns live operational status, scrollback owns the
-  conversation. Same events, two projections.
-- **Floating panes.** Every pane already composites as its own surface, so a
-  floating pane is a `PaneRecord` whose rect is its own rather than derived
-  from the tree: a floating set beside the tree, per space. This extends the
-  recorded tear-out trichotomy with a fourth station (tile, stack, float,
-  window), recorded here as a doctrine amend
+Docking, floating, and tearing out relocate one pane instance. They do not clone its
+runtime. Floats are scoped to a space, composite above the tiled root, and below
+modal chrome. Clicking raises a float. A pinned float stays visible when the float
+layer is toggled. Geometry supports proportional and absolute constraints so a
+layout survives window resizing.
 
-Rerun blueprints (recorded truth separate from saved view topology and
-per-view config), egui_tiles (layout tree generic over app-owned payloads),
-Zellij (declarative, restorable named layouts). For turnstone: saved layouts
-independent of graph and session truth, with Browse/Inspect/Operate as
-editable defaults rather than fixed modes.
+### The `TileTree` decision
 
-## 8. Steps
+The existing `genet-host-api::TileTree` is more capable than Turnstone's binary
+split tree in some ways, but it is not the complete target above:
 
-1. **Boundary inventory.** Every pane's owner, binding, uniqueness, renderer,
-   state, capabilities, evidence. Canvas/Orrery is inventoried as
-   `binding: Graph(id)`, not as a "primary surface" category.
-   Done when nothing relies on implicit scope.
-2. **Pane registry.** Retire `PaneKind`, the mapping, the magic strings, the
-   `__placeholder__`, and `System`; adopt the no-legacy-friction persistence
-   posture; rename the `frisket` field; record the active-graph derivation
-   rule beside the registry.
-   Done when Publishing needs one registration plus its renderer.
-3. **Instance correctness.** Key multi-instance renderer state by `PaneId`,
-   with eviction: closing a pane drops its runner, reload rebuilds lazily.
-   The runners are `!Send` and retained, so instance keying without eviction
-   is a leak the singleton model could not have.
-   Done when a window splits across two graph panes with independent cameras,
-   selection, and physics, and tool panes follow focus between them. The
-   two-graph split is the receipt because it is the hardest case; two Rosters
-   fall out of the same fix.
-4. **Stacks, tabs, and the tree decision.** One real tool stack over mixed
-   surface types, then the shared-`TileTree` decision (§5), with the recorded
-   fallback. This decision now carries more than tabs: turnstone's tree is
-   binary, `TileTree` is N-ary and recursive, and nested splits plus nested
-   panes both want that recursion (§4b). Weigh it as the tree question, not
-   the tab question.
-   Done when inactive tabs neither render nor receive input and the stack
-   survives save, reload, and tear-out.
+- it has N-ary row/column splits and leaf tab-stacks;
+- tab-stacks contain tiles, not arbitrary child subtrees;
+- it has no grid or float layer;
+- its current types are runtime presentation values rather than serde persistence;
+- its own module contract says Mere projects Forme onto it rather than making it
+  arrangement truth.
 
-4c. **Omnibar scrollback and configurable chrome.** Surface the `AppEvent`
-   journal as a bounded, per-space, act-on-again scrollback (§4b); make chrome
-   presence and placement settings that §6's lane interprets. Independent of
-   the tree decision, so it can proceed in parallel with step 4.
-   Done when a command run in the omnibar leaves a scrollback entry whose
-   result can be re-invoked, and chrome layout persists in a named layout.
+A0 therefore defines the required topology before choosing the reused type. A4 must
+prove one of these outcomes:
 
-4d. **Floating panes.** A free-rect surface layer beside the split tree, with
-   z-order and focus rules; a torn-out-but-not-yet-windowed pane as the first
-   float. After the tree decision, because floats layer onto whichever tree
-   wins.
-   Done when a pane floats above the tree, holds focus and z-order, and either
-   redocks into the tree or tears out to a window.
-5. **Cambium promotion.** Generic pane shell, settings form, empty/error/
-   unavailable states into the component catalog.
-   Done when narrow and regular specimens pass visual and semantic receipts.
-6. **Settings completion.** Turnstone namespace, render from
-   `SettingControl`, registered choices for theme id and mode, human-readable
-   scope and movement, and every `Live` setting wired to observable runtime
-   behavior.
-   Done when theme and zoom visibly change, persist, and reload.
-7. **Named layouts.** Topology and pane configuration stored separately from
-   graph and session truth. The workbench boundary applies here: a layout
-   captures that a workbench pane exists and what it is bound to; which
-   members are open inside it is session truth and stays out.
-   Done when a layout saves, restores, resets, and migrates without touching
-   graph or session data.
+1. Extend the shared contract because Pelt and Turnstone both consume the added
+   topology without importing Mere semantics; or
+2. Keep Turnstone's serializable `SpaceBlueprint` authoritative and project it onto
+   `TileTree` where Cambium furniture benefits; or
+3. Keep the Turnstone presenter and tree independent while sharing only split/tab
+   state math.
 
-## 9. Open, deliberately not decided here
+The mixed-surface compositor remains Turnstone-owned in every outcome.
 
-- What a session means when one window views two graphs, and what Overmap
-  shows for such a window. The doctrine change in section 2 forces the
-  question; answering it belongs with the Overmap owner.
-- Whether Gloss is Many or per-space. It carries per-instance composition, so
-  two differently composed Glosses are genuinely useful; start Many and let
-  use argue.
-- Write-side pane extension (third-party registered panes through the
-  participant gate). The registry's shape should not preclude it; nothing
-  here builds it.
+## 6. Pane registry and taxonomy
+
+```rust
+struct PaneDefinition {
+    id: PaneKindId,
+    display_name: &'static str,
+    source_shape: SourceShape,
+    uniqueness: Uniqueness,
+    capabilities: PaneCapabilities,
+    default_placement: PlacementPolicy,
+    config_schema: PaneConfigSchema,
+    config_codec: PaneConfigCodec,
+    view_persistence: ViewPersistencePolicy,
+    renderer_factory: RendererFactory,
+}
+
+enum Uniqueness {
+    Many,
+    PerSpace,
+    PerSpaceAndSource,
+    PerSpaceAndContext,
+}
+```
+
+Each definition owns the typed config schema, default, and encode/decode boundary
+for its pane kind. `PaneConfig` is not a universal untyped property bag.
+`PaneSource` names content authority rather than repeating pane kind; the
+definition's `source_shape` validates which source forms that kind accepts.
+
+Initial rulings:
+
+| Pane | Plain job | Source/context | Uniqueness |
+| --- | --- | --- | --- |
+| Graph / Orrery | Spatial graph view and context source | fixed Forme | Many |
+| Workbench | Curated member workspace and context source | fixed Forme | Many |
+| Tile | One pinned member surface | fixed member | Many |
+| Gloss | Graph navigator and projection | graph context; per-instance composition | Many |
+| Roster | Graph manifest | graph context | Per space and context |
+| Inspector | Addressed-content identity and diagnostics | member context | Per space and context |
+| Apparatus | Selected object's facets and representation | member context | Per space and context |
+| Trail | Navigation chronology | graph/session context | Per space and context |
+| Alembic | Durable memory and engrams | application/persona source | Per space and source |
+| Steward | Operational activity | application/space source | Per space |
+| Comms | Conversation | place/session source | Per space and source |
+| Overmap | Session set and lineage | session-set source | Per space |
+| Publishing | Publishing workflow | explicit target source | Many |
+| Settings | Provider-described configuration | `Settings(SettingsRef)` | Per space and source |
+
+`System` is removed. `Custom(String)` becomes a namespaced `External` source whose
+schema owns decoding and validation. The layout placeholder becomes an internal
+`LayoutNode` edit state rather than a fake pane. `PaneKind` retires; the registry
+supplies labels, palette entries, availability, capabilities, uniqueness, and
+renderer creation.
+
+Renderer state is keyed by `PaneId`. Tear-out preserves the id. Closing the pane
+evicts the retained runner; restore rebuilds it lazily.
+
+## 7. Shell services, chrome, and scrollback
+
+Chrome is not the pane tree, its dividers, or graph content. It is the visual
+projection of shell services above or beside the space:
+
+- omnibar and command providers;
+- focus and command targeting;
+- navigation controls;
+- notifications and transient status;
+- layout editing affordances;
+- shell transcript projections.
+
+The shell owns the data and actions. `ChromeBlueprint` decides which projections
+exist and where they appear.
+
+```rust
+struct ChromeBlueprint {
+    omnibar: OmnibarPlacement,
+    shellbar: Option<ShellbarLayout>,
+    transcript: TranscriptPlacement,
+    status: StatusPlacement,
+}
+```
+
+Placements may be summoned overlay, docked edge, floating pane, ordinary pane, or
+hidden. Application settings choose defaults and shortcuts. A named space blueprint
+stores the actual composition. Per-space transient state such as open/closed, current
+query, selection, and scroll offset stays outside the reusable blueprint.
+
+### Shell transcript
+
+The transcript is a typed, bounded record of intentional shell interaction, rather
+than a tracing console:
+
+```rust
+struct ShellEntry {
+    id: ShellEntryId,
+    input: ShellInput,
+    resolved_intent: Option<ShellIntent>,
+    target: ContextSnapshot,
+    outcome: ShellOutcome,
+    timestamp: Timestamp,
+    privacy: EntryPrivacy,
+}
+```
+
+`AppEvent` and asynchronous updates enrich entries through correlation ids. They are
+also usable independently by diagnostics and automation. Steward keeps operational
+status; Comms keeps conversation; the Shell Transcript keeps the user's command,
+navigation, and result history.
+
+The transcript can project as recent omnibar history, a docked Command Log, a
+floating pane, or an ordinary pane. Entries may be copied, repeated, or opened at
+their original target. Retention and persistence are configurable. Storage is local
+by default; providers redact secret-bearing input before it reaches the ledger.
+
+## 8. Settings
+
+Settings remains addressed configuration content:
+
+- `PaneSource::Fixed(SourceRef::Settings(settings_ref))` selects the provider and
+  page;
+- `ContextBinding` states whether the page follows a context or remains application
+  scoped;
+- the configured product owns typed values and storage;
+- `SettingsProvider` describes and applies them;
+- Cambium renders controls from `SettingControl` rather than setting ids.
+
+Turnstone's current provider still uses `pelt/appearance`, exposes only theme id,
+theme mode, and zoom, and marks them `Live` without updating the running shell
+([src/settings_provider.rs](../src/settings_provider.rs),
+[src/settings_pane.rs](../src/settings_pane.rs)). The first completion slice corrects
+the namespace and makes every advertised `Live` value observable immediately.
+
+Apparatus remains object-facing. Diagnostics remain outside settings. Presentation
+as tab, pane, float, or modal is a chrome/layout preference over one Settings source.
+
+## 9. Persistence ownership
+
+| State | Owner and storage |
+| --- | --- |
+| Graph truth and graph-scoped runtime metadata | Session/graph stores keyed by `GraphId` |
+| Forme identity, lifecycle, and curated Workbench member arrangement | Durable Forme/Workbench store keyed by `(GraphId, FormeId)` |
+| Identity Orrery arrangement | Computed from graph truth rather than copied into a window blueprint |
+| Shared projection geometry and physics | `FormeRuntime`, addressed by `(FormeId, projection kind, layout id)` and rebuilt from graph/Forme truth |
+| Graph-pane camera, selection, and view intent | Live `PaneRecord` keyed by `PaneId`; the pane definition decides which fields snapshot into a blueprint |
+| Pane source, follower rule, and instance configuration | `PaneSpec` in `SpaceBlueprint` |
+| Tiled topology, floats, and chrome composition | `SpaceBlueprint` |
+| Application shell defaults and settings | Application settings provider |
+| Shell transcript | Bounded local transcript store under explicit retention policy |
+
+Rerun's lesson applies directly: truth and blueprint are independently useful. A
+layout can be saved, shared, reset, or heuristically regenerated without editing a
+graph or Workbench arrangement. A Workbench source in a portable blueprint may name
+a role such as "focused graph's default workbench" rather than exporting a private
+local `FormeId`.
+
+The repository is pre-alpha. The first registry/layout format may replace existing
+`frame.json`; unreadable legacy layouts fall back to a logged default. Graph,
+Workbench, settings, and transcript stores are not discarded with it.
+
+## 10. Implementation gates
+
+### A0. Pure model and inventory
+
+- Inventory every current pane's source, published context, follower rule,
+  uniqueness, instance state, capabilities, renderer, persistence, and evidence.
+- Define `PaneSpec`, `PaneRecord`, `PaneSource`, `ContextBinding`, `PaneContext`,
+  `SpaceBlueprint`, normalization, and focus resolution as data-only types.
+- Add model tests for nested containers, focus-derived context, pinning, float moves,
+  cross-space PaneId uniqueness, normalization, and serde round trips.
+
+Done when graph/source/context/multiplicity are explicit and no rendering code is
+needed to prove the state transitions.
+
+### A1. Registry and instance correctness
+
+- Register existing panes and retire `PaneKind`, `pane_content`, `System`, magic
+  custom strings, and the fake placeholder.
+- Use Publishing as the plain workflow proof.
+- Key retained runners by `PaneId`; preserve ids across docking and tear-out; evict
+  on close and rebuild lazily on restore.
+
+Done when adding a Publishing-like pane requires one registration plus its renderer,
+and two supported same-kind panes retain independent scroll, selection, and controls.
+
+### A2. Graph runtime pool and two-graph composition
+
+- Replace `App::canvas` and exclusive `session_id` routing with a graph runtime pool
+  plus Forme runtimes and focused-space context.
+- Carry `PaneId` and `graph_id` through placement, surface planning, render, input,
+  content contributions, accessibility, commands, save, and observation.
+- Replace singleton Canvas focus/surface identity with pane-addressed Graph surfaces.
+
+Done when graph A and graph B render side by side in one window, both receive pointer
+and keyboard input, graph A mutation leaves B unchanged, and restart restores both.
+
+### A3. Multiple views and Workbenches
+
+- Allow two Graph panes over one graph with independent cameras and selections.
+- Create or reuse the `FormeRuntime` named by each Graph and Workbench pane's Forme
+  source.
+- Share geometry only when Forme, projection kind, and layout id agree; keep camera,
+  selection, and other view intent keyed by `PaneId`.
+- Key Workbench state by graph/Forme source instead of `App.workbench`.
+- Publish context from Graph, Workbench, and member panes; make Roster and Inspector
+  follow explicit or focused context.
+
+Done when one graph appears through two independent views, two Workbenches can show
+different arrangements, and Inspector follows the active member of the intended
+Workbench rather than a global canvas.
+
+### A4. Containers, tabs, and shared-tree decision
+
+- Prove nested N-ary splits and a tabbed subtree over mixed Graph, document, and
+  Cambium surfaces.
+- Compare the required `SpaceBlueprint` operations with `TileTree` and record outcome
+  1, 2, or 3 from section 5.
+- Keep inactive tabs out of render, hit testing, accessibility focus, and pumping
+  unless their content lifecycle explicitly remains warm.
+
+Done when a nested mixed-surface layout survives drag, resize, save, reload, and
+tear-out, with one authoritative topology and the fallback recorded.
+
+### A5. Floating layer
+
+- Add float geometry, z-order, pinned visibility, focus raise, dock targets, and
+  tear-out from a float.
+- Reuse the same PaneId and renderer state through every station.
+
+Done when one pane moves tile -> float -> nested split -> window and returns without
+losing state or leaving an unreachable runner.
+
+### A6. Shell and configurable chrome
+
+- Split shell service state from Chrome projections.
+- Add provider registration and configurable omnibar placement, row limit, default
+  scope, shortcuts, shellbar edge/visibility, and transcript placement.
+- Add `ShellTranscript` with correlation, privacy, retention, and repeat/open actions.
+
+Done when a command captures its original pane context, produces one correlated
+result entry, can be repeated from a docked or floating transcript, and the chrome
+composition restores from a named layout.
+
+### A7. Cambium and Settings completion
+
+- Promote pane shell/header, settings form, empty/error/unavailable state, and the
+  relevant Frisket specimens into Cambium's component catalog.
+- Correct the Turnstone Settings namespace and render generically from
+  `SettingControl`.
+- Connect every `Live` setting to the running host; label restart/startup settings
+  honestly.
+
+Done when catalog specimens cover narrow and regular layouts, Turnstone consumes
+them, theme/zoom/shell placement change live, and values survive relaunch.
+
+### A8. Named blueprints
+
+- Save, load, duplicate, rename, reset-to-default, and reset-to-heuristic layouts.
+- Keep private ids out of portable exports; resolve role-based sources on import.
+- Preserve graph, Workbench, Settings, and transcript stores across layout changes.
+
+Done when Browse, Inspect, and Operate are editable examples rather than modes, and a
+layout can be shared or reset without changing graph/session truth.
+
+## 11. Stop rules
+
+- Keep Turnstone's mixed-surface compositor as the outer presenter.
+- Treat graph authority, Graph pane view state, Workbench arrangement, and window
+  blueprint as separate owners even when they share tree or surface primitives.
+- Keep PaneId stable across dock, float, and tear-out; use member identity inside a
+  Workbench.
+- Require a second consumer before promoting arbitrary embedded-space hosting or new
+  shared topology into Genet.
+- Keep `AppEvent` useful for observation; create a correlated transcript rather than
+  changing it into a UI store.
+- Keep generated proof outputs on disk and outside Git.
+- Stop a shared-`TileTree` migration if it cannot preserve mixed-surface rendering,
+  persistence, instance identity, and input authority in one completed proof.
+
+## 12. Deferred decisions
+
+- Write-side third-party pane registration through the participant gate.
+- Stored cross-session Overmap relations beyond manifest-derived lineage.
+- Product display-name changes such as Canvas versus Orrery and Navigator versus
+  Gloss.
+- Default layout details. Defaults remain editable and user-configurable.

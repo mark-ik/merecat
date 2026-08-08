@@ -30,6 +30,16 @@ impl App {
     pub fn boot(address: Option<&str>) -> (Self, Vec<Effect>) {
         let data_root = session::default_turnstone_root();
         let _ = std::fs::create_dir_all(&data_root);
+        // Identity moved to the family-shared root. Turnstone held the personas
+        // before the split, so it is the one that has to hand them over, and it
+        // does so on first boot rather than as a migration step someone has to
+        // remember to run.
+        let shared = session_runtime::shared_root::shared_root();
+        match session_runtime::shared_root::adopt_legacy_identity(&shared, &data_root) {
+            Ok(true) => eprintln!("[turnstone] adopted this device's identity into {shared:?}"),
+            Ok(false) => {}
+            Err(error) => eprintln!("[turnstone] could not adopt the legacy identity: {error}"),
+        }
         // The attributed journal + its capture hook (participant gate B1):
         // every mutation that flows through apply_graph_delta records here
         // under the current author.
