@@ -239,9 +239,14 @@ struct HostedEffects {
 /// The same two the spawned path names as mode strings, minus the stringly
 /// typed hop: the process boundary was the only reason they were ever text.
 enum HostedKnot {
-    Directory { root: PathBuf },
+    Directory {
+        root: PathBuf,
+    },
+    /// No root: a persona vault lives under the family-shared root, never under
+    /// turnstone's own. `TURNSTONE_KNOT_ROOT` still picks the directory in
+    /// [`HostedKnot::Directory`] mode, where the point is a directory the user
+    /// named.
     PersonaVault {
-        data_root: PathBuf,
         persona: identity::PersonaId,
     },
 }
@@ -288,7 +293,7 @@ impl KnotHub {
                     HostedKnot::Directory { root } => knot::KnotEndpoint::open(&root)
                         .map_err(|error| format!("could not open the Knot directory: {error}"))
                         .map(|endpoint| (endpoint, None)),
-                    HostedKnot::PersonaVault { data_root, persona } => {
+                    HostedKnot::PersonaVault { persona } => {
                         // Identity is family-shared: the device key and the
                         // persona vault come from the shared root, not from
                         // turnstone's own, so a document sealed here opens in
@@ -511,10 +516,7 @@ impl KnotAuthoringEngine {
                         .map_err(|error| {
                             format!("TURNSTONE_KNOT_PERSONA must be a UUID: {error}")
                         })?;
-                    Some(HostedKnot::PersonaVault {
-                        data_root: root.clone(),
-                        persona,
-                    })
+                    Some(HostedKnot::PersonaVault { persona })
                 }
                 _ => None,
             };
@@ -554,6 +556,12 @@ impl KnotAuthoringEngine {
                 let persona = std::env::var_os("TURNSTONE_KNOT_PERSONA").ok_or_else(|| {
                     "TURNSTONE_KNOT_PERSONA is required for persona-vault mode".to_string()
                 })?;
+                // The same root the hosted path uses. `knot_endpoint` takes the
+                // root as an argument so a test can point it at a scratch
+                // profile; turnstone's answer is the family-shared one, and a
+                // guard that only one deployment honours is not a guard.
+                let vault_root =
+                    session_runtime::shared_root::shared_root().into_os_string();
                 if effects_enabled {
                     if schemes
                         .split(',')
@@ -565,7 +573,7 @@ impl KnotAuthoringEngine {
                     }
                     vec![
                         "persona-vault-effects".into(),
-                        root.into_os_string(),
+                        vault_root,
                         persona,
                         max_source_bytes.to_string().into(),
                         resolve_mode.clone().into(),
@@ -578,7 +586,7 @@ impl KnotAuthoringEngine {
                 } else {
                     vec![
                         "persona-vault".into(),
-                        root.into_os_string(),
+                        vault_root,
                         persona,
                         max_source_bytes.to_string().into(),
                     ]
